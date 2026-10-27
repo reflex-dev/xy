@@ -32,31 +32,184 @@ const OP_HEATMAP_IMAGE: u8 = 13;
 const OP_AFFINE_POINTS: u8 = 14;
 const OP_AFFINE_CHANNEL_POINTS: u8 = 15;
 const OP_STROKED_TRIANGLES: u8 = 16;
+const OP_STYLED_TEXT: u8 = 17;
+const OP_POLAR_CLIP: u8 = 18;
+const OP_PHASED_STROKE: u8 = 19;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
+
+/// Analytic annular-sector clip carried by the display-list state.
+///
+/// The ordinary clip remains a rectangular bbox for cheap work rejection.
+/// This second predicate is applied at the final pixel blend, so every mark
+/// primitive shares one clip: fills, chord strokes, symbols, and images cannot
+/// paint through a polar hole or missing sector.
+#[derive(Clone, Copy)]
+struct PolarClip {
+    cx: f32,
+    cy: f32,
+    inner: f32,
+    outer: f32,
+    start: [f32; 2],
+    end: [f32; 2],
+    direction: f32,
+    wide: bool,
+    full: bool,
+}
+
+impl PolarClip {
+    fn new(cx: f32, cy: f32, inner: f32, outer: f32, start: f32, sweep: f32) -> Option<Self> {
+        if ![cx, cy, inner, outer, start, sweep]
+            .into_iter()
+            .all(f32::is_finite)
+            || inner < 0.0
+            || outer < inner
+            || sweep == 0.0
+        {
+            return None;
+        }
+        let span = sweep.abs();
+        Some(Self {
+            cx,
+            cy,
+            inner,
+            outer,
+            start: [start.cos(), start.sin()],
+            end: [(start + sweep).cos(), (start + sweep).sin()],
+            direction: sweep.signum(),
+            wide: span > std::f32::consts::PI,
+            full: span >= std::f32::consts::TAU * (1.0 - 1e-6),
+        })
+    }
+
+    #[inline]
+    fn contains(&self, x: f32, y: f32) -> bool {
+        let v = [x - self.cx, self.cy - y]; // math coordinates: +y is up
+        let radius2 = v[0] * v[0] + v[1] * v[1];
+        if radius2 < self.inner * self.inner || radius2 > self.outer * self.outer {
+            return false;
+        }
+        if self.full {
+            return true;
+        }
+        let from_start = self.direction * (self.start[0] * v[1] - self.start[1] * v[0]);
+        let before_end = self.direction * (v[0] * self.end[1] - v[1] * self.end[0]);
+        if self.wide {
+            from_start >= 0.0 || before_end >= 0.0
+        } else {
+            from_start >= 0.0 && before_end >= 0.0
+        }
+    }
+
+    #[inline]
+    fn near_boundary(&self, x: f32, y: f32) -> bool {
+        let v = [x - self.cx, self.cy - y];
+        let radius2 = v[0] * v[0] + v[1] * v[1];
+        let radial_band = |radius: f32| {
+            let low = (radius - 1.0).max(0.0);
+            radius2 >= low * low && radius2 <= (radius + 1.0) * (radius + 1.0)
+        };
+        if radial_band(self.outer) || (self.inner > 0.0 && radial_band(self.inner)) {
+            return true;
+        }
+        if self.full {
+            return false;
+        }
+        [self.start, self.end].into_iter().any(|edge| {
+            let along = edge[0] * v[0] + edge[1] * v[1];
+            let perpendicular = edge[0] * v[1] - edge[1] * v[0];
+            perpendicular.abs() <= 1.0 && along >= self.inner - 1.0 && along <= self.outer + 1.0
+        })
+    }
+
+    #[inline]
+    fn pixel_coverage(&self, x: usize, y: usize) -> f32 {
+        // A valid Python hole may be closer to 1 than f32 can distinguish at
+        // the requested device radius.  Its serialized inner/outer radii then
+        // coincide.  That is an empty visible annulus, not a malformed command
+        // stream: mask marks completely and let the later rectangular clip
+        // reset state for chrome.
+        if self.inner >= self.outer {
+            return 0.0;
+        }
+        let center = (x as f32 + 0.5, y as f32 + 0.5);
+        if !self.near_boundary(center.0, center.1) {
+            return if self.contains(center.0, center.1) {
+                1.0
+            } else {
+                0.0
+            };
+        }
+        // Only boundary pixels pay for supersampling. Four samples per axis
+        // match polygon-fill AA and keep the clip edge stable at every scale.
+        let mut covered = 0usize;
+        for sy in 0..SS {
+            let py = y as f32 + (sy as f32 + 0.5) / SS as f32;
+            for sx in 0..SS {
+                let px = x as f32 + (sx as f32 + 0.5) / SS as f32;
+                covered += usize::from(self.contains(px, py));
+            }
+        }
+        covered as f32 / (SS * SS) as f32
+    }
+}
+
+#[inline]
+fn apply_polar_clip(
+    polar_clip: Option<PolarClip>,
+    x: usize,
+    y: usize,
+    mut rgba: [u8; 4],
+) -> Option<[u8; 4]> {
+    let Some(clip) = polar_clip else {
+        return Some(rgba);
+    };
+    let coverage = clip.pixel_coverage(x, y);
+    if coverage <= 0.0 {
+        return None;
+    }
+    if coverage < 1.0 {
+        rgba[3] = (rgba[3] as f32 * coverage + 0.5) as u8;
+        if rgba[3] == 0 {
+            return None;
+        }
+    }
+    Some(rgba)
+}
 
 /// Straight-alpha RGBA8 framebuffer. Static chart export paints an opaque
 /// background first, so keeping the working canvas in its final byte format
 /// avoids a 16-byte-per-pixel float canvas plus a full-frame conversion pass.
 /// The generic translucent-destination branch preserves correct source-over
 /// behavior for direct rasterizer callers that do not begin with a background.
-struct Canvas {
+/// The framebuffer is **borrowed**, not owned. For the RGBA entry points that
+/// is the caller's own output buffer, so painting lands directly in it: the
+/// canvas used to own a `Vec<u8>` and hand it over with a full-frame
+/// `copy_from_slice` at the end, which meant two complete framebuffers live at
+/// once (4 bytes per device pixel of pure surplus — 33 MB at 3840x2160) plus an
+/// allocation, a zero-fill and a memcpy that the caller never asked for.
+struct Canvas<'a> {
     w: usize,
     h: usize,
-    px: Vec<u8>,
+    px: &'a mut [u8],
     opaque: bool,
     clip: [f32; 4], // x0, y0, x1, y1
+    polar_clip: Option<PolarClip>,
 }
 
-impl Canvas {
-    fn new(w: usize, h: usize, opaque_white: bool) -> Self {
-        let channels = if opaque_white { 3 } else { 4 };
+impl<'a> Canvas<'a> {
+    /// Wrap `px` as a `w * h` framebuffer, initialized exactly as the owning
+    /// constructor did: opaque white for the 3-channel PNG path, transparent
+    /// black for the 4-channel RGBA path.
+    fn wrap(w: usize, h: usize, opaque_white: bool, px: &'a mut [u8]) -> Self {
+        px.fill(if opaque_white { 255 } else { 0 });
         Canvas {
             w,
             h,
-            px: vec![if opaque_white { 255 } else { 0 }; w * h * channels],
+            px,
             opaque: opaque_white,
             clip: [0.0, 0.0, w as f32, h as f32],
+            polar_clip: None,
         }
     }
 
@@ -83,10 +236,31 @@ impl Canvas {
         );
     }
 
-    #[inline]
+    #[inline(always)]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        // The polar-clip test must stay a one-byte discriminant check: this is
+        // the per-pixel hot path for every mark on every chart, and routing it
+        // through `apply_polar_clip(self.polar_clip, ..)` copied the ~40-byte
+        // `Option<PolarClip>` per pixel — a deterministic +17% on cartesian
+        // PNG export (CodSpeed test_png_export_line_pyplot, 34 -> 40.9 ms).
+        if self.polar_clip.is_some() {
+            self.blend_u8_polar_clipped(x, y, rgba);
+            return;
+        }
         let o = (y * self.w + x) * self.channels();
-        blend_px(&mut self.px, o, self.opaque, rgba);
+        blend_px(self.px, o, self.opaque, rgba);
+    }
+
+    /// Outlined polar-clip blend: only pixels painted while an annular-sector
+    /// clip is active (polar marks) ever take this call.
+    #[cold]
+    #[inline(never)]
+    fn blend_u8_polar_clipped(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        let Some(rgba) = apply_polar_clip(self.polar_clip, x, y, rgba) else {
+            return;
+        };
+        let o = (y * self.w + x) * self.channels();
+        blend_px(self.px, o, self.opaque, rgba);
     }
 
     /// Full-height window over the framebuffer. Painting through it is
@@ -99,7 +273,8 @@ impl Canvas {
             channels: self.channels(),
             opaque: self.opaque,
             clip: self.clip,
-            px: &mut self.px,
+            polar_clip: self.polar_clip,
+            px: self.px,
         }
     }
 
@@ -118,18 +293,6 @@ impl Canvas {
             (cx1.ceil() as usize).min(self.w),
             (cy1.ceil() as usize).min(self.h),
         )
-    }
-
-    /// Export to straight-alpha RGBA8.
-    fn to_rgba8(&self, out: &mut [u8]) {
-        if self.opaque {
-            for (rgb, rgba) in self.px.chunks_exact(3).zip(out.chunks_exact_mut(4)) {
-                rgba[..3].copy_from_slice(rgb);
-                rgba[3] = 255;
-            }
-        } else {
-            out.copy_from_slice(&self.px);
-        }
     }
 }
 
@@ -193,6 +356,7 @@ struct Surface<'a> {
     channels: usize,
     opaque: bool,
     clip: [f32; 4],
+    polar_clip: Option<PolarClip>,
 }
 
 impl Surface<'_> {
@@ -201,8 +365,24 @@ impl Surface<'_> {
         self.blend_u8(x, y, [rgb[0], rgb[1], rgb[2], to_u8(alpha * cov)]);
     }
 
-    #[inline]
+    #[inline(always)]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        // Same one-byte discriminant test as `Canvas::blend_u8`; see the
+        // comment there. The banded parallel painter runs this per pixel.
+        if self.polar_clip.is_some() {
+            self.blend_u8_polar_clipped(x, y, rgba);
+            return;
+        }
+        let o = ((y - self.y0) * self.w + x) * self.channels;
+        blend_px(self.px, o, self.opaque, rgba);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn blend_u8_polar_clipped(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        let Some(rgba) = apply_polar_clip(self.polar_clip, x, y, rgba) else {
+            return;
+        };
         let o = ((y - self.y0) * self.w + x) * self.channels;
         blend_px(self.px, o, self.opaque, rgba);
     }
@@ -226,7 +406,7 @@ impl Surface<'_> {
     }
 }
 
-fn stroke_segment(cv: &mut Canvas, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
+fn stroke_segment(cv: &mut Canvas<'_>, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
     stroke_segment_at(&mut cv.surface(), a, b, width, rgba);
 }
 
@@ -300,7 +480,13 @@ fn to_u8(v: f32) -> u8 {
 /// Fast analytic path for the overwhelmingly common axis-aligned rectangle.
 /// It is exact at subpixel edges and turns the full-canvas white background
 /// from millions of polygon-coverage blends into a contiguous byte fill.
-fn fill_rect(cv: &mut Canvas, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
+fn fill_rect(cv: &mut Canvas<'_>, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
+    // The contiguous-row fast path bypasses per-pixel blending, where the
+    // annular-sector clip lives. Fall back to the general polygon painter while
+    // that clip is active.
+    if cv.polar_clip.is_some() {
+        return false;
+    }
     if pts.len() != 4 {
         return false;
     }
@@ -353,7 +539,7 @@ fn fill_rect(cv: &mut Canvas, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
 /// Per-row coverage in [0,1] over the polygon's x-span, with `color_at` giving
 /// the paint per pixel (flat or gradient). Non-zero winding, `SS` vertical
 /// samples, analytic horizontal endpoint coverage.
-fn fill_poly(cv: &mut Canvas, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, f32) -> [f32; 4]) {
+fn fill_poly(cv: &mut Canvas<'_>, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, f32) -> [f32; 4]) {
     if pts.len() < 3 {
         return;
     }
@@ -427,9 +613,82 @@ fn fill_poly(cv: &mut Canvas, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, 
     }
 }
 
-// ---- stroke (distance field, round caps/joins) ------------------------------
+// ---- stroke (distance field, round caps/joins by default) -------------------
 
 type StrokeSegment = ((f32, f32), (f32, f32));
+
+// stroke-linecap, in the wire order python/xy/styles.py compiles:
+// butt/round/square. XY's default is round, which is what the clamped segment
+// distance field below has always drawn, so `stroke` stays the fast path and
+// byte-for-byte unchanged; the other two route through `stroke_shaped`.
+//
+// Joins are always round. That is what the capsule field produced before caps
+// were selectable, and it is what every renderer draws today; `stroke-linejoin`
+// is not part of the style vocabulary, so there is nothing to select.
+pub const CAP_BUTT: u8 = 0;
+pub const CAP_ROUND: u8 = 1;
+pub const CAP_SQUARE: u8 = 2;
+
+#[inline]
+fn cov_from_sd(sd: f32) -> f32 {
+    // Same 1px ramp `seg_coverage` uses, expressed on a signed distance so the
+    // box, disc, and wedge primitives below all antialias identically.
+    (0.5 - sd).clamp(0.0, 1.0)
+}
+
+/// Signed distance to an oriented box of half-width `hw` around segment `a`-`b`
+/// — a capsule with both ends cut flush, i.e. a butt cap.
+fn box_sd(p: (f32, f32), a: (f32, f32), b: (f32, f32), hw: f32) -> f32 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= 1e-6 {
+        return f32::INFINITY;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (mx, my) = ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5);
+    let (rx, ry) = (p.0 - mx, p.1 - my);
+    let along = (rx * ux + ry * uy).abs() - len * 0.5;
+    let across = (rx * -uy + ry * ux).abs() - hw;
+    let outside = (along.max(0.0).powi(2) + across.max(0.0).powi(2)).sqrt();
+    outside + along.max(across).min(0.0)
+}
+
+/// One coverage primitive of a shaped stroke, in the order they are painted.
+enum StrokePiece {
+    Box(StrokeSegment),
+    Disc((f32, f32)),
+}
+
+impl StrokePiece {
+    fn bounds(&self, hw: f32) -> ((f32, f32), (f32, f32)) {
+        let pad = hw + 1.0;
+        let (mut x0, mut y0, mut x1, mut y1) =
+            (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut extend = |p: (f32, f32)| {
+            x0 = x0.min(p.0);
+            y0 = y0.min(p.1);
+            x1 = x1.max(p.0);
+            y1 = y1.max(p.1);
+        };
+        match self {
+            StrokePiece::Box((a, b)) => {
+                extend(*a);
+                extend(*b);
+            }
+            StrokePiece::Disc(c) => extend(*c),
+        }
+        ((x0 - pad, y0 - pad), (x1 + pad, y1 + pad))
+    }
+
+    fn coverage(&self, p: (f32, f32), hw: f32) -> f32 {
+        match self {
+            StrokePiece::Box((a, b)) => cov_from_sd(box_sd(p, *a, *b, hw)),
+            StrokePiece::Disc(c) => {
+                cov_from_sd(((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt() - hw)
+            }
+        }
+    }
+}
 
 #[inline]
 fn seg_dist2(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -461,31 +720,237 @@ fn seg_coverage(p: (f32, f32), a: (f32, f32), b: (f32, f32), hw: f32) -> f32 {
     outer - distance2.sqrt()
 }
 
+/// Dash lengths a stroke walker can safely step through.
+///
+/// Both stroke paths advance by `drem.min(remain)` and subtract, which assumes
+/// every entry is finite and positive. The public API cannot produce anything
+/// else (`_validate.dash` requires positive px lengths), but `rasterize_into`
+/// decodes arbitrary bytes, and this is where the rest of that validation
+/// lives. A pattern with any non-positive or non-finite entry is treated as
+/// solid rather than half-walked.
+fn usable_dash(dash: &[f32]) -> bool {
+    !dash.is_empty() && dash.iter().all(|d| d.is_finite() && *d > 0.0)
+}
+
+fn dash_state(dash: &[f32], offset: f32) -> (usize, f32, bool) {
+    // An odd-length dash list is repeated before cycling, so traversing one
+    // list length also flips the on/off state.
+    let total: f32 =
+        dash.iter().sum::<f32>() * if dash.len().is_multiple_of(2) { 1.0 } else { 2.0 };
+    let mut phase = if offset.is_finite() && total.is_finite() {
+        offset.rem_euclid(total)
+    } else {
+        0.0
+    };
+    let mut index = 0usize;
+    let mut on = true;
+    while phase >= dash[index] {
+        phase -= dash[index];
+        index = (index + 1) % dash.len();
+        on = !on;
+    }
+    (index, dash[index] - phase, on)
+}
+
 /// Rasterize on-segments into a scratch coverage buffer (max-combined so
 /// overlapping joins don't double-darken), then composite once.
 fn stroke(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     pts: &[(f32, f32)],
     width: f32,
     rgba: [f32; 4],
     closed: bool,
     dash: &[f32],
 ) {
-    stroke_with_threads(cv, pts, width, rgba, closed, dash, None);
+    stroke_with_threads(cv, pts, width, rgba, closed, (dash, 0.0), None);
+}
+
+/// Stroke honoring an explicit cap. `round` is XY's default and is exactly what
+/// the capsule field above draws, so it delegates and the common path keeps its
+/// banding, its scratch-buffer reuse, and its bytes. Interior vertices always
+/// get a round join, which is what the capsule field produced before the cap
+/// became selectable.
+fn stroke_shaped(
+    cv: &mut Canvas,
+    pts: &[(f32, f32)],
+    width: f32,
+    rgba: [f32; 4],
+    closed: bool,
+    dash: (&[f32], f32),
+    cap: u8,
+) {
+    let (dash, dash_offset) = dash;
+    if cap == CAP_ROUND || pts.len() < 2 || width <= 0.0 {
+        stroke_with_threads(cv, pts, width, rgba, closed, (dash, dash_offset), None);
+        return;
+    }
+    let hw = width * 0.5;
+    let dash: &[f32] = if usable_dash(dash) { dash } else { &[] };
+    let n = pts.len();
+    let last = if closed { n } else { n - 1 };
+    let raw: Vec<StrokeSegment> = (0..last).map(|i| (pts[i], pts[(i + 1) % n])).collect();
+
+    // Each run is a maximal stretch of painted stroke: the whole polyline when
+    // undashed, one per "on" interval otherwise. Caps shape a run's two ends;
+    // joins shape the vertices inside it. SVG caps every dash the same way, so
+    // a dashed line gets one pair of caps per run rather than one per line.
+    let mut runs: Vec<Vec<(f32, f32)>> = Vec::new();
+    if dash.is_empty() {
+        let mut run: Vec<(f32, f32)> = vec![raw[0].0];
+        run.extend(raw.iter().map(|(_, b)| *b));
+        runs.push(run);
+    } else {
+        let total: f32 = dash.iter().sum();
+        if total <= 0.0 {
+            let mut run: Vec<(f32, f32)> = vec![raw[0].0];
+            run.extend(raw.iter().map(|(_, b)| *b));
+            runs.push(run);
+        } else {
+            let (mut di, mut drem, mut on) = dash_state(dash, dash_offset);
+            let mut current: Vec<(f32, f32)> = Vec::new();
+            for (a, b) in &raw {
+                let (mut ax, mut ay) = *a;
+                let seglen = ((b.0 - ax).powi(2) + (b.1 - ay).powi(2)).sqrt();
+                if seglen <= 1e-9 {
+                    continue;
+                }
+                let (ux, uy) = ((b.0 - a.0) / seglen, (b.1 - a.1) / seglen);
+                let mut remain = seglen;
+                while remain > 1e-6 {
+                    let step = drem.min(remain);
+                    let next = (ax + ux * step, ay + uy * step);
+                    if on {
+                        if current.is_empty() {
+                            current.push((ax, ay));
+                        }
+                        current.push(next);
+                    }
+                    ax = next.0;
+                    ay = next.1;
+                    remain -= step;
+                    drem -= step;
+                    if drem <= 1e-6 {
+                        di = (di + 1) % dash.len();
+                        drem = dash[di];
+                        on = !on;
+                        if !on && !current.is_empty() {
+                            runs.push(std::mem::take(&mut current));
+                        }
+                    }
+                }
+            }
+            if !current.is_empty() {
+                runs.push(current);
+            }
+        }
+    }
+
+    let mut pieces: Vec<StrokePiece> = Vec::new();
+    for run in &runs {
+        if run.len() < 2 {
+            continue;
+        }
+        let mut ends = run.clone();
+        if cap == CAP_SQUARE {
+            // A square cap is a butt cap on a segment pushed out by hw, which
+            // is the whole difference between the two.
+            let extend = |from: (f32, f32), to: (f32, f32)| -> (f32, f32) {
+                let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len <= 1e-6 {
+                    return to;
+                }
+                (to.0 + dx / len * hw, to.1 + dy / len * hw)
+            };
+            let head = extend(run[1], run[0]);
+            let tail = extend(run[run.len() - 2], run[run.len() - 1]);
+            ends[0] = head;
+            let end = ends.len() - 1;
+            ends[end] = tail;
+        }
+        for pair in ends.windows(2) {
+            pieces.push(StrokePiece::Box((pair[0], pair[1])));
+        }
+        // Butt- and square-capped boxes meet edge-to-edge and leave a notch on
+        // the outside of every turn; a disc at the shared vertex is the round
+        // join that fills it.
+        for vertex in run.iter().take(run.len() - 1).skip(1) {
+            pieces.push(StrokePiece::Disc(*vertex));
+        }
+        if closed && runs.len() == 1 && run.len() > 2 {
+            pieces.push(StrokePiece::Disc(run[0]));
+        }
+    }
+    paint_stroke_pieces(cv, &pieces, hw, rgba);
+}
+
+/// Max-combine every piece's coverage into one scratch buffer, then composite
+/// each touched pixel once — the same contract `stroke_with_threads` keeps, so
+/// overlapping joins never double-darken a translucent stroke.
+fn paint_stroke_pieces(cv: &mut Canvas, pieces: &[StrokePiece], hw: f32, rgba: [f32; 4]) {
+    if pieces.is_empty() {
+        return;
+    }
+    let (mut x0, mut y0, mut x1, mut y1) =
+        (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for piece in pieces {
+        let ((px0, py0), (px1, py1)) = piece.bounds(hw);
+        x0 = x0.min(px0);
+        y0 = y0.min(py0);
+        x1 = x1.max(px1);
+        y1 = y1.max(py1);
+    }
+    let (bx0, by0, bx1, by1) = cv.bbox(x0, y0, x1, y1);
+    if bx1 <= bx0 || by1 <= by0 {
+        return;
+    }
+    let (sw, sh) = (bx1 - bx0, by1 - by0);
+    let mut scratch = vec![0u8; sw * sh];
+    let mut touched = Vec::<usize>::with_capacity(pieces.len().saturating_mul(8));
+    for piece in pieces {
+        let ((px0, py0), (px1, py1)) = piece.bounds(hw);
+        let sx0 = (px0.floor().max(bx0 as f32) as usize).max(bx0);
+        let sy0 = (py0.floor().max(by0 as f32) as usize).max(by0);
+        let sx1 = (px1.ceil().max(0.0) as usize).min(bx1);
+        let sy1 = (py1.ceil().max(0.0) as usize).min(by1);
+        for y in sy0..sy1 {
+            for x in sx0..sx1 {
+                let c = piece.coverage((x as f32 + 0.5, y as f32 + 0.5), hw);
+                if c <= 0.0 {
+                    continue;
+                }
+                let index = (y - by0) * sw + (x - bx0);
+                let slot = &mut scratch[index];
+                if *slot == 0 {
+                    touched.push(index);
+                }
+                let coverage = to_u8(c);
+                if coverage > *slot {
+                    *slot = coverage;
+                }
+            }
+        }
+    }
+    for index in touched {
+        let (row, col) = (index / sw, index % sw);
+        cv.blend(bx0 + col, by0 + row, rgba, scratch[index] as f32 / 255.0);
+    }
 }
 
 fn stroke_with_threads(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     pts: &[(f32, f32)],
     width: f32,
     rgba: [f32; 4],
     closed: bool,
-    dash: &[f32],
+    dash: (&[f32], f32),
     forced_threads: Option<usize>,
 ) {
+    let (dash, dash_offset) = dash;
     if pts.len() < 2 || width <= 0.0 {
         return;
     }
+    let dash: &[f32] = if usable_dash(dash) { dash } else { &[] };
     if pts.len() == 2 && !closed && dash.is_empty() {
         stroke_segment(cv, pts[0], pts[1], width, rgba);
         return;
@@ -504,9 +969,7 @@ fn stroke_with_threads(
         if total <= 0.0 {
             segs = raw;
         } else {
-            let mut di = 0usize;
-            let mut drem = dash[0];
-            let mut on = true;
+            let (mut di, mut drem, mut on) = dash_state(dash, dash_offset);
             for (a, b) in raw {
                 let (mut ax, mut ay) = a;
                 let seglen = ((b.0 - ax).powi(2) + (b.1 - ay).powi(2)).sqrt();
@@ -749,14 +1212,14 @@ fn pentagon_sdf(p: (f32, f32), r: f32) -> f32 {
 fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
     match sym {
         1 => px.abs().max(py.abs()) - r, // square
-        2 => (px.abs() + py.abs()) - r,  // diamond
+        2 => (px.abs() + py.abs()) - r * std::f32::consts::SQRT_2, // diamond
         3 | 8 | 9 | 10 => {
             // Matplotlib's normalized triangle: apex at one edge and a
             // full-width base at the opposite edge.
             let d = match sym {
                 8 => (-px, -py), // down
-                9 => (py, -px),  // left
-                10 => (-py, px), // right
+                9 => (-py, px),  // left
+                10 => (py, -px), // right
                 _ => (px, py),
             };
             triangle_sdf(d, (0.0, -r), (-r, r), (r, r))
@@ -774,7 +1237,7 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             (ax - 0.34 * r).max(ay - r).min((ax - r).max(ay - 0.34 * r))
         }
         13 => px.abs().max(py.abs()) - r,      // snapped pixel
-        14 => (px.abs() / 0.6 + py.abs()) - r, // thin diamond
+        14 => (px.abs() / 0.6 + py.abs()) - r * std::f32::consts::SQRT_2, // thin diamond
         15 => {
             // Unfilled plus: its width comes from markeredgewidth below.
             let (ax, ay) = (px.abs(), py.abs());
@@ -787,6 +1250,8 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             let (ax, ay) = (qx.abs(), qy.abs());
             (ax - r).max(ay).min((ay - r).max(ax))
         }
+        17 => (px.abs() - r).max(py.abs()), // unfilled horizontal line
+        18 => px.abs().max(py.abs() - r),   // unfilled vertical line
         5 => {
             // regular hexagon, pointy top (IQ SDF, x/y swapped for a top vertex)
             let (k0, k1, k2) = (-0.866_025_4_f32, 0.5_f32, 0.577_350_3_f32);
@@ -820,9 +1285,18 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
     }
 }
 
+#[inline]
+fn symbol_extent(r: f32, sym: u8) -> f32 {
+    if matches!(sym, 2 | 14) {
+        r * std::f32::consts::SQRT_2
+    } else {
+        r
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn point(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     cx: f32,
     cy: f32,
     r: f32,
@@ -836,7 +1310,7 @@ fn point(
 
 #[allow(clippy::too_many_arguments)]
 fn point_u8(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     cx: f32,
     cy: f32,
     r: f32,
@@ -865,7 +1339,7 @@ fn point_u8_at(
     let stroke_rgb = [stroke[0], stroke[1], stroke[2]];
     let fill_alpha = fill[3] as f32 / 255.0;
     let stroke_alpha = stroke[3] as f32 / 255.0;
-    let ext = r + 1.0;
+    let ext = symbol_extent(r, sym) + 1.0;
     let (bx0, by0, bx1, by1) = cv.bbox(cx - ext, cy - ext, cx + ext, cy + ext);
     if sw <= 0.0 && sym == 0 {
         // Stroke-free circle — the default mark and the overwhelming batch
@@ -937,7 +1411,7 @@ fn point_u8_at(
 
 #[allow(clippy::too_many_arguments)]
 fn blit(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -958,7 +1432,7 @@ const IMAGE_FANOUT_PX: f32 = 250_000.0;
 /// batch, an image writes every destination pixel once, so no bucketing or
 /// ordering merge is needed and the parallel result is byte-identical.
 fn paint_image_bands(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     y0: usize,
     y1: usize,
     threads: usize,
@@ -969,7 +1443,13 @@ fn paint_image_bands(
     }
     let threads = threads.min(y1 - y0).max(1);
     let band_rows = (y1 - y0).div_ceil(threads);
-    let (w, ch, opaque, clip) = (cv.w, cv.channels(), cv.opaque, cv.clip);
+    let (w, ch, opaque, clip, polar_clip) = (
+        cv.w,
+        cv.channels(),
+        cv.opaque,
+        cv.clip,
+        cv.polar_clip,
+    );
     let row_bytes = w * ch;
     let active = &mut cv.px[y0 * row_bytes..y1 * row_bytes];
     std::thread::scope(|scope| {
@@ -986,6 +1466,7 @@ fn paint_image_bands(
                     channels: ch,
                     opaque,
                     clip,
+                    polar_clip,
                 };
                 paint(&mut surface);
             });
@@ -995,7 +1476,7 @@ fn paint_image_bands(
 
 #[allow(clippy::too_many_arguments)]
 fn blit_with_threads(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -1068,7 +1549,7 @@ fn blit_with_threads(
 /// followed by `blit`, but avoids the 4x expanded image and its copy.
 #[allow(clippy::too_many_arguments)]
 fn blit_density(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -1124,7 +1605,7 @@ fn blit_density(
 /// rounding path, so raster-only borrowing cannot change output pixels.
 #[allow(clippy::too_many_arguments)]
 fn blit_heatmap(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -1172,8 +1653,7 @@ fn blit_heatmap(
 // ---- text (baked glyph atlas) -----------------------------------------------
 
 /// Atlas row for a char: the contiguous ASCII block, then the sorted extras.
-fn glyph_index(ch: char) -> Option<usize> {
-    let code = ch as u32;
+fn atlas_row(code: u32) -> Option<usize> {
     if (font::FIRST as u32..=font::LAST as u32).contains(&code) {
         return Some((code - font::FIRST as u32) as usize);
     }
@@ -1184,12 +1664,41 @@ fn glyph_index(ch: char) -> Option<usize> {
         .map(|i| ascii + i)
 }
 
+/// Atlas row for a char, substituting U+FFFD when the atlas has no glyph.
+///
+/// The atlas covers ASCII, Latin-1/Latin Extended-A, currency, Greek, and the
+/// math/typography set the pyplot shim emits — not CJK, not emoji. A character
+/// outside it used to be *dropped*: no glyph and no advance, so `東京` rendered
+/// as empty space in the PNG while the same figure's SVG rendered it correctly.
+/// Substituting the replacement character keeps the failure visible, which is
+/// what §28 asks of every decision the engine makes on the user's behalf.
+/// Zero-width and control characters stay dropped — they have nothing to show.
+fn glyph_index(ch: char) -> Option<usize> {
+    let code = ch as u32;
+    if let Some(row) = atlas_row(code) {
+        return Some(row);
+    }
+    if ch.is_control() || matches!(code, 0x200B..=0x200F | 0xFEFF) {
+        return None;
+    }
+    // Whitespace is *drawn* by its advance, not its shape, so a box is a worse
+    // answer than the space it stands for. Locale-aware number formatting emits
+    // NBSP (U+00A0) and narrow NBSP (U+202F) as group separators, so these do
+    // reach the rasterizer through ordinary tick labels.
+    if ch.is_whitespace() {
+        return atlas_row(' ' as u32);
+    }
+    atlas_row(0xFFFD)
+}
+
 /// High bit of the anchor byte requests 90°-CCW text (bottom-up y-axis titles).
 pub const TEXT_ROTATED: u8 = 0x80;
 /// 0x40 requests 90°-CW text (top-down right-margin titles, mpl rotation=270).
 pub const TEXT_ROTATED_CW: u8 = 0x40;
+const TEXT_ITALIC: u8 = 0x01;
+const TEXT_BOLD: u8 = 0x02;
 
-fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
+fn text(cv: &mut Canvas<'_>, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
     let rotated = anchor & TEXT_ROTATED != 0;
     let rotated_cw = anchor & TEXT_ROTATED_CW != 0;
     let anchor = anchor & !(TEXT_ROTATED | TEXT_ROTATED_CW);
@@ -1307,6 +1816,131 @@ fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], 
         } else {
             penx += advance as f32 * scale;
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn styled_text(
+    cv: &mut Canvas,
+    x: f32,
+    y: f32,
+    anchor: u8,
+    size: f32,
+    angle_degrees: f32,
+    flags: u8,
+    italic_ranges: &[(u32, u32)],
+    rgba: [f32; 4],
+    s: &[u8],
+) {
+    let scale = size / font::BASE_PX as f32;
+    let text = String::from_utf8_lossy(s);
+    let advance = text
+        .chars()
+        .filter_map(glyph_index)
+        .map(|index| font::GLYPHS[index].0 as f32)
+        .sum::<f32>()
+        * scale;
+    let mut pen = match anchor {
+        1 => -advance * 0.5,
+        2 => -advance,
+        _ => 0.0,
+    };
+    let theta = angle_degrees.to_radians();
+    let (sin_theta, cos_theta) = theta.sin_cos();
+    let bold_shift = if flags & TEXT_BOLD != 0 {
+        (size * 0.055).clamp(0.55, 1.2)
+    } else {
+        0.0
+    };
+
+    for (char_index, ch) in text.chars().enumerate() {
+        let Some(index) = glyph_index(ch) else {
+            continue;
+        };
+        let italic = flags & TEXT_ITALIC != 0
+            || italic_ranges
+                .iter()
+                .any(|&(start, end)| {
+                    start <= char_index as u32 && (char_index as u32) < end
+                });
+        let italic_shear = if italic { 0.22 } else { 0.0 };
+        let (glyph_advance, gw, gh, left, top, offset, len) = font::GLYPHS[index];
+        if gw > 0 && gh > 0 {
+            let coverage = &font::COVERAGE[offset as usize..(offset + len) as usize];
+            let sample =
+                |sx: usize, sy: usize| coverage[sy * gw as usize + sx] as f32 / 255.0;
+            let bilinear = |u: f32, v: f32| {
+                if u < -0.5 || v < -0.5 || u > gw as f32 - 0.5 || v > gh as f32 - 0.5 {
+                    return 0.0;
+                }
+                let u = u.clamp(0.0, gw as f32 - 1.0);
+                let v = v.clamp(0.0, gh as f32 - 1.0);
+                let (x0, y0) = (u.floor() as usize, v.floor() as usize);
+                let (x1, y1) = ((x0 + 1).min(gw as usize - 1), (y0 + 1).min(gh as usize - 1));
+                let (fx, fy) = (u - x0 as f32, v - y0 as f32);
+                sample(x0, y0) * (1.0 - fx) * (1.0 - fy)
+                    + sample(x1, y0) * fx * (1.0 - fy)
+                    + sample(x0, y1) * (1.0 - fx) * fy
+                    + sample(x1, y1) * fx * fy
+            };
+
+            let u0 = pen + left as f32 * scale;
+            let v0 = top as f32 * scale;
+            let u1 = u0 + gw as f32 * scale + bold_shift;
+            let v1 = v0 + gh as f32 * scale;
+            let transform = |u: f32, v: f32| {
+                let sheared_u = u - italic_shear * v;
+                (
+                    x + sheared_u * cos_theta - v * sin_theta,
+                    y + sheared_u * sin_theta + v * cos_theta,
+                )
+            };
+            let corners = [
+                transform(u0, v0),
+                transform(u1, v0),
+                transform(u1, v1),
+                transform(u0, v1),
+            ];
+            let min_x = corners
+                .iter()
+                .map(|point| point.0)
+                .fold(f32::INFINITY, f32::min);
+            let max_x = corners
+                .iter()
+                .map(|point| point.0)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let min_y = corners
+                .iter()
+                .map(|point| point.1)
+                .fold(f32::INFINITY, f32::min);
+            let max_y = corners
+                .iter()
+                .map(|point| point.1)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let (bx0, by0, bx1, by1) = cv.bbox(min_x, min_y, max_x, max_y);
+            for py in by0..by1 {
+                for px in bx0..bx1 {
+                    let dx = px as f32 + 0.5 - x;
+                    let dy = py as f32 + 0.5 - y;
+                    let sheared_u = dx * cos_theta + dy * sin_theta;
+                    let local_v = -dx * sin_theta + dy * cos_theta;
+                    let local_u = sheared_u + italic_shear * local_v;
+                    let atlas_u = (local_u - u0) / scale - 0.5;
+                    let atlas_v = (local_v - v0) / scale - 0.5;
+                    let mut alpha = bilinear(atlas_u, atlas_v);
+                    if bold_shift > 0.0 {
+                        alpha = alpha.max(bilinear(
+                            (local_u - bold_shift - u0) / scale - 0.5,
+                            atlas_v,
+                        ));
+                    }
+                    if alpha > 0.0 {
+                        cv.blend(px, py, rgba, alpha);
+                    }
+                }
+            }
+        }
+        pen += glyph_advance as f32 * scale;
     }
 }
 
@@ -1529,13 +2163,20 @@ fn raster_fanout(est_px: f32, min_px: f32, rows: usize) -> usize {
 /// item order, so every pixel receives the same blends in the same order as
 /// the serial pass.
 fn paint_banded(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     threads: usize,
     n_items: usize,
     y_extent: impl Fn(usize) -> Option<(f32, f32)>,
     paint: impl Fn(&mut Surface, &[u32]) + Sync,
 ) {
-    let (w, h, ch, opaque, clip) = (cv.w, cv.h, cv.channels(), cv.opaque, cv.clip);
+    let (w, h, ch, opaque, clip, polar_clip) = (
+        cv.w,
+        cv.h,
+        cv.channels(),
+        cv.opaque,
+        cv.clip,
+        cv.polar_clip,
+    );
     let n_bands = (threads * 4).min(h.div_ceil(8)).max(1);
     let band_rows = h.div_ceil(n_bands);
     let n_bands = h.div_ceil(band_rows);
@@ -1553,7 +2194,7 @@ fn paint_banded(
         }
     }
     let mut jobs = Vec::with_capacity(n_bands);
-    let mut rest = cv.px.as_mut_slice();
+    let mut rest = &mut cv.px[..];
     let mut y0 = 0;
     for bucket in buckets {
         let take = band_rows.min(h - y0);
@@ -1580,6 +2221,7 @@ fn paint_banded(
                     channels: ch,
                     opaque,
                     clip,
+                    polar_clip,
                 };
                 paint(&mut sf, &bucket);
             });
@@ -1606,10 +2248,9 @@ struct PointsBatch<'a> {
     fills: &'a [u8],
 }
 
-fn paint_points(cv: &mut Canvas, batch: &PointsBatch, threads: usize) {
+fn paint_points(cv: &mut Canvas<'_>, batch: &PointsBatch, threads: usize) {
     if threads <= 1 {
-        let indices: Vec<u32> = (0..batch.n as u32).collect();
-        paint_points_band(&mut cv.surface(), batch, &indices);
+        paint_points_band(&mut cv.surface(), batch, 0..batch.n);
         return;
     }
     paint_banded(
@@ -1618,16 +2259,20 @@ fn paint_points(cv: &mut Canvas, batch: &PointsBatch, threads: usize) {
         batch.n,
         |i| {
             let (cy, rr) = (f32_at(batch.ys, i), f32_at(batch.rs, i));
-            let ext = rr + batch.sw + 1.0;
+            let ext = symbol_extent(rr, batch.sym) + batch.sw + 1.0;
             Some((cy - ext, cy + ext))
         },
-        |sf, indices| paint_points_band(sf, batch, indices),
+        |sf, indices| paint_points_band(sf, batch, indices.iter().map(|&i| i as usize)),
     );
 }
 
-fn paint_points_band(sf: &mut Surface, b: &PointsBatch, indices: &[u32]) {
-    for &i in indices {
-        let i = i as usize;
+/// `items` is the mark order to paint: a band's bucketed indices when fanned
+/// out, or a plain `0..n` range when serial. Taking an iterator rather than a
+/// slice keeps the serial path from materializing an `0..n` index vector it
+/// would only read back in order (4 bytes per mark, megabytes on a direct-tier
+/// scatter); monomorphization makes both callers cost the same per mark.
+fn paint_points_band(sf: &mut Surface, b: &PointsBatch, items: impl IntoIterator<Item = usize>) {
+    for i in items {
         let (cx, cy, rr) = (f32_at(b.xs, i), f32_at(b.ys, i), f32_at(b.rs, i));
         // NaN coordinates poison the whole framebuffer via NaN-vs-clip
         // comparisons; skip them (the payload ships only finite marks, this
@@ -1691,7 +2336,7 @@ struct AffinePointsBatch<'a> {
     y: AffineAxis<'a>,
 }
 
-fn paint_affine_points(cv: &mut Canvas, batch: &AffinePointsBatch, threads: usize) {
+fn paint_affine_points(cv: &mut Canvas<'_>, batch: &AffinePointsBatch, threads: usize) {
     if threads <= 1 {
         for i in 0..batch.n {
             paint_affine_point(&mut cv.surface(), batch, i);
@@ -1709,7 +2354,7 @@ fn paint_affine_points(cv: &mut Canvas, batch: &AffinePointsBatch, threads: usiz
         xs.push(batch.x.project(i));
         ys.push(batch.y.project(i));
     }
-    let ext = batch.radius + batch.sw + 1.0;
+    let ext = symbol_extent(batch.radius, batch.sym) + batch.sw + 1.0;
     paint_banded(
         cv,
         threads,
@@ -1771,7 +2416,7 @@ struct StyledPointsBatch<'a> {
     fills: &'a [[u8; 4]],
 }
 
-fn paint_styled_points(cv: &mut Canvas, batch: &StyledPointsBatch, threads: usize) {
+fn paint_styled_points(cv: &mut Canvas<'_>, batch: &StyledPointsBatch, threads: usize) {
     if threads <= 1 {
         for i in 0..batch.n {
             paint_styled_point(&mut cv.surface(), batch, i);
@@ -1783,7 +2428,7 @@ fn paint_styled_points(cv: &mut Canvas, batch: &StyledPointsBatch, threads: usiz
         threads,
         batch.n,
         |i| {
-            let ext = batch.rs[i] + batch.sw + 1.0;
+            let ext = symbol_extent(batch.rs[i], batch.sym) + batch.sw + 1.0;
             Some((batch.ys[i] - ext, batch.ys[i] + ext))
         },
         |surface, indices| {
@@ -1823,10 +2468,9 @@ struct SegmentsBatch<'a> {
     colors: &'a [u8],
 }
 
-fn paint_segments(cv: &mut Canvas, batch: &SegmentsBatch, threads: usize) {
+fn paint_segments(cv: &mut Canvas<'_>, batch: &SegmentsBatch, threads: usize) {
     if threads <= 1 {
-        let indices: Vec<u32> = (0..batch.n as u32).collect();
-        paint_segments_band(&mut cv.surface(), batch, &indices);
+        paint_segments_band(&mut cv.surface(), batch, 0..batch.n);
         return;
     }
     paint_banded(
@@ -1838,13 +2482,18 @@ fn paint_segments(cv: &mut Canvas, batch: &SegmentsBatch, threads: usize) {
             let ext = batch.width * 0.5 + 1.0;
             Some((ay.min(by) - ext, ay.max(by) + ext))
         },
-        |sf, indices| paint_segments_band(sf, batch, indices),
+        |sf, indices| paint_segments_band(sf, batch, indices.iter().map(|&i| i as usize)),
     );
 }
 
-fn paint_segments_band(sf: &mut Surface, sb: &SegmentsBatch, indices: &[u32]) {
-    for &i in indices {
-        let i = i as usize;
+/// `items` is the mark order to paint; see `paint_points_band` on why this is
+/// an iterator rather than a slice.
+fn paint_segments_band(
+    sf: &mut Surface,
+    sb: &SegmentsBatch,
+    items: impl IntoIterator<Item = usize>,
+) {
+    for i in items {
         let a = (f32_at(sb.x0s, i), f32_at(sb.y0s, i));
         let b = (f32_at(sb.x1s, i), f32_at(sb.y1s, i));
         if !(a.0.is_finite() && a.1.is_finite() && b.0.is_finite() && b.1.is_finite()) {
@@ -1880,17 +2529,18 @@ fn read_affine_axis<'a>(
 
 /// Parse and paint a display list, retaining the native byte framebuffer so a
 /// latency-oriented PNG export can feed it straight into the encoder.
-fn rasterize_with_spans(
+fn rasterize_with_spans<'a>(
     cmds: &[u8],
     spans: &[&[u8]],
     w: usize,
     h: usize,
     opaque_white: bool,
-) -> Option<Canvas> {
+    px: &'a mut [u8],
+) -> Option<Canvas<'a>> {
     if w == 0 || h == 0 {
         return None;
     }
-    let mut cv = Canvas::new(w, h, opaque_white);
+    let mut cv = Canvas::wrap(w, h, opaque_white, px);
     let mut r = Reader { b: cmds, i: 0 };
     while r.i < cmds.len() {
         let op = r.u8()?;
@@ -1904,6 +2554,22 @@ fn rasterize_with_spans(
                         (x + cw).min(w as f32),
                         (y + ch).min(h as f32),
                     ];
+                    cv.polar_clip = None;
+                }
+                OP_POLAR_CLIP => {
+                    let (cx, cy, inner, outer) = (r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+                    let (start, sweep) = (r.f32()?, r.f32()?);
+                    let polar = PolarClip::new(cx, cy, inner, outer, start, sweep)?;
+                    // Retain the current rectangular plot clip and tighten it
+                    // by the outer disc bbox. The analytic predicate handles
+                    // the inner radius and angular interval at blend time.
+                    cv.clip = [
+                        cv.clip[0].max(cx - outer).max(0.0),
+                        cv.clip[1].max(cy - outer).max(0.0),
+                        cv.clip[2].min(cx + outer).min(w as f32),
+                        cv.clip[3].min(cy + outer).min(h as f32),
+                    ];
+                    cv.polar_clip = Some(polar);
                 }
                 OP_FILL_POLY => {
                     let n = r.u32()? as usize;
@@ -1929,7 +2595,7 @@ fn rasterize_with_spans(
                         grad_color(&stops, t)
                     });
                 }
-                OP_STROKE => {
+                OP_STROKE | OP_PHASED_STROKE => {
                     let n = r.u32()? as usize;
                     let pts = r.pts(n)?;
                     let width = r.f32()?;
@@ -1940,7 +2606,9 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
-                    stroke(&mut cv, &pts, width, c, closed, &dash);
+                    let dash_offset = if op == OP_PHASED_STROKE { r.f32()? } else { 0.0 };
+                    let cap = r.u8()?;
+                    stroke_shaped(&mut cv, &pts, width, c, closed, (&dash, dash_offset), cap);
                 }
                 OP_POINT => {
                     let (cx, cy, rr) = (r.f32()?, r.f32()?, r.f32()?);
@@ -1966,7 +2634,9 @@ fn rasterize_with_spans(
                     let stop_count = r.u32()? as usize;
                     let stop_bytes = r.bytes(stop_count.checked_mul(3)?)?;
                     let stops: Vec<[u8; 3]> = stop_bytes
-                        .chunks_exact(3)
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
                         .map(|stop| [stop[0], stop[1], stop[2]])
                         .collect();
                     let encoded_len = iw.checked_mul(ih)?;
@@ -1999,7 +2669,9 @@ fn rasterize_with_spans(
                     }
                     let stop_bytes = r.bytes(stop_count.checked_mul(3)?)?;
                     let stops: Vec<[u8; 3]> = stop_bytes
-                        .chunks_exact(3)
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
                         .map(|stop| [stop[0], stop[1], stop[2]])
                         .collect();
                     let width = if encoding == 1 { 8 } else { 4 };
@@ -2029,6 +2701,33 @@ fn rasterize_with_spans(
                     let nb = r.u32()? as usize;
                     let s = r.bytes(nb)?;
                     text(&mut cv, x, y, anchor, size, c, s);
+                }
+                OP_STYLED_TEXT => {
+                    let (x, y) = (r.f32()?, r.f32()?);
+                    let anchor = r.u8()?;
+                    let size = r.f32()?;
+                    let angle = r.f32()?;
+                    let flags = r.u8()?;
+                    let range_count = r.u32()? as usize;
+                    let mut italic_ranges = Vec::with_capacity(r.bounded_capacity(range_count, 8));
+                    for _ in 0..range_count {
+                        italic_ranges.push((r.u32()?, r.u32()?));
+                    }
+                    let c = r.rgba()?;
+                    let nb = r.u32()? as usize;
+                    let s = r.bytes(nb)?;
+                    styled_text(
+                        &mut cv,
+                        x,
+                        y,
+                        anchor,
+                        size,
+                        angle,
+                        flags,
+                        &italic_ranges,
+                        c,
+                        s,
+                    );
                 }
                 OP_POINTS => {
                     // Batched marks, struct-of-arrays: one header (symbol +
@@ -2119,7 +2818,7 @@ fn rasterize_with_spans(
                             output_scale,
                         },
                     };
-                    let side = 2.0 * (radius + sw + 1.0);
+                    let side = 2.0 * (symbol_extent(radius, sym) + sw + 1.0);
                     let est_px = side * side * n as f32;
                     paint_affine_points(
                         &mut cv,
@@ -2192,7 +2891,9 @@ fn rasterize_with_spans(
                         }
                         let bytes = r.bytes(count.checked_mul(3)?)?;
                         palette = bytes
-                            .chunks_exact(3)
+                            .as_chunks::<3>()
+                            .0
+                            .iter()
                             .map(|entry| [entry[0], entry[1], entry[2]])
                             .collect();
                     }
@@ -2260,7 +2961,7 @@ fn rasterize_with_spans(
                         };
                         fills.push(fill);
                         if radius.is_finite() {
-                            let side = 2.0 * (radius + sw + 1.0);
+                            let side = 2.0 * (symbol_extent(radius, sym) + sw + 1.0);
                             est_px += side * side;
                         }
                     }
@@ -2327,7 +3028,10 @@ fn rasterize_with_spans(
                             continue;
                         }
                         let pts = [(xa, ya), (xb, ya), (xb, yb), (xa, yb)];
-                        fill_rect(&mut cv, &pts, rgba_at(fills, i));
+                        let color = rgba_at(fills, i);
+                        if !fill_rect(&mut cv, &pts, color) {
+                            fill_poly(&mut cv, &pts, |_, _| color);
+                        }
                     }
                 }
                 OP_TRIANGLES | OP_STROKED_TRIANGLES => {
@@ -2385,8 +3089,9 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
+                    let cap = r.u8()?;
                     let points = smooth_points(xs, ys, n, x_scale, y_scale);
-                    stroke(&mut cv, &points, width, color, false, &dash);
+                    stroke_shaped(&mut cv, &points, width, color, false, (&dash, 0.0), cap);
                 }
                 _ => return None,
             }
@@ -2420,11 +3125,11 @@ pub fn rasterize_spans_into(
     if out.len() != w.checked_mul(h).and_then(|n| n.checked_mul(4)).unwrap_or(0) {
         return false;
     }
-    let Some(cv) = rasterize_with_spans(cmds, spans, w, h, false) else {
-        return false;
-    };
-    cv.to_rgba8(out);
-    true
+    // Paint straight into the caller's buffer. `Canvas::wrap` zeroes it first,
+    // which is exactly what the owned `vec![0; w * h * 4]` did, and straight
+    // alpha is already the canvas's own layout — so the export step that used
+    // to `copy_from_slice` a whole frame is now nothing at all.
+    rasterize_with_spans(cmds, spans, w, h, false, out).is_some()
 }
 
 /// Fused low-latency raster + PNG path. `Fast` uses fdeflate's PNG-tuned
@@ -2454,7 +3159,11 @@ pub fn rasterize_png_spans_into(
     out: &mut [u8],
 ) -> Option<usize> {
     let (wu, hu) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
-    let cv = rasterize_with_spans(cmds, spans, w, h, true)?;
+    // The PNG path is 3-channel and the destination is the encoded stream, so
+    // this one still owns its framebuffer — but it is a plane fewer than the
+    // RGBA path, and nothing is copied out of it.
+    let mut px = vec![0u8; w.checked_mul(h)?.checked_mul(3)?];
+    let cv = rasterize_with_spans(cmds, spans, w, h, true, &mut px)?;
     let mut cursor = Cursor::new(out);
     {
         let mut encoder = png::Encoder::new(&mut cursor, wu, hu);
@@ -2467,7 +3176,7 @@ pub fn rasterize_png_spans_into(
         encoder.set_compression(png::Compression::Fast);
         encoder.set_filter(png::Filter::Up);
         let mut writer = encoder.write_header().ok()?;
-        writer.write_image_data(&cv.px).ok()?;
+        writer.write_image_data(cv.px).ok()?;
         writer.finish().ok()?;
     }
     usize::try_from(cursor.position()).ok()
@@ -2500,6 +3209,94 @@ fn grad_color(stops: &[(f32, [f32; 4])], t: f32) -> [f32; 4] {
 mod tests {
     use super::*;
 
+    #[test]
+    fn horizontal_triangle_symbols_point_in_the_named_direction() {
+        let moment = |symbol| {
+            let mut total = 0.0;
+            for y in -20..=20 {
+                for x in -20..=20 {
+                    let px = x as f32 / 10.0;
+                    let py = y as f32 / 10.0;
+                    if symbol_sdf(px, py, 2.0, symbol) <= 0.0 {
+                        total += px;
+                    }
+                }
+            }
+            total
+        };
+
+        assert!(
+            moment(9) > 0.0,
+            "triangle_left must put its wide base right of the leftward apex"
+        );
+        assert!(
+            moment(10) < 0.0,
+            "triangle_right must put its wide base left of the rightward apex"
+        );
+    }
+
+    #[test]
+    fn diamond_symbols_match_matplotlib_marker_extents() {
+        let radius = 3.0;
+        let extent = radius * std::f32::consts::SQRT_2;
+
+        assert_eq!(symbol_extent(radius, 2), extent);
+        assert_eq!(symbol_extent(radius, 14), extent);
+        assert!(symbol_sdf(0.0, extent, radius, 2).abs() < 1e-6);
+        assert!(symbol_sdf(0.6 * extent, 0.0, radius, 14).abs() < 1e-6);
+    }
+
+    #[test]
+    fn axis_aligned_symbol_bounds_do_not_use_radial_corner_distance() {
+        let radius = 3.0;
+        let corner = radius * std::f32::consts::SQRT_2;
+        let boundary_points = [
+            (1, (radius, radius)),
+            (3, (-radius, radius)),
+            (8, (-radius, -radius)),
+            (9, (radius, radius)),
+            (10, (-radius, -radius)),
+            (13, (radius, radius)),
+        ];
+
+        for (symbol, (x, y)) in boundary_points {
+            assert_eq!(
+                symbol_extent(radius, symbol),
+                radius,
+                "symbol {symbol} has an axis-aligned half-extent of r"
+            );
+            assert!(
+                symbol_sdf(x, y, radius, symbol).abs() < 1e-6,
+                "symbol {symbol} must reach its diagonal boundary point"
+            );
+            assert_eq!(
+                x.abs().max(y.abs()),
+                radius,
+                "the AABB extent is not the corner's {corner} radial distance"
+            );
+        }
+    }
+
+    /// Backing store for a test canvas, which borrows rather than owns.
+    fn canvas_px(w: usize, h: usize, opaque: bool) -> Vec<u8> {
+        vec![0u8; w * h * if opaque { 3 } else { 4 }]
+    }
+
+    /// Paint a display list and hand back the framebuffer. The canvas borrows
+    /// its pixels now, so a test that wants to keep the result past the call
+    /// has to own the buffer itself.
+    fn rasterize_to_vec(
+        cmds: &[u8],
+        spans: &[&[u8]],
+        w: usize,
+        h: usize,
+        opaque: bool,
+    ) -> Option<Vec<u8>> {
+        let mut px = canvas_px(w, h, opaque);
+        rasterize_with_spans(cmds, spans, w, h, opaque, &mut px)?;
+        Some(px)
+    }
+
     fn px(out: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
         let o = (y * w + x) * 4;
         [out[o], out[o + 1], out[o + 2], out[o + 3]]
@@ -2513,6 +3310,41 @@ mod tests {
     }
     fn f64le(v: f64) -> [u8; 8] {
         v.to_le_bytes()
+    }
+
+    #[test]
+    fn atlas_covers_latin_and_currency_and_boxes_the_rest() {
+        // Accented Latin and non-ASCII currency used to have no atlas row, and
+        // a missing row meant the character was dropped outright — no glyph and
+        // no advance — so `Zürich` silently exported as `Zrich`.
+        for ch in ['é', 'ü', 'ł', 'Ø', '€', '£', '¥', '₹', 'α', '≤', '²'] {
+            let row = atlas_row(ch as u32);
+            assert!(row.is_some(), "atlas should carry {ch:?}");
+            let (advance, ..) = font::GLYPHS[row.unwrap()];
+            assert!(advance > 0, "{ch:?} should advance the pen");
+        }
+        // Outside the atlas: substituted, never dropped.
+        for ch in ['東', '🎉'] {
+            assert!(atlas_row(ch as u32).is_none(), "{ch:?} is not baked");
+            assert_eq!(
+                glyph_index(ch),
+                atlas_row(0xFFFD),
+                "{ch:?} should fall back to the replacement glyph"
+            );
+        }
+        // Zero-width and control characters have nothing to show.
+        for ch in ['\u{200b}', '\u{feff}', '\u{7}'] {
+            assert_eq!(glyph_index(ch), None, "{ch:?} should stay invisible");
+        }
+        // Whitespace draws by its advance, not its shape. Locale-aware number
+        // formatting emits these as group separators, so a box would be wrong.
+        for ch in ['\u{a0}', '\u{202f}', '\u{2009}'] {
+            assert_eq!(
+                glyph_index(ch),
+                atlas_row(' ' as u32),
+                "{ch:?} should render as a space"
+            );
+        }
     }
 
     #[test]
@@ -2552,6 +3384,84 @@ mod tests {
     }
 
     #[test]
+    fn polar_clip_handles_annular_sectors_in_both_directions() {
+        let ccw = PolarClip::new(10.0, 10.0, 3.0, 9.0, 0.0, std::f32::consts::FRAC_PI_2)
+            .expect("valid counterclockwise sector");
+        assert!(ccw.contains(15.0, 5.0));
+        assert!(!ccw.contains(10.0, 10.0), "the hole must stay empty");
+        assert!(!ccw.contains(5.0, 5.0), "the missing sector must stay empty");
+
+        let clockwise =
+            PolarClip::new(10.0, 10.0, 0.0, 9.0, 0.0, -std::f32::consts::FRAC_PI_2)
+                .expect("valid clockwise sector");
+        assert!(clockwise.contains(15.0, 15.0));
+        assert!(!clockwise.contains(15.0, 5.0));
+
+        let wide = PolarClip::new(
+            10.0,
+            10.0,
+            0.0,
+            9.0,
+            0.0,
+            1.5 * std::f32::consts::PI,
+        )
+        .expect("valid wide sector");
+        assert!(wide.contains(5.0, 10.0));
+        assert!(!wide.contains(15.0, 15.0));
+
+        let collapsed = PolarClip::new(10.0, 10.0, 9.0, 9.0, 0.0, std::f32::consts::TAU)
+            .expect("a float32-collapsed annulus is a valid empty clip");
+        assert_eq!(collapsed.pixel_coverage(18, 10), 0.0);
+    }
+
+    #[test]
+    fn polar_clip_opcode_masks_fill_and_rect_clip_resets_it() {
+        let mut cmd = vec![OP_CLIP];
+        for value in [0.0f32, 0.0, 20.0, 20.0] {
+            cmd.extend(f32le(value));
+        }
+        cmd.push(OP_POLAR_CLIP);
+        for value in [
+            10.0f32,
+            10.0,
+            4.0,
+            9.0,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+        ] {
+            cmd.extend(f32le(value));
+        }
+        cmd.push(OP_FILL_POLY);
+        cmd.extend(u32le(4));
+        for (x, y) in [(0.0f32, 0.0f32), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)] {
+            cmd.extend(f32le(x));
+            cmd.extend(f32le(y));
+        }
+        cmd.extend([255, 0, 0, 255]);
+
+        // A normal rectangular clip begins a new state and removes the shaped
+        // clip. Paint one small square in what was the missing sector.
+        cmd.push(OP_CLIP);
+        for value in [0.0f32, 0.0, 20.0, 20.0] {
+            cmd.extend(f32le(value));
+        }
+        cmd.push(OP_FILL_POLY);
+        cmd.extend(u32le(4));
+        for (x, y) in [(4.0f32, 4.0f32), (7.0, 4.0), (7.0, 7.0), (4.0, 7.0)] {
+            cmd.extend(f32le(x));
+            cmd.extend(f32le(y));
+        }
+        cmd.extend([0, 0, 255, 255]);
+
+        let mut out = vec![0u8; 20 * 20 * 4];
+        assert!(rasterize_into(&cmd, 20, 20, &mut out));
+        assert_eq!(px(&out, 20, 15, 5), [255, 0, 0, 255]);
+        assert_eq!(px(&out, 20, 10, 10), [0, 0, 0, 0]);
+        assert_eq!(px(&out, 20, 5, 14), [0, 0, 0, 0]);
+        assert_eq!(px(&out, 20, 5, 5), [0, 0, 255, 255]);
+    }
+
+    #[test]
     fn stroke_marks_a_line() {
         let mut cmd = vec![OP_STROKE];
         cmd.extend(u32le(2));
@@ -2563,10 +3473,79 @@ mod tests {
         cmd.extend([0, 0, 0, 255]);
         cmd.push(0); // not closed
         cmd.extend(u32le(0)); // no dash
+        cmd.push(CAP_ROUND);
         let mut out = vec![0u8; 10 * 10 * 4];
         assert!(rasterize_into(&cmd, 10, 10, &mut out));
         assert!(px(&out, 10, 5, 5)[3] > 200); // on the line
         assert_eq!(px(&out, 10, 5, 0)[3], 0); // far from it
+    }
+
+    /// stroke-linecap changes what is painted past the endpoint, and round —
+    /// XY's default — must keep drawing exactly what it drew before caps
+    /// existed, because it is the geometry every committed PNG expectation
+    /// was rendered with.
+    #[test]
+    fn stroke_caps_shape_the_ends() {
+        let ink = |cap: u8| {
+            let mut cmd = vec![OP_STROKE];
+            cmd.extend(u32le(2));
+            for (x, y) in [(10.0f32, 20.0f32), (30.0, 20.0)] {
+                cmd.extend(f32le(x));
+                cmd.extend(f32le(y));
+            }
+            cmd.extend(f32le(8.0)); // width
+            cmd.extend([0, 0, 0, 255]);
+            cmd.push(0); // not closed
+            cmd.extend(u32le(0)); // no dash
+            cmd.push(cap);
+            let mut out = vec![0u8; 40 * 40 * 4];
+            assert!(rasterize_into(&cmd, 40, 40, &mut out));
+            (0..40 * 40).filter(|i| out[i * 4 + 3] > 128).count()
+        };
+        // A square cap adds a half-width block at each end; a round cap adds a
+        // semicircle, which is less; a butt cap adds nothing.
+        assert!(ink(CAP_BUTT) < ink(CAP_ROUND));
+        assert!(ink(CAP_ROUND) < ink(CAP_SQUARE));
+
+        // Butt clips at the end plane: the pixel a half-width past the last
+        // point is painted for square, bare for butt.
+        let probe = |cap: u8| {
+            let mut cmd = vec![OP_STROKE];
+            cmd.extend(u32le(2));
+            for (x, y) in [(10.0f32, 20.0f32), (30.0, 20.0)] {
+                cmd.extend(f32le(x));
+                cmd.extend(f32le(y));
+            }
+            cmd.extend(f32le(8.0));
+            cmd.extend([0, 0, 0, 255]);
+            cmd.push(0);
+            cmd.extend(u32le(0));
+            cmd.push(cap);
+            let mut out = vec![0u8; 40 * 40 * 4];
+            assert!(rasterize_into(&cmd, 40, 40, &mut out));
+            px(&out, 40, 32, 20)[3]
+        };
+        assert_eq!(probe(CAP_BUTT), 0);
+        assert!(probe(CAP_SQUARE) > 200);
+    }
+
+    /// A dash pattern the public API cannot produce must not steer the walker.
+    #[test]
+    fn malformed_dash_patterns_fall_back_to_solid() {
+        assert!(usable_dash(&[6.0, 4.0]));
+        assert!(!usable_dash(&[]));
+        assert!(!usable_dash(&[6.0, -4.0]), "a negative entry would rewind the walker");
+        assert!(!usable_dash(&[6.0, f32::NAN]));
+        assert!(!usable_dash(&[f32::INFINITY, 4.0]));
+        assert!(!usable_dash(&[0.0, 4.0]));
+    }
+
+    #[test]
+    fn dash_state_handles_overflowing_cycle_length() {
+        assert_eq!(
+            dash_state(&[f32::MAX, f32::MAX], -1.0),
+            (0, f32::MAX, true)
+        );
     }
 
     #[test]
@@ -2578,9 +3557,11 @@ mod tests {
             ((15.25, 9.75), (15.25, 9.75), 2.0, [90, 40, 200, 128]),
         ];
         for opaque in [false, true] {
-            let mut fast = Canvas::new(30, 22, opaque);
+            let mut fast_px = canvas_px(30, 22, opaque);
+            let mut fast = Canvas::wrap(30, 22, opaque, &mut fast_px);
             fast.clip = [2.0, 1.0, 28.0, 21.0];
-            let mut reference = Canvas::new(30, 22, opaque);
+            let mut reference_px = canvas_px(30, 22, opaque);
+            let mut reference = Canvas::wrap(30, 22, opaque, &mut reference_px);
             reference.clip = fast.clip;
             for (a, b, width, color) in cases {
                 stroke_segment_u8_at(&mut fast.surface(), a, b, width, color);
@@ -2640,6 +3621,25 @@ mod tests {
     }
 
     #[test]
+    fn matplotlib_text_commands_umlauts_have_native_glyphs() {
+        assert!(glyph_index('ö').is_some());
+        assert!(glyph_index('ü').is_some());
+        let mut cmd = vec![OP_TEXT];
+        cmd.extend(f32le(1.0));
+        cmd.extend(f32le(30.0));
+        cmd.push(0); // anchor start
+        cmd.extend(f32le(20.0)); // size
+        cmd.extend([0, 0, 0, 255]);
+        let s = "öü".as_bytes();
+        cmd.extend(u32le(s.len() as u32));
+        cmd.extend_from_slice(s);
+        let mut out = vec![0u8; 40 * 40 * 4];
+        assert!(rasterize_into(&cmd, 40, 40, &mut out));
+        let ink: u32 = out.chunks(4).map(|p| (p[3] > 32) as u32).sum();
+        assert!(ink > 10, "umlaut glyphs produced no ink: {ink}");
+    }
+
+    #[test]
     fn rotated_cw_text_walks_downward() {
         // "II" rotated CW from (20, 5): ink extends down the column below the
         // start point, and none is drawn above it.
@@ -2688,7 +3688,22 @@ mod tests {
         smooth_dashes.extend([0; 8]); // width and RGBA
         smooth_dashes.extend(huge);
 
-        for cmd in [points, gradient_stops, stroke_dashes, smooth_dashes] {
+        let mut styled_text_ranges = vec![OP_STYLED_TEXT];
+        styled_text_ranges.extend(f32le(0.0)); // x
+        styled_text_ranges.extend(f32le(0.0)); // y
+        styled_text_ranges.push(0); // anchor
+        styled_text_ranges.extend(f32le(12.0)); // size
+        styled_text_ranges.extend(f32le(0.0)); // angle
+        styled_text_ranges.push(0); // flags
+        styled_text_ranges.extend(u32le(u32::MAX)); // no range bytes follow
+
+        for cmd in [
+            points,
+            gradient_stops,
+            stroke_dashes,
+            smooth_dashes,
+            styled_text_ranges,
+        ] {
             assert!(!rasterize_into(&cmd, 4, 4, &mut out));
         }
     }
@@ -2749,7 +3764,9 @@ mod tests {
         rs[8..12].copy_from_slice(&f32le(f32::NAN));
         let batch = PointsBatch {
             n,
-            sym: 0,
+            // Diamonds extend sqrt(2) beyond their nominal radius, so this
+            // also guards row-band bucketing against clipped tips.
+            sym: 2,
             sw: 0.5,
             stroke: [10, 10, 10, 255],
             xs: &xs,
@@ -2777,9 +3794,11 @@ mod tests {
         };
         for opaque in [true, false] {
             for threads in [3usize, 8] {
-                let mut serial = Canvas::new(w, h, opaque);
+                let mut serial_px = canvas_px(w, h, opaque);
+                let mut serial = Canvas::wrap(w, h, opaque, &mut serial_px);
                 serial.clip = [2.0, 3.0, w as f32 - 4.0, h as f32 - 2.0];
-                let mut banded = Canvas::new(w, h, opaque);
+                let mut banded_px = canvas_px(w, h, opaque);
+                let mut banded = Canvas::wrap(w, h, opaque, &mut banded_px);
                 banded.clip = serial.clip;
                 paint_points(&mut serial, &batch, 1);
                 paint_points(&mut banded, &batch, threads);
@@ -2787,8 +3806,10 @@ mod tests {
                     serial.px, banded.px,
                     "points opaque={opaque} threads={threads}"
                 );
-                let mut serial = Canvas::new(w, h, opaque);
-                let mut banded = Canvas::new(w, h, opaque);
+                let mut serial_px = canvas_px(w, h, opaque);
+                let mut serial = Canvas::wrap(w, h, opaque, &mut serial_px);
+                let mut banded_px = canvas_px(w, h, opaque);
+                let mut banded = Canvas::wrap(w, h, opaque, &mut banded_px);
                 paint_segments(&mut serial, &seg_batch, 1);
                 paint_segments(&mut banded, &seg_batch, threads);
                 assert_eq!(
@@ -2815,12 +3836,14 @@ mod tests {
                 (2.4, false, &[5.0, 2.0][..]),
                 (1.5, true, &[3.0, 1.0, 1.0, 1.0][..]),
             ] {
-                let mut serial = Canvas::new(101, 63, opaque);
+                let mut serial_px = canvas_px(101, 63, opaque);
+                let mut serial = Canvas::wrap(101, 63, opaque, &mut serial_px);
                 serial.clip = [2.0, 3.0, 98.0, 60.0];
-                let mut banded = Canvas::new(101, 63, opaque);
+                let mut banded_px = canvas_px(101, 63, opaque);
+                let mut banded = Canvas::wrap(101, 63, opaque, &mut banded_px);
                 banded.clip = serial.clip;
-                stroke_with_threads(&mut serial, &points, width, rgba, closed, dash, Some(1));
-                stroke_with_threads(&mut banded, &points, width, rgba, closed, dash, Some(4));
+                stroke_with_threads(&mut serial, &points, width, rgba, closed, (dash, 0.0), Some(1));
+                stroke_with_threads(&mut banded, &points, width, rgba, closed, (dash, 0.0), Some(4));
                 assert_eq!(
                     serial.px, banded.px,
                     "opaque={opaque} width={width} closed={closed} dash={dash:?}"
@@ -2833,7 +3856,7 @@ mod tests {
     fn banded_image_blit_matches_serial() {
         let (iw, ih) = (37usize, 23usize);
         let mut src = vec![0u8; iw * ih * 4];
-        for (i, pixel) in src.chunks_exact_mut(4).enumerate() {
+        for (i, pixel) in src.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel.copy_from_slice(&[
                 (i * 37 % 256) as u8,
                 (i * 101 % 256) as u8,
@@ -2844,9 +3867,11 @@ mod tests {
         for opaque in [true, false] {
             for nearest in [true, false] {
                 for threads in [3usize, 8] {
-                    let mut serial = Canvas::new(97, 61, opaque);
+                    let mut serial_px = canvas_px(97, 61, opaque);
+                    let mut serial = Canvas::wrap(97, 61, opaque, &mut serial_px);
                     serial.clip = [3.0, 2.0, 93.0, 59.0];
-                    let mut banded = Canvas::new(97, 61, opaque);
+                    let mut banded_px = canvas_px(97, 61, opaque);
+                    let mut banded = Canvas::wrap(97, 61, opaque, &mut banded_px);
                     banded.clip = serial.clip;
                     blit_with_threads(
                         &mut serial,
@@ -2920,11 +3945,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&compact, &[&encoded], 34, 24, opaque)
+            let got = rasterize_to_vec(&compact, &[&encoded], 34, 24, opaque)
                 .expect("compact density command");
-            let want = rasterize_with_spans(&expanded, &[], 34, 24, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 34, 24, opaque)
                 .expect("expanded image command");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 34 * 24 * 4];
@@ -2987,11 +4012,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&direct, &[&arena], 18, 11, opaque)
+            let got = rasterize_to_vec(&direct, &[&arena], 18, 11, opaque)
                 .expect("direct heatmap command");
-            let want = rasterize_with_spans(&expanded, &[], 18, 11, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 18, 11, opaque)
                 .expect("expanded image command");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut canonical = vec![OP_HEATMAP_IMAGE];
@@ -3016,11 +4041,11 @@ mod tests {
         }
         for opaque in [false, true] {
             let got =
-                rasterize_with_spans(&canonical, &[b"unused", &canonical_arena], 18, 11, opaque)
+                rasterize_to_vec(&canonical, &[b"unused", &canonical_arena], 18, 11, opaque)
                     .expect("canonical heatmap command");
-            let want = rasterize_with_spans(&expanded, &[], 18, 11, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 18, 11, opaque)
                 .expect("expanded image command");
-            assert_eq!(got.px, want.px, "canonical opaque={opaque}");
+            assert_eq!(got, want, "canonical opaque={opaque}");
         }
 
         let mut out = vec![0u8; 18 * 11 * 4];
@@ -3091,14 +4116,15 @@ mod tests {
             expanded.extend(stroke_color);
             expanded.push(1); // closed
             expanded.extend(u32le(0)); // no dash
+            expanded.push(CAP_ROUND);
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&batch, &[], 28, 30, opaque)
+            let got = rasterize_to_vec(&batch, &[], 28, 30, opaque)
                 .expect("batched stroked triangles");
-            let want = rasterize_with_spans(&expanded, &[], 28, 30, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 28, 30, opaque)
                 .expect("expanded stroked triangles");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 28 * 30 * 4];
@@ -3224,11 +4250,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&direct, &[&x_arena, &y_arena], 72, 52, opaque)
+            let got = rasterize_to_vec(&direct, &[&x_arena, &y_arena], 72, 52, opaque)
                 .expect("borrowed affine points");
             let want =
-                rasterize_with_spans(&expanded, &[], 72, 52, opaque).expect("expanded points");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+                rasterize_to_vec(&expanded, &[], 72, 52, opaque).expect("expanded points");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 72 * 52 * 4];
@@ -3324,11 +4350,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&direct, &[&arena], 48, 36, opaque)
+            let got = rasterize_to_vec(&direct, &[&arena], 48, 36, opaque)
                 .expect("borrowed affine channel points");
-            let want = rasterize_with_spans(&expanded, &[], 48, 36, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 48, 36, opaque)
                 .expect("expanded styled points");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 48 * 36 * 4];
@@ -3389,11 +4415,11 @@ mod tests {
         for rgb in stops {
             expanded_categories.extend([rgb[0], rgb[1], rgb[2], alpha]);
         }
-        let got = rasterize_with_spans(&categorical, &[&arena], 48, 36, false)
+        let got = rasterize_to_vec(&categorical, &[&arena], 48, 36, false)
             .expect("borrowed u8 categorical points");
-        let want = rasterize_with_spans(&expanded_categories, &[], 48, 36, false)
+        let want = rasterize_to_vec(&expanded_categories, &[], 48, 36, false)
             .expect("expanded categorical points");
-        assert_eq!(got.px, want.px);
+        assert_eq!(got, want);
 
         let mut bad_encoding = categorical;
         bad_encoding[147] = 2;

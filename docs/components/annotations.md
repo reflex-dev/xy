@@ -208,6 +208,16 @@ Annotation coordinates use the chart's axis space. Rules and markers take
 scalar coordinates or categories, bands take two endpoints, and arrows take a
 start and end point. They do not require a separate data table.
 
+Point-anchored `text`, `label`, `marker`, `arrow`, and `callout` annotations
+interpret data coordinates as `(theta, r)` consistently on polar charts in the
+browser, SVG, and native raster output. Their `dx` and `dy` offsets remain
+screen-space pixels, and the authored hole or excluded portion of a sector is
+clipped consistently. Polar rules and bands remain deferred: they need
+spokes/rings and sectors/annuli rather than Cartesian straight lines and
+rectangles. `hline`, `vline`, `x_band`, `y_band`, `threshold`, and
+`threshold_zone` therefore raise `ValueError` on a polar chart instead of
+drawing a Cartesian approximation.
+
 ## Styling and Paint Order
 
 Annotation geometry uses `color`, `width`, `opacity`, and component-specific
@@ -216,7 +226,10 @@ CSS subset.
 
 Annotation labels are browser DOM elements. Their `class_name` and `style`
 values can customize the label, and chart-level styling can target the stable
-`annotation_label` slot. Geometry `opacity` is independent from label text;
+`annotation_label` slot. The `annotation_layer` slot targets the entire
+canvas-painted annotation bitmap, for example to apply opacity or a filter to
+all geometry at once; CSS cannot select an individual rule, band, shaft, or
+marker inside that bitmap. Geometry `opacity` is independent from label text;
 use annotation-style `label_opacity` only when the label should also fade.
 Keep geometry in the component props when output must agree across HTML, SVG,
 and native PNG.

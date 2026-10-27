@@ -11,9 +11,11 @@
  *  - per-point size: constant or continuous (mapped to a px range)
  *  - GPU picking → exact-row hover tooltip (§7/§17 Tier-0 hover; exact values
  *    come from the kernel's f64 canonical store, §16)
- *  - Tier-2 density surface for massive scatter (§5): a kernel-binned count grid
- *    uploaded as a log-normalized R8 texture and colormapped at composite time,
- *    re-binned on zoom via a kernel round-trip (stale grid stays drawn until
+ *  - Tier-2 density surface for massive scatter (§5): a kernel-binned count
+ *    grid whose log-normalized count drives the ALPHA channel; channel-bearing
+ *    traces add a per-cell mean point-color plane (premultiplied RGBA8
+ *    texture), constant-color traces tint a 1-byte count texture (LOD doc §2).
+ *    Re-binned on zoom via a kernel round-trip (stale grid stays drawn until
  *    then, §17)
  *
  * Dependency-free: this file is the whole client. DOM is used only for chrome —
@@ -22,7 +24,66 @@
 
 // v6: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
 // density grids — a v5 client would render both silently wrong.
-export const PROTOCOL = 6;
+// v7: `colormap` may be explicit RGB stops rather than a built-in name, and the
+// spec may carry a chart `palette`. A v6 client indexes COLORMAP_STOPS with the
+// stop array, misses, and paints viridis without erroring.
+// v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
+// add wire values an older v7 client would accept but silently misrender.
+// v9: explicit minor axis ticks/styles, log nonpositive behavior,
+// `axis.tick_sides`/`axis.tick_label_sides`, scalar-normalization scale,
+// colorbar padding/explicit-axes placement, and contour-line overlays add wire
+// values a cached v8 client would accept but silently misrender.
+// v10: `title_options` carries independent left/center/right title artists,
+// including axes-fraction y and pixel padding. A v9 client would silently omit
+// non-center slots and their placement, so v10 rejects it before rendering.
+// v11: the chart-level `coords: "polar"` key and the angular axis descriptors
+// (`theta_unit`, `theta_zero`, `theta_direction`). A v10 client ignores
+// `coords` and draws the (theta, r) columns as cartesian x/y, so it must
+// reject the payload rather than render a plausible wrong picture.
+// v11 also adds the `ribbon` trace kind (flow bands; Sankey). markOf() falls
+// back to scatter for unknown kinds, so a v10 client would render ribbons as
+// a point cloud with no error.
+// v12: polar angular axes carry `sector`/`grid_shape`, and radial axes carry
+// `hole`/`r_origin`. A v11 client would accept those fields but silently draw
+// full circular, centre-origin geometry.
+// v13: the `funnel` trace kind. markOf() falls back to scatter for unknown
+// kinds, so a v12 client would silently render funnel quads as a point cloud.
+export const PROTOCOL = 13;
+
+// One wire-column -> generic GL-slot contract for funnel geometry. Object
+// insertion order is also the instance-attribute order used by build, filter,
+// animation, mix, and draw; keeping both facts here prevents one path from
+// silently swapping a quad edge while the others continue to look correct.
+export const FUNNEL_SLOTS = Object.freeze({
+  pos0: "x0",
+  pos1: "x1",
+  lo0: "y0",
+  hi0: "y1",
+  lo1: "x2",
+  hi1: "y2",
+});
+
+// Every GL buffer field a built trace — or a drill / sample-overlay clone of
+// one — can own. Teardown reads this list instead of a hand-kept subset: the
+// previous subset covered geometry only, so every rebuilt trace (a state-driven
+// data update, an append that cannot patch in place, an animated spec swap)
+// orphaned its style, direct-rgba colour, stroke, corner-radius, LOD-blend and
+// dashed line-length buffers, and repeated updates walked the GPU out of
+// memory. It lives here, in the leaf module, because both the ChartView
+// teardown and the LOD drill teardown must delete exactly the same set and
+// 45_lod cannot import from 50_chartview. `test_trace_teardown_deletes_every_gpu_buffer`
+// pins that every `<name>Buf` field assigned anywhere in js/src appears here,
+// so adding a channel buffer cannot silently reintroduce the leak.
+export const TRACE_GPU_BUFFERS = [
+  "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
+  "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
+  "t0Buf", "t1Buf",
+  "posBuf", "value1Buf", "value0Buf",
+  "rgbaBuf", "rgba2Buf", "styleBuf", "strokeBuf", "radiusBuf", "dBuf",
+  "_lenBuf", "_segmentDashOffsetBuf", "_segmentDashDirBuf",
+  "_transitionPrevXBuf", "_transitionPrevYBuf",
+  "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
+];
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL
@@ -43,6 +104,20 @@ export function xyByteSpan(value, label = "buffer") {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  // Databricks can construct comm buffers in its widget-manager realm before
+  // handing them to the realm that evaluates our anywidget module. An actual
+  // ArrayBuffer from another realm fails `instanceof ArrayBuffer`; use the
+  // intrinsic byteLength getter as a non-copying, non-spoofable brand check.
+  // Typed-array construction then creates a view over that same buffer.
+  try {
+    const byteLength = Object.getOwnPropertyDescriptor(
+      ArrayBuffer.prototype,
+      "byteLength"
+    )?.get?.call(value);
+    if (typeof byteLength === "number") return new Uint8Array(value);
+  } catch (_error) {
+    // Fall through to the existing public validation error below.
   }
   throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
 }

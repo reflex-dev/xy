@@ -1,9 +1,10 @@
-import { PROTOCOL, xyByteSpan } from "./00_header";
-import { buildLutData, colormapStops } from "./10_colormaps";
-import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
-import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
+import { FUNNEL_SLOTS, PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
+import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
+import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
+import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, FUNNEL_VS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { acquireGLHost } from "./42_glhost";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -19,10 +20,266 @@ export interface ChartView {
 }
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+// Subdivisions across one polar bar's angular span. Mirrored by
+// POLAR_BAR_SEGMENTS in python/xy/config.py so the raster exporter flattens the
+// same arc; the SVG exporter draws a true `A` arc and needs no count. Sized so
+// a full-turn wedge's chord sagitta stays under the XY_POLAR_AA expansion on a
+// ~1400-device-px disc — the fragment SDF then trims the strip to an exactly
+// round arc (see POLAR_WEDGE_GLSL in 40_gl.ts).
+const POLAR_BAR_SEGMENTS = 96;
+// Floor on any single wedge's subdivision: two segments keep a strip that still
+// brackets the true arc after the AA expansion, even for a hairline slice.
+const POLAR_BAR_SEGMENTS_MIN = 2;
+
+// Subdivisions for one wedge of angular width `span` out of `turn`. Mirrors
+// `polar_bar_segments` in python/xy/config.py.
+//
+// The count used to be a flat POLAR_BAR_SEGMENTS per wedge, sized for the worst
+// case of a wedge sweeping the whole circle. Almost no wedge does: a 16-sector
+// wind rose sweeps 22.5 degrees, so every bar paid 2*(96+1) = 194 vertices for an
+// arc that needs six segments, and 50k polar bars fell off a cliff building
+// ~9.7M vertices a frame instead of ~700k. Sagitta is quadratic in the
+// per-segment angle, so holding `span / n` fixed holds the flattening error
+// fixed: the honest count is exactly proportional, which reproduces 96 at a full
+// turn and preserves the bound for everything narrower. §28 — a recorded formula
+// over the AUTHORED angular width, never a view-dependent choice, so zooming and
+// exporting cannot change it.
+function xyPolarBarSegments(span, turn) {
+  // An unmeasurable span falls back to the full-turn count: under-subdividing a
+  // wide wedge is a visible facet, and paying for one is not.
+  if (!(turn > 0) || !Number.isFinite(span)) return POLAR_BAR_SEGMENTS;
+  const scaled = Math.ceil(POLAR_BAR_SEGMENTS * (Math.abs(span) / turn));
+  return Math.max(POLAR_BAR_SEGMENTS_MIN, Math.min(POLAR_BAR_SEGMENTS, scaled));
+}
+// Uniform room outside the outer ring for angular tick labels. Mirrored by
+// _POLAR_LABEL_ROOM in python/xy/_svg.py.
+const POLAR_LABEL_ROOM = 30;
+// Radial tick labels run along a spoke this many degrees off theta zero, and
+// angular labels sit this many px outside the rim. Mirrored by
+// _POLAR_RLABEL_DEG / _POLAR_TICK_GAP in python/xy/_svg.py.
+const POLAR_LABEL_ROOM_MAX = 90;
+const POLAR_RLABEL_DEG = 22.5;
+const POLAR_TICK_GAP = 8;
+// Direction theta=0 points, in radians ccw from east. Mirrored by THETA_ZERO in
+// python/xy/_svg.py; the wire carries the letters so one table serves all
+// renderers.
+const THETA_ZERO = { E: 0, N: Math.PI / 2, W: Math.PI, S: -Math.PI / 2 };
+// Gutter reserved for a legend beside a disc. A cartesian legend overlays the
+// plot because data rarely reaches a corner; a disc inscribed in its rect leaves
+// no corner at all, so an inside legend lands on the marks — an `upper right` box
+// covered a wind rose's whole north-east quadrant and the outer radial label
+// under it.
+//
+// A FRACTION OF THE CANVAS, clamped, rather than a measurement of the label set:
+// every renderer knows the canvas width to the pixel, so all three reserve the
+// identical box, while a measured reservation would drift with each renderer's
+// font metrics (system-ui here, DejaVu in the exporters). A flat constant was
+// tried first and is the wrong shape — 96 px ellipsized `Partner  (30%)`, an
+// ordinary pie slice's default name, while being a fifth of a phone canvas and a
+// fifteenth of a wide one. A label still wider than the gutter ellipsizes with
+// its full text in `title`/ARIA.
+// Mirrored by `_polar_legend_room` in python/xy/_svg.py.
+const POLAR_LEGEND_ROOM_FRACTION = 0.22;
+const POLAR_LEGEND_ROOM_MIN = 120;
+const POLAR_LEGEND_ROOM_MAX = 200;
+
+// `Math.floor`, not `Math.round`: Python and JavaScript disagree about half-way
+// cases, and the two must land on the same integer pixel.
+function xyPolarLegendRoom(width) {
+  const scaled = Math.floor(Number(width) * POLAR_LEGEND_ROOM_FRACTION);
+  return Math.min(POLAR_LEGEND_ROOM_MAX, Math.max(POLAR_LEGEND_ROOM_MIN, scaled));
+}
+
+const POLAR_LEGEND_BAND = 64;
+// DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
+// and the native rasterizer. Layout must retain proportional glyph metrics:
+// character count makes "WWWW" and "iiii" reserve the same (wrong) width.
+const XY_FONT_BASE_PX = 16;
+const XY_ASCII_FIRST = 32;
+const XY_ASCII_LAST = 126;
+const XY_ASCII_ADVANCES = [
+  5, 6, 7, 13, 10, 15, 12, 4, 6, 6, 8, 13, 5, 6, 5, 5, 10, 10, 10, 10,
+  10, 10, 10, 10, 10, 10, 5, 5, 13, 13, 13, 8, 16, 11, 11, 11, 12, 10, 9, 12,
+  12, 5, 5, 10, 9, 14, 12, 13, 10, 13, 11, 10, 10, 12, 11, 16, 11, 10, 11, 6,
+  5, 6, 13, 8, 8, 10, 10, 9, 10, 10, 6, 10, 10, 4, 4, 9, 4, 16, 10, 10,
+  10, 10, 7, 8, 6, 10, 9, 13, 9, 9, 8, 10, 5, 10, 13,
+];
+const XY_MISSING_ADVANCE = 16;
+// Canvas measureText() returns advances while the DOM clamp below operates on
+// painted element rectangles. Keep a small guard for an outside y title so
+// font rasterization/rounding cannot consume its authored title-to-tick gap.
+const Y_TITLE_MEASURE_SAFETY_PX = 2;
+
+// Greedy word wrap of already newline-split lines. Mirrors `wrap_lines` in
+// python/xy/_textblock.py, and matches what CSS `white-space: pre-line` does to
+// the same string: authored newlines are hard breaks, runs of other whitespace
+// collapse to one space, breaks are only taken at a space, and a word wider than
+// the limit keeps its own line and overflows (no `overflow-wrap` is set).
+function xyWrapLines(lines, advance, maxWidth) {
+  const wrapped = [];
+  for (const line of lines) {
+    const words = String(line).split(/\s+/).filter((word) => word.length);
+    if (!words.length) {
+      wrapped.push("");
+      continue;
+    }
+    let current = words[0];
+    for (const word of words.slice(1)) {
+      const candidate = `${current} ${word}`;
+      if (advance(candidate) <= maxWidth) current = candidate;
+      else {
+        wrapped.push(current);
+        current = word;
+      }
+    }
+    wrapped.push(current);
+  }
+  return wrapped;
+}
+
+function xyTextAdvance(text, fontSize) {
+  let units = 0;
+  for (const char of String(text)) {
+    const code = char.codePointAt(0) ?? 0;
+    units += code >= XY_ASCII_FIRST && code <= XY_ASCII_LAST
+      ? XY_ASCII_ADVANCES[code - XY_ASCII_FIRST]
+      : XY_MISSING_ADVANCE;
+  }
+  return Number(fontSize) * units / XY_FONT_BASE_PX;
+}
+
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
+// A compact vertical colorbar keeps its two EXTREME tick labels, stacked above
+// and below the gradient rather than beside it. Hiding every tick left an
+// unlabelled gradient — a colour ramp with no numbers on it says nothing at all,
+// so the compact form was not a smaller version of the chrome but the absence of
+// it. Stacking is what makes the fix free: a side gutter wide enough for `0.25`
+// cost 36 px of plot width, which is the very thing the compact collapse exists
+// to protect, while two centred labels overflow the 18 px bar by ~4 px a side and
+// fit inside the gap that is already reserved. Interior ticks and the rotated
+// title are what a phone-width chart genuinely cannot afford; the title stays
+// readable through the box's own `title`/ARIA text.
+const COMPACT_COLORBAR_LABEL_GAP = 3;
 let XY_A11Y_ID = 0;
+// Legend hover emphasis (interaction spec §9): opacity kept by non-hovered series on
+// the marks canvas, and by non-hovered rows in the legend box itself.
+const LEGEND_DIM_OPACITY = 0.2;
+const LEGEND_DIM_ROW = 0.4;
+// Legend click-toggle (interaction spec §10): opacity of a toggled-off row.
+const LEGEND_OFF_ROW = 0.35;
+// Live ``loc="best"`` placement scores the pixels that were actually painted,
+// not source rows.  The fixed raster makes the pass screen- and data-bounded
+// for direct, decimated, and density tiers alike. The first measurable score
+// takes the exact minimum, with canonical candidate order breaking true ties.
+// Later settled scores retain the live winner across sub-5-point occupancy
+// changes; an empty challenger still always beats an occupied current box.
+const LEGEND_BEST_GRID_W = 96;
+const LEGEND_BEST_GRID_H = 72;
+const LEGEND_BEST_INSET_PX = 6;
+const LEGEND_BEST_HYSTERESIS = 0.05;
+const LEGEND_BEST_SCORE_EPSILON = 1e-12;
+const LEGEND_BEST_ORDER = [
+  "upper right",
+  "upper left",
+  "lower left",
+  "lower right",
+  "center right",
+  "center left",
+  "lower center",
+  "upper center",
+  "center",
+];
+
+/** Pick the least-occupied standard legend box from a binary screen raster.
+ * All geometry is normalized to the plot, which keeps this helper independent
+ * of the DOM and makes its tie behavior directly probeable. */
+function xyLegendBestLocation(
+  occupancy: ArrayLike<number>,
+  gridW: number,
+  gridH: number,
+  boxW: number,
+  boxH: number,
+  insetX = 0,
+  insetY = 0,
+  currentLoc: string | null = null,
+  hysteresis = 0,
+  blockedLocs: ReadonlySet<string> | null = null,
+): string {
+  const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
+  const gw = Math.max(1, Math.floor(Number(gridW) || 0));
+  const gh = Math.max(1, Math.floor(Number(gridH) || 0));
+  const bw = clamp(Number(boxW) || 0, 0, 1);
+  const bh = clamp(Number(boxH) || 0, 0, 1);
+  const ix = clamp(Number(insetX) || 0, 0, 0.5);
+  const iy = clamp(Number(insetY) || 0, 0, 0.5);
+  const left = clamp(ix, 0, Math.max(0, 1 - bw));
+  const right = clamp(1 - ix - bw, 0, Math.max(0, 1 - bw));
+  const centerX = Math.max(0, (1 - bw) / 2);
+  const upper = clamp(iy, 0, Math.max(0, 1 - bh));
+  const lower = clamp(1 - iy - bh, 0, Math.max(0, 1 - bh));
+  const centerY = Math.max(0, (1 - bh) / 2);
+  const positions = {
+    "upper right": [right, upper],
+    "upper left": [left, upper],
+    "lower left": [left, lower],
+    "lower right": [right, lower],
+    "center right": [right, centerY],
+    "center left": [left, centerY],
+    "lower center": [centerX, lower],
+    "upper center": [centerX, upper],
+    center: [centerX, centerY],
+  };
+  const scores = new Map<string, number>();
+  for (const loc of LEGEND_BEST_ORDER) {
+    const [x, y] = positions[loc];
+    const x0 = clamp(Math.floor(x * gw), 0, gw);
+    const x1 = clamp(Math.ceil((x + bw) * gw), x0, gw);
+    const y0 = clamp(Math.floor(y * gh), 0, gh);
+    const y1 = clamp(Math.ceil((y + bh) * gh), y0, gh);
+    let occupied = 0;
+    for (let row = y0; row < y1; row++) {
+      const offset = row * gw;
+      for (let col = x0; col < x1; col++) {
+        if (occupancy[offset + col]) occupied += 1;
+      }
+    }
+    const area = Math.max(1, (x1 - x0) * (y1 - y0));
+    const score = occupied / area;
+    scores.set(loc, score);
+  }
+  const unblocked = blockedLocs
+    ? LEGEND_BEST_ORDER.filter((loc) => !blockedLocs.has(loc))
+    : LEGEND_BEST_ORDER;
+  // Oversized legends can geometrically intersect a prior box everywhere. In
+  // that unavoidable case, fall back to the ordinary exact occupancy score.
+  const candidates = unblocked.length ? unblocked : LEGEND_BEST_ORDER;
+  const floor = candidates.reduce(
+    (lowest, loc) => Math.min(lowest, scores.get(loc) ?? Infinity),
+    Infinity,
+  );
+  const winner = candidates.find(
+    (loc) => (scores.get(loc) ?? Infinity) === floor,
+  ) || candidates[0];
+  const currentScore = currentLoc == null ? undefined : scores.get(currentLoc);
+  if (
+    currentLoc == null ||
+    currentScore == null ||
+    !candidates.includes(currentLoc) ||
+    !(hysteresis > 0) ||
+    winner === currentLoc
+  ) return winner;
+  // A truly empty destination is qualitatively better than any overlap. Keep
+  // that sparse-data guarantee even when the fractional improvement is below
+  // the live stability band (for example one occupied cell in a large box).
+  if (floor === 0 && currentScore > 0) return winner;
+  const improvement = currentScore - floor;
+  return improvement + LEGEND_BEST_SCORE_EPSILON < hysteresis ? currentLoc : winner;
+}
+// SVG gradient ids resolve document-wide; a module counter keeps every chart
+// instance's legend swatch ramps distinct.
+let legendGradientSeq = 0;
 const XY_SR_ONLY_STYLE =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
   "clip:rect(0,0,0,0);white-space:nowrap;border:0;";
@@ -335,6 +592,9 @@ export class ChartView {
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
+    // Title y/pad placement is a binary geometry column, so it must be
+    // available before the constructor's first layout pass.
+    this._payload = buffer;
     this.interaction = spec.interaction || {};
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
@@ -401,7 +661,6 @@ export class ChartView {
     // Retained for GL context restore: the payload is screen-bounded (§29) so
     // keeping it is cheap, and every GPU object is rebuildable from
     // spec + payload by design (§18/§27).
-    this._payload = buffer;
     this._glLost = false;
     this._ctxReleasedExt = null;
     this._ctxReleases = 0;
@@ -412,7 +671,17 @@ export class ChartView {
     this._ctxLostPending = false;
     this._ctxRecoverRequested = false;
     this._ctxVisible = xyInitiallyVisible(el);
-    XY_CONTEXT_GOVERNOR.register(this);
+    // Top-level documents default to one shared WebGL2 host. Child frames keep
+    // the existing governed per-chart path unless explicitly opted in: the
+    // browser's context quota spans frames, while a WebGL context cannot cross
+    // their realm/document boundary.
+    this._glHost = null;
+    this._present2d = null;
+    this._sharedGlAttempted = false;
+    this._governorRegistered = false;
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
+    this._glHostRebuildFailures = 0;
     if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
@@ -424,7 +693,12 @@ export class ChartView {
       // points intentionally let the exception surface. Leave a useful DOM
       // fallback behind for browsers without WebGL2; recovery attempts catch
       // the same error themselves and therefore never replace their canvas.
-      XY_CONTEXT_GOVERNOR.unregister(this);
+      if (this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR.unregister(this);
+        this._governorRegistered = false;
+      }
+      this._glHost?.release(this);
+      this._glHost = null;
       if (String(err && err.message || err) === "webgl2 unavailable") {
         this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       }
@@ -461,7 +735,7 @@ export class ChartView {
     this._onScheme = () => this.refreshTheme();
     this._themeWatch.addEventListener?.("change", this._onScheme);
     // Framework theme switches usually toggle a class (for example `.dark`)
-    // on the chart or one of its ancestors without changing the OS color
+    // or data-theme on the chart or an ancestor without changing the OS color
     // scheme. Watch that cascade path as well so canvas/SVG paint refreshed
     // from --chart-* tokens stays in sync with the CSS-owned chart chrome.
     if (typeof MutationObserver !== "undefined") {
@@ -469,7 +743,7 @@ export class ChartView {
       for (let node = this.root; node; node = node.parentElement) {
         this._themeMutationObserver.observe(node, {
           attributes: true,
-          attributeFilter: ["class", "style"],
+          attributeFilter: ["class", "data-theme", "style"],
         });
       }
     }
@@ -488,50 +762,465 @@ export class ChartView {
     const colorbar = this.spec.colorbar;
     const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
     const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
+    const axesColorbar = colorbar && colorbar.placement === "axes";
     // Fluid charts have to remain useful inside dashboard columns. On compact
     // widths, cap only oversized authored horizontal padding and collapse a
     // vertical colorbar to its gradient; the full tick/title chrome returns
     // automatically when the container widens again.
     const responsivePad = this.fluid && compact && pad;
-    const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
-    this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
+    this._compactVerticalColorbar = Boolean(
+      this.fluid && compact && verticalColorbar && !axesColorbar
+    );
+    const automaticColorbarGap = colorbar && colorbar.pad === 0 ? 0 : 24;
     const colorbarRightRoom = verticalColorbar
-      ? (this._compactVerticalColorbar
-        ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
-        : 86 + (colorbar.label ? 18 : 0))
+      ? axesColorbar
+        ? 44 + (colorbar.label ? 18 : 0)
+        : (this._compactVerticalColorbar
+          ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+          : 62 + automaticColorbarGap + (colorbar.label ? 18 : 0))
       : 0;
-    const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
+    const colorbarBottomRoom = horizontalColorbar
+      ? (axesColorbar ? 24 : 38) + (colorbar.label ? 16 : 0)
+      : 0;
     const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
     const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
-    const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
-    const hasBottomAxis = Object.values<any>(this.axes || {}).some((axis: any) =>
-      axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
+    const baseBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
+    const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
+      axis && String(axis.id || "").startsWith("x") &&
+      (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
       this._axisTickLabelStrategy(axis) !== "none");
-    this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+    const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
     // on the bottom. Reserve one shared gutter for every top-side x axis;
     // multiple axes on the same side intentionally overlay until axis offsets
     // become part of the public API (the same rule used by secondary y axes).
-    const topAxisRoom = Object.values<any>(this.axes || {}).some((axis: any) =>
-      axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
-      this._axisTickLabelStrategy(axis) !== "none")
-      ? (compact ? 26 : 32)
-      : 0;
-    const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
+    const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
+      axis && String(axis.id || "").startsWith("x") &&
+      (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
+      this._axisTickLabelStrategy(axis) !== "none");
+    const hasTopAxis = topAxes.length > 0;
+    const authoredLeft = pad
+      ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
+      : (compact ? 46 : MARGIN.l);
+    // Width the title wraps at. Resolved from the authored/default gutters
+    // (`baseRight`, before colorbar and right-axis room) rather than the final
+    // plot rect, because the measured left gutter depends on the plot height,
+    // which depends on the title band — wrapping at the final width would be
+    // circular. Mirrors `_title_wrap_width` in python/xy/_svg.py.
+    //
+    // The title DIV wraps whether or not layout accounts for it (white-space is
+    // `pre-line`), so measuring one line and drawing two put the first line
+    // above the canvas: a compact Wind Rose title lost about 10 px off its top.
+    // `_positionTitles` caps the element at this same width, so what the DOM
+    // wraps is exactly what is reserved here.
+    this._titleWrapWidth = Math.max(40, this.size.w - authoredLeft - baseRight);
+    const titleRoom = this._titleEntries().reduce((room, entry) => {
+      const authoredSize = Number.parseFloat(entry.style?.["font-size"]);
+      const titleFontSize = Number.isFinite(authoredSize)
+        ? authoredSize
+        : this._slotFontSize("title", 14);
+      const measured = this._estimateTickLabel(
+        entry.text, titleFontSize, this._titleWrapWidth,
+      ).h;
+      const pad = Number.isFinite(Number(entry.pad)) ? Number(entry.pad) : 8;
+      const candidate = entry.automatic_y !== false
+        ? Math.max(compact ? 26 : 30, measured + pad)
+        : (Number(entry.y ?? 1) >= 1 ? measured + pad : 0);
+      return Math.max(room, candidate);
+    }, 0);
+    this._titleRoom = titleRoom;
+    const provisionalTopAxisRoom = hasTopAxis ? (compact ? 26 : 32) : 0;
+    const provisionalBottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+    const provisionalTop = marginTop + titleRoom + provisionalTopAxisRoom;
+    const provisionalBottom =
+      Math.max(baseBottom, provisionalBottomAxisRoom) + colorbarBottomRoom;
+    const plotHeight = Math.max(40, this.size.h - provisionalTop - provisionalBottom);
+    // Explicit padding is a floor, not permission to clip. Long numeric or
+    // categorical ticks and an outside y title reserve the room their actual
+    // strings need before the plot rectangle is fixed.
+    const measuredLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
-      axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
+      (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
+      this._axisTickLabelStrategy(axis) !== "none");
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
     const right = marginRight + this._rightAxisRoom;
+    // Measurement can consume spare canvas room, but it must not move the
+    // y-axis anchor past the viewport on a chart whose authored padding has
+    // already reached the 40 px plot floor. In that compact case the tick
+    // labels retain their full text in `title`/ARIA and ellipsize in bounds.
+    const measuredLeftCap = Math.max(authoredLeft, this.size.w - right - 40);
+    const marginLeft = Math.min(measuredLeft, measuredLeftCap);
+    const plotWidth = Math.max(40, this.size.w - marginLeft - right);
+    const measuredTopAxisRoom = this._xAxisRoom("top", plotWidth);
+    const measuredBottomAxisRoom = this._xAxisRoom("bottom", plotWidth);
+    const topAxisRoom = hasTopAxis
+      ? Math.max(provisionalTopAxisRoom, measuredTopAxisRoom)
+      : 0;
+    this._topAxisRoom = topAxisRoom;
+    const bottomAxisRoom = hasBottomAxis
+      ? Math.max(provisionalBottomAxisRoom, measuredBottomAxisRoom)
+      : 0;
+    this._bottomAxisRoom = bottomAxisRoom;
+    const top = marginTop + titleRoom + topAxisRoom;
+    const marginBottom =
+      (measuredBottomAxisRoom ? Math.max(baseBottom, measuredBottomAxisRoom) : baseBottom)
+      + colorbarBottomRoom;
     this.plot = {
       x: marginLeft,
       y: top,
-      w: Math.max(40, this.size.w - marginLeft - right),
+      w: plotWidth,
       h: Math.max(40, this.size.h - top - marginBottom),
     };
+    // The box legends place themselves in. Null means "the plot rect", which is
+    // every cartesian chart and every polar chart that reserves no gutter — kept
+    // null rather than aliased to `this.plot`, because `_recutPolarPlot` REPLACES
+    // that object and an alias would freeze the pre-recut geometry.
+    this._legendRect = null;
+    this._recutPolarPlot(compact);
+  }
+
+  // Side and px a polar legend gutter claims, or null when nothing is reserved:
+  // a non-polar figure, no legend rows, an authored `anchor` (an explicit
+  // plot-relative placement the author owns), or an authored 4-tuple `padding`
+  // (which already states the box the plot should occupy, and is the documented
+  // way to hand-reserve a caption band).
+  // Mirrors `_polar_legend_reserve` in python/xy/_svg.py.
+  _polarLegendReserve(compact) {
+    const s = this.spec || {};
+    if (s.coords !== "polar" || s.show_legend === false) return null;
+    if (Array.isArray(s.padding) && s.padding.length === 4) return null;
+    const options = s.legend || {};
+    if (Array.isArray(options.anchor) && [2, 4].includes(options.anchor.length)) return null;
+    const hasRows = (options.items || []).length > 0
+      || (s.extra_legends || []).length > 0
+      || (s.traces || []).some((t) =>
+        t && (t.name || (t.color && t.color.mode === "categorical")));
+    if (!hasRows) return null;
+    if (compact) return { side: "bottom", room: POLAR_LEGEND_BAND };
+    const loc = String(options.loc || "upper right");
+    return {
+      side: loc.includes("left") ? "left" : "right",
+      room: xyPolarLegendRoom(this.size.w),
+    };
+  }
+
+  // Re-cut the plot rect for a disc. Mirrors `_recut_polar_plot` in
+  // python/xy/_svg.py; the two must agree or the same chart renders at a
+  // different size and centre in the browser than in an export.
+  //
+  // Cartesian tick-label gutters hold labels hugging the left and bottom edges.
+  // A polar chart rings its labels around the rim instead, so those gutters are
+  // symmetrised (not simply zeroed — a colorbar that genuinely claimed space
+  // keeps it), and a uniform allowance is reserved all the way around.
+  // Room outside the ring for the angular tick labels. Measured rather than
+  // fixed: authored category names are far wider than an angle, and a constant
+  // allowance hard-clipped them. Mirrors `_polar_label_room` in
+  // python/xy/_svg.py — including the ceiling, past which a pathological label
+  // truncates instead of shrinking the disc away.
+  _polarLabelRoom(axis) {
+    // A category axis carries its authored names in `categories` and usually
+    // has no `tick_labels` at all (`_axisTicks` hands the categories straight
+    // to `categoryTicks`), so measuring only `tick_labels` fell back to the
+    // uniform default and long names spilled over the disc.
+    const labels = (axis && axis.tick_labels)
+      || (axis && axis.kind === "category" ? axis.categories : null);
+    if (!Array.isArray(labels) || !labels.length) return POLAR_LABEL_ROOM;
+    const size = this._axisStyleNumber(axis, "tick_label_size", 11);
+    let widest = 0;
+    for (const text of labels) widest = Math.max(widest, xyTextAdvance(String(text), size));
+    return Math.min(
+      POLAR_LABEL_ROOM_MAX,
+      Math.max(POLAR_LABEL_ROOM, widest + POLAR_TICK_GAP + 4),
+    );
+  }
+
+  _recutPolarPlot(compact = false) {
+    if (this.spec?.coords !== "polar") return;
+    const xAxisSpec = this._axis("x") || {};
+    // Hiding the angular tick labels removes the LABEL inset, not the legend
+    // gutter. Returning here skipped `_polarLegendReserve` outright, and since
+    // `_layout` clears `_legendRect` just before this call, legend sizing and
+    // positioning then fell back to `this.plot` and drew the legend on top of
+    // the marks. Track it and skip only the inset.
+    const labelsHidden = this._axisTickLabelStrategy(xAxisSpec) === "none";
+    // A legend gutter comes off the canvas edge FIRST, before the disc is fitted
+    // to what remains, so the disc never occupies the gutter and the legend
+    // never occupies the disc. Mirrors the same block in `_recut_polar_plot`.
+    let canvasX0 = 0;
+    let canvasW = this.size.w;
+    let canvasH = this.size.h;
+    const reserve = this._polarLegendReserve(compact);
+    if (reserve) {
+      const p0 = { ...this.plot };
+      if (reserve.side === "left") {
+        canvasX0 = reserve.room;
+        this._legendRect = { x: 0, y: p0.y, w: reserve.room, h: p0.h };
+        p0.x = Math.max(p0.x, reserve.room);
+      } else if (reserve.side === "right") {
+        canvasW -= reserve.room;
+        this._legendRect = { x: canvasW, y: p0.y, w: reserve.room, h: p0.h };
+      } else {
+        canvasH -= reserve.room;
+        this._legendRect = { x: p0.x, y: canvasH, w: p0.w, h: reserve.room };
+      }
+      p0.w = Math.max(40, Math.min(p0.w, canvasW - p0.x));
+      p0.h = Math.max(40, Math.min(p0.h, canvasH - p0.y));
+      this.plot = p0;
+    }
+    const p = this.plot;
+    const reservedTop = p.y;
+    const reservedRight = canvasW - p.x - p.w;
+    const reservedBottom = canvasH - p.y - p.h;
+    const room = labelsHidden ? 0 : this._polarLabelRoom(xAxisSpec);
+    // An explicit `padding` states the box the author wants the plot to
+    // occupy — usually to reserve a band under the disc for a legend or
+    // caption. Reclaiming those gutters below would throw that away, so an
+    // authored box is only inset by the uniform label room. Mirrors the same
+    // early return in `_recut_polar_plot` (python/xy/_svg.py).
+    if (Array.isArray(this.spec.padding) && this.spec.padding.length === 4) {
+      const boxW = p.w - 2 * room;
+      const boxH = p.h - 2 * room;
+      if (boxW >= 40 && boxH >= 40) {
+        this.plot = { ...p, x: p.x + room, y: p.y + room, w: boxW, h: boxH };
+        this._topAxisRoom = (this._topAxisRoom || 0) + room;
+      }
+      return;
+    }
+    const side = Math.max(room, reservedRight);
+    // A radial-axis title still lives in the left gutter — a disc gives it no
+    // natural home — and it is placed outward past the tick-label room, so a
+    // titled radial axis keeps its gutter whole rather than part-reclaimed.
+    const yAxis = this._axis("y") || {};
+    const titled = !!yAxis.label;
+    // `canvasX0` is a left legend gutter; the label room still applies inside
+    // it. With no gutter it is 0 and `side >= room`, so this is the old value.
+    const left = Math.max(titled ? Math.max(side, p.x) : side, canvasX0 + room);
+    const right = canvasW - side;
+    // Only the bottom can be symmetrised: the top also holds the figure title,
+    // and the bottom keeps its full band when the theta axis has a title of its
+    // own (it is drawn there; reclaiming the band pushed it off the canvas).
+    const xAxis = this._axis("x") || {};
+    // A horizontal colorbar hangs off the plot's bottom edge; extending the
+    // rect downward would walk it off the canvas.
+    const keepsBottom = !!xAxis.label || this.spec?.colorbar?.orientation === "horizontal";
+    const bottomReserve = keepsBottom ? reservedBottom : Math.min(reservedBottom, reservedTop);
+    const bottom = canvasH - Math.max(room, bottomReserve);
+    const top = reservedTop + room;
+    const w = right - left;
+    const h = bottom - top;
+    if (!(w >= 40) || !(h >= 40)) return;
+    this.plot = { ...p, x: left, y: top, w, h };
+    // The top slice is angular-label room, so it belongs to the axis
+    // reservation: `_positionTitles` anchors at `plot.y - _topAxisRoom`, and
+    // without this the title rides the rect down and the topmost angular label
+    // lands on top of it. Mirrors the same line in `_recut_polar_plot`.
+    this._topAxisRoom = (this._topAxisRoom || 0) + room;
+    // Re-square the legend gutter against the FINAL rect so the box tracks the
+    // disc it sits beside rather than the pre-recut rect it was cut from.
+    if (reserve) {
+      const box = this._legendRect;
+      if (reserve.side === "bottom") this._legendRect = { ...box, x: this.plot.x, w: this.plot.w };
+      else this._legendRect = { ...box, y: this.plot.y, h: this.plot.h };
+    }
+  }
+
+  _titleEntries() {
+    if (Array.isArray(this.spec.title_options) && this.spec.title_options.length) {
+      return this.spec.title_options
+        .filter((entry) => entry && entry.text)
+        .map((entry) => {
+          if (!Number.isInteger(entry.geometry)) return entry;
+          const values = this._columnView(
+            this._payload,
+            this.spec.columns[entry.geometry],
+          );
+          return { ...entry, y: Number(values[0]), pad: Number(values[1]) };
+        });
+    }
+    return this.spec.title
+      ? [{ text: this.spec.title, loc: "center", y: 1, pad: 8, automatic_y: true, style: {} }]
+      : [];
+  }
+
+  _positionTitles() {
+    for (const { element: title, entry } of this._titleElements || []) {
+      const loc = ["left", "center", "right"].includes(entry.loc) ? entry.loc : "center";
+      const x = loc === "left"
+        ? this.plot.x
+        : loc === "right"
+          ? this.plot.x + this.plot.w
+          : this.plot.x + this.plot.w / 2;
+      const anchorY = entry.automatic_y !== false
+        ? this.plot.y - this._topAxisRoom
+        : this.plot.y + (1 - Number(entry.y ?? 1)) * this.plot.h;
+      const shiftX = loc === "left" ? "0%" : loc === "right" ? "-100%" : "-50%";
+      title.style.textAlign = loc;
+      title.style.left = `${x}px`;
+      title.style.top = `${anchorY}px`;
+      // Cap the box at the width `_layout` measured the title band at, so the
+      // DOM cannot wrap into more lines than the band reserves. The transform
+      // still positions by the element's REAL height, so an agreed line count
+      // means the reserved band and the painted block are the same box.
+      title.style.maxWidth = `${Math.max(40, Number(this._titleWrapWidth) || 40)}px`;
+      title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
+    }
+  }
+
+  _yAxisLeftRoom(plotHeight) {
+    let room = 0;
+    for (const axis of Object.values<any>(this.axes || {})) {
+      if (!axis || !String(axis.id || "").startsWith("y")) continue;
+      const labelsOnLeft = this._axisTickLabelSides(axis).includes("left");
+      const titleOnLeft = axis.side !== "right";
+      if (!labelsOnLeft && !titleOnLeft) continue;
+      if (this._axisTickLabelStrategy(axis) === "none") continue;
+      const size = Math.max(
+        8,
+        this._axisStyleNumber(
+          axis,
+          "tick_label_size",
+          this._axisStyleNumber(axis, "tick_size", 11),
+        ),
+      );
+      const angle = Math.abs(Number(this._axisTickLabelAngle(axis) || 0)) * Math.PI / 180;
+      const ticks = labelsOnLeft
+        ? this._axisTicks(
+          axis.id,
+          this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
+        )
+        : { ticks: [], labels: [] };
+      let tickRoom = 0;
+      for (const value of (ticks.labels || ticks.ticks)) {
+        const text = this._axisTickText(axis, value, ticks.step);
+        const estimate = this._estimateTickLabel(text, size);
+        tickRoom = Math.max(
+          tickRoom,
+          Math.abs(Math.cos(angle)) * estimate.w + Math.abs(Math.sin(angle)) * estimate.h,
+        );
+      }
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
+      const tickOffset = labelsOnLeft
+        ? outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4))
+        : 0;
+      let needed = labelsOnLeft ? 4 + tickOffset + tickRoom : 0;
+      const rawPosition = axis.label_position;
+      const position = typeof rawPosition === "string" ? rawPosition.replace(/-/g, "_") : "";
+      if (titleOnLeft && axis.label && !position.startsWith("inside_")) {
+        const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
+        const gap = Number.isFinite(Number(axis.label_offset))
+          ? Number(axis.label_offset)
+          : 0.4 * labelSize;
+        const labelBlock = this._estimateTickLabel(axis.label, labelSize);
+        const rawLabelAngle = Number(axis.label_angle);
+        // The default quarter-turn consumes the text block's height. An
+        // authored angle projects both dimensions into the left gutter.
+        const labelExtent = Number.isFinite(rawLabelAngle)
+          ? Math.abs(Math.cos(rawLabelAngle * Math.PI / 180)) * labelBlock.w
+            + Math.abs(Math.sin(rawLabelAngle * Math.PI / 180)) * labelBlock.h
+          : labelBlock.h;
+        needed +=
+          Y_TITLE_MEASURE_SAFETY_PX
+          + gap
+          + labelExtent;
+      }
+      room = Math.max(room, needed);
+    }
+    return room;
+  }
+
+  _slotFontSize(slot, fallback) {
+    const styles = this.spec.dom && this.spec.dom.styles;
+    const value = styles && styles[slot] && styles[slot]["font-size"];
+    const parsed = parseFloat(String(value ?? ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  _xAxisRoom(side, plotWidth) {
+    let room = 0;
+    for (const axis of Object.values<any>(this.axes || {})) {
+      if (!axis || !String(axis.id || "").startsWith("x")) continue;
+      const titleSide = axis.side === "top" ? "top" : "bottom";
+      const labelsOnSide = this._axisTickLabelSides(axis).includes(side);
+      if (!labelsOnSide && titleSide !== side) continue;
+      const strategy = this._axisTickLabelStrategy(axis);
+      if (["none", "off"].includes(strategy)) continue;
+      const sideAxis = { ...axis, side };
+      const size = Math.max(
+        8,
+        this._axisStyleNumber(
+          axis,
+          "tick_label_size",
+          this._axisStyleNumber(axis, "tick_size", 11),
+        ),
+      );
+      const ticks = this._axisTicks(
+        axis.id,
+        this._axisTickTarget(axis.id, Math.max(3, plotWidth / (axis.kind === "time" ? 90 : 80))),
+      );
+      const [lo, hi] = this._axisRange(axis.id);
+      const c0 = this._axisCoord(axis, lo);
+      const c1 = this._axisCoord(axis, hi);
+      const candidates = (labelsOnSide ? (ticks.labels || ticks.ticks) : []).map((value) => ({
+        pos: c1 === c0 ? plotWidth / 2 : ((this._axisCoord(axis, value) - c0) / (c1 - c0)) * plotWidth,
+        text: this._axisTickText(axis, value, ticks.step),
+      }));
+      const items = this._layoutTickLabels(sideAxis, "x", candidates);
+      const hasAdaptiveLayout = items.some(
+        (item) => Number(item.angle || 0) || Number(item.row || 0),
+      );
+      const hasMultilineTicks = items.some(
+        (item) => this._estimateTickLabel(item.text, size).lines.length > 1,
+      );
+      const position = typeof axis.label_position === "string"
+        ? axis.label_position.replace(/-/g, "_") : "center";
+      const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
+      const labelBlock = titleSide === side && axis.label && !position.startsWith("inside_")
+        ? this._estimateTickLabel(axis.label, labelSize) : null;
+      const labelExtra = labelBlock
+        ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
+      if (
+        !hasAdaptiveLayout
+        && !hasMultilineTicks
+        && !labelExtra
+        && strategy === "auto"
+        && this._axisTickLabelAngle(axis) === null
+      ) {
+        continue;
+      }
+      let extent = 0;
+      let rows = 0;
+      for (const item of items) {
+        const measured = this._estimateTickLabel(item.text, size);
+        const angle = Math.abs(Number(item.angle || 0)) * Math.PI / 180;
+        extent = Math.max(
+          extent,
+          Math.abs(Math.sin(angle)) * measured.w + Math.abs(Math.cos(angle)) * measured.h,
+        );
+        rows = Math.max(rows, Number(item.row || 0));
+      }
+      const rawPadding = this._axisStyleValue(axis, "tick_padding");
+      const rawLength = this._axisStyleValue(axis, "tick_length");
+      const rawWidth = this._axisStyleValue(axis, "tick_width");
+      const hiddenSentinel = Number(rawLength) === 0 && Number(rawWidth) === 0;
+      const authored = rawPadding !== undefined
+        || (rawLength !== undefined && !hiddenSentinel);
+      let offset = side === "top" ? 7 : 16;
+      if (authored) {
+        const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+        const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+        const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
+        offset = outward + this._axisStyleNumber(axis, "tick_padding", 4)
+          + (side === "top" ? size * 0.2 : size * 0.8);
+      }
+      room = Math.max(room, 4 + offset + rows * (size + 4) + extent + labelExtra);
+    }
+    return room;
   }
 
   _normalizeAxes(spec) {
@@ -554,8 +1243,10 @@ export class ChartView {
   }
 
   _axisMode(axisId) {
-    const scale = this._axis(axisId).scale;
-    return scale === "log" ? 1 : scale === "symlog" ? 2 : 0;
+    const axis = this._axis(axisId);
+    const scale = axis.scale;
+    return scale === "log" ? (axis.nonpositive === "mask" ? 3 : 1)
+      : scale === "symlog" ? 2 : 0;
   }
 
   _axisConstant(axisId) {
@@ -594,9 +1285,22 @@ export class ChartView {
 
   _axisPolicy(name) {
     const configured = this.interaction?.[name];
-    if (!Array.isArray(configured) || !configured.length) return this._axisIds();
-    const declared = new Set(this._axisIds());
-    return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+    const ids = (!Array.isArray(configured) || !configured.length)
+      ? this._axisIds()
+      : (() => {
+        const declared = new Set(this._axisIds());
+        return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+      })();
+    // Polar interaction is deliberately small (polar-axes.md §8): wheel zoom
+    // is RADIAL-ONLY (the y axis carries r), and pan is disabled rather than
+    // half-working — a cartesian pan would shift the theta range and rescale
+    // the disc as if the chart were rectilinear, which is exactly what it
+    // looked like: wrong.
+    if (this.spec?.coords === "polar") {
+      if (name === "pan_axes") return [];
+      if (name === "zoom_axes") return ids.filter((axisId) => axisId.startsWith("y"));
+    }
+    return ids;
   }
 
   _resetAxisPolicy() {
@@ -623,7 +1327,8 @@ export class ChartView {
     const requested = typeof this.interaction?.default_drag_action === "string"
       ? this.interaction.default_drag_action : "auto";
     const canNavigate = this._interactionFlag("navigation", true);
-    const canPan = canNavigate && this._interactionFlag("pan", true);
+    const canPan = canNavigate && this._interactionFlag("pan", true)
+      && this._axisPolicy("pan_axes").length > 0;
     const canZoom = canNavigate && this._interactionFlag("zoom", true)
       && this._interactionFlag("box_zoom", true);
     const canSelect = this._pickable && this._interactionFlag("select", true)
@@ -653,7 +1358,10 @@ export class ChartView {
   _axisCoord(axis, value) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
-    if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+    if (axis && axis.scale === "log") {
+      if (v > 0) return Math.log10(v);
+      return axis.nonpositive === "mask" ? NaN : -300;
+    }
     if (axis && axis.scale === "symlog") {
       const c = Number(axis.constant) || 1;
       return Math.sign(v) * Math.log1p(Math.abs(v) / c);
@@ -680,16 +1388,80 @@ export class ChartView {
     return [Number(r[0]), Number(r[1])];
   }
 
+  // Stride-thin radial tick LABELS to what the POLAR_RLABEL_DEG spoke can
+  // hold. Their usable run is the annulus width projected onto that spoke —
+  // about a fifth of the plot at the default 22.5 degrees — so a plot-height
+  // worth of labels packed into it and overlapped, the polar path skipping the
+  // collision pass that would otherwise thin them. Grid rings come from the
+  // same tick list and must keep full density, so only the labels are thinned.
+  // Mirrored by _polar_thin_radial_labels in python/xy/_svg.py.
+  _polarThinRadialLabels(labels, geom) {
+    if (!geom || !Array.isArray(labels)) return labels;
+    const span = geom.radius * (1 - (geom.hole || 0));
+    const usable = Math.max(1, span * Math.abs(Math.sin((POLAR_RLABEL_DEG * Math.PI) / 180)));
+    const capacity = Math.max(2, Math.floor(usable / 45));
+    if (labels.length <= capacity) return labels;
+    const stride = Math.ceil(labels.length / capacity);
+    const thinned = labels.filter((_, i) => i % stride === 0);
+    const last = labels[labels.length - 1];
+    if (!thinned.includes(last)) thinned.push(last);
+    return thinned;
+  }
+
+  // One full turn in the axis's own angular unit, or 0 when the axis is not a
+  // continuous angular one — mirrors _tick_window_filter in _svg.py.
+  _polarAngularTurn(axisId): number {
+    const axis = this._axis(axisId);
+    if (!axis || !axis.theta_unit || axis.kind === "category") return 0;
+    return axis.theta_unit === "degrees" ? 360 : 2 * Math.PI;
+  }
+
   _axisTicks(axisId, target): any {
     const axis = this._axis(axisId);
-    const [lo, hi] = this._axisRange(axisId);
+    let [lo, hi] = this._axisRange(axisId);
+    if (this.spec?.coords === "polar" && this._axisDim(axisId) === "x") {
+      if (axis.kind === "category") {
+        lo = 0;
+        hi = Math.max(0, (axis.categories || []).length - 1);
+      } else if (Array.isArray(axis.sector) && axis.sector.length === 2) {
+        lo = Number(axis.sector[0]);
+        hi = Number(axis.sector[1]);
+      }
+    }
     if (Array.isArray(axis.tick_values)) {
       const a = Math.min(lo, hi), b = Math.max(lo, hi);
-      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
+      // An angular window can cross the 0/turn seam (sector 300..420, or the
+      // compass-natural -30..30). The plain range test drops every tick spelled
+      // on the far side of the seam while a data point at that same angle still
+      // plots inside the sector, because mark culling is modular. Match it —
+      // mirrored by _tick_window_filter in _svg.py.
+      const turn = this._polarAngularTurn(axisId);
+      const span = b - a;
+      const inside = turn
+        ? (v) => ((v - a) % turn + turn) % turn <= span + turn * 1e-9
+        : (v) => v >= a && v <= b;
+      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && inside(v));
       return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
     }
+    // Placed after the authored-tick_values return so explicit ticks still
+    // win, and before every kind branch — mirrored by axis_ticks in _svg.py.
+    if (axis.kind === "category") {
+      const categories = axis.categories || [];
+      // Every categorical-theta value defines a spoke (and, for
+      // grid_shape="linear", one polygon vertex). Cartesian categories may be
+      // thinned for legibility, but silently thinning polar categories changes
+      // the grid geometry itself. An explicit tick_count remains the opt-in
+      // control for authors who want fewer spokes.
+      const authoredTarget = Number(axis.tick_count);
+      const categoryTarget = this.spec?.coords === "polar"
+        && this._axisDim(axisId) === "x"
+        && !(Number.isFinite(authoredTarget) && authoredTarget > 0)
+        ? categories.length
+        : target;
+      return categoryTicks(lo, hi, categories, categoryTarget);
+    }
+    if (axis.theta_unit) return angularTicks(lo, hi, axis.theta_unit, target);
     if (axis.kind === "time") return timeTicks(lo, hi, target);
-    if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
     if (axis.scale === "log") return logTicks(lo, hi, target);
     if (axis.scale === "symlog") {
       const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
@@ -737,7 +1509,61 @@ export class ChartView {
     return handler;
   }
 
+  // Detach a handler registered through `_listen`. The record carries the live
+  // target, so a listener that context-loss recovery re-bound onto a
+  // replacement canvas still detaches from the node it ended up on.
+  _unlisten(handler) {
+    const index = this._listeners.findIndex((record) => record.handler === handler);
+    if (index === -1) return;
+    const [record] = this._listeners.splice(index, 1);
+    record.target.removeEventListener(record.type, record.handler, record.options);
+  }
+
+  _captureGesturePointer(owner, event, onLost) {
+    const pointerId = event.pointerId;
+    let active = true;
+    const release = () => {
+      if (!active) return;
+      active = false;
+      this._unlisten(lost);
+      // Guarded, so this is a no-op when the browser already took capture back
+      // (a real `lostpointercapture`, or the implicit release after pointerup).
+      try {
+        if (owner.hasPointerCapture(pointerId)) owner.releasePointerCapture(pointerId);
+      } catch (_err) { /* synthetic event */ }
+    };
+    const lost = (lostEvent) => {
+      if (!active || lostEvent.pointerId !== pointerId) return;
+      release();
+      onLost(lostEvent);
+    };
+    const guard = (moveEvent) => {
+      if (!active || moveEvent.pointerId !== pointerId) return false;
+      // Pointer capture cannot cross a browsing-context boundary. A mouse
+      // released outside an iframe can return without pointerup; treat the
+      // first trusted buttonless move as the missing capture-loss signal.
+      if (moveEvent.type === "pointermove" && moveEvent.isTrusted
+          && moveEvent.pointerType === "mouse" && !(moveEvent.buttons & 1)) {
+        lost(moveEvent);
+        return false;
+      }
+      return true;
+    };
+    this._listen(owner, "lostpointercapture", lost);
+    try { owner.setPointerCapture(pointerId); } catch (_err) { /* synthetic event */ }
+    return { guard, release };
+  }
+
   _interactionFlag(name, fallback = false) {
+    // Rectangle-shaped gestures have no polar geometry yet: a screen-space box
+    // neither matches a (theta, r) region nor reads as one. Off rather than
+    // half-working, per polar-axes.md §8; hover and radial wheel zoom remain.
+    if (
+      this.spec?.coords === "polar" &&
+      (name === "box_zoom" || name === "select" || name === "brush" || name === "crosshair")
+    ) {
+      return false;
+    }
     const value = this.interaction && this.interaction[name];
     return value === undefined ? fallback : value === true;
   }
@@ -767,11 +1593,18 @@ export class ChartView {
   _emitViewChange(source = "view", opts: any = {}) {
     if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
+    const phase = opts.phase || "end";
+    // Update-phase frames keep the last settled answer in place.  The one
+    // end-phase event every gesture already emits is the central, coalesced
+    // seam for a fresh rendered-geometry score (pan, wheel, linked, history,
+    // and programmatic writes all pass through here).
+    this._legendBestInteractionActive = phase === "update";
+    if (phase === "end" && this._markBestLegendsDirty()) this.draw();
     this._pendingViewEvent = {
       source,
       broadcast,
       axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
-      phase: opts.phase || "end",
+      phase,
       interaction_id: opts.interactionId ?? ++this._interactionSeq,
     };
     if (this._viewEventRaf) return;
@@ -809,15 +1642,27 @@ export class ChartView {
         const selection = msg.selection;
         // Linked applies update the durable-state mirror but never push
         // history (view-state.md §4) — dispatch: false already skips it.
+        // A linked selection lands in the same overlay state the peer's own
+        // gesture would produce: hydrate the persisted overlay (so _drawNow
+        // re-projects it) and drop the mutually-exclusive other overlay.
         if (selection.clear) {
           this._clearSelection({ broadcast: false, dispatch: false });
         } else if (selection.polygon) {
-          this._stateSelection = { polygon: selection.polygon.map((point) => [...point]) };
+          const polygon = selection.polygon.map((point) => [...point]);
+          this._clearBoxOverlay();
+          this._stateSelection = { polygon: polygon.map((point) => [...point]) };
+          this._lassoPolygon = polygon;
           this._selectLocalPolygon(selection.polygon, { dispatch: false });
         } else if (selection.range) {
           const { x0, x1, y0, y1 } = selection.range;
           if ([x0, x1, y0, y1].every(Number.isFinite)) {
-            this._stateSelection = { range: { x0, x1, y0, y1 } };
+            const mode = selection.range.mode === "x" || selection.range.mode === "y"
+              ? selection.range.mode : "box";
+            this._clearLassoOverlay();
+            this._boxSelection = { mode, x0, x1, y0, y1 };
+            this._stateSelection = {
+              range: mode === "box" ? { x0, x1, y0, y1 } : { x0, x1, y0, y1, mode },
+            };
             this._selectLocal(x0, x1, y0, y1, { dispatch: false });
           }
         }
@@ -1015,6 +1860,14 @@ export class ChartView {
     const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     this._onDprChange = () => {
       if (this._destroyed) return;
+      // Synchronous on purpose, and pinned that way: `render_smoke_nonumpy.py`'s
+      // `dprw` probe calls this and reads `dpr`/`canvas.width`/`chrome.width` on
+      // the very next line, because a DPR change with no container resize has no
+      // later event to piggyback on. Deferring it into `_queueResize` broke that
+      // contract, and the redundant second frame it was meant to save does not
+      // exist: the ResizeObserver's queued pass early-returns when width, height
+      // and dpr are all unchanged, and when the CSS size *did* change too, the
+      // second pass is doing real work at a new size.
       this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio
       this._armDprWatch();
     };
@@ -1027,11 +1880,35 @@ export class ChartView {
   // restoration; on restore every GPU object is recreated from the retained
   // spec + payload, then a fresh view request re-syncs live tiers (kernel
   // updates written into now-dead buffers are gone until it answers).
+  _onGlHostContextLost() {
+    if (this._destroyed) return;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
+    // Keep the visible canvas as the per-chart event surface. Existing hosts
+    // and telemetry listen here, while the real loss belongs to the detached
+    // shared canvas and is fanned out by GLHost.
+    this.canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+  }
+
+  _onGlHostContextRestored() {
+    if (this._destroyed) return;
+    this.canvas.dispatchEvent(new Event("webglcontextrestored"));
+  }
+
   _initContextLossRecovery() {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
       if (this._destroyed) return;
       const governedRelease = this.canvas.dataset.xyCtx === "released";
+      // A loss starts a fresh recovery cycle with a fresh context, so prior
+      // rebuild failures are no evidence about it — escalation counts
+      // consecutive failures within one cycle only. Reset before the
+      // duplicate guard below: the host fans out losses only on a live→lost
+      // transition, so a loss reaching a client still lost from a failed
+      // rebuild is a genuine new cycle too, and its stale count would
+      // otherwise escalate a host-wide recycle off one post-loss failure.
+      this._glHostRebuildFailures = 0;
       // _releaseContext marks the view lost synchronously before the browser
       // dispatches this event. Still run the full quiesce/telemetry path for
       // that first governed event; only ignore duplicate ungoverned losses.
@@ -1044,7 +1921,7 @@ export class ChartView {
       // Either way a live context just went away; let peer frames know the
       // shared budget has room (a governed release already announced; this is
       // deduped, and it is what tells peers about a browser-side eviction).
-      XY_CONTEXT_GOVERNOR._announceLive();
+      if (this._governorRegistered) XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
       this.root.dataset.xyContextState = "lost";
@@ -1054,6 +1931,13 @@ export class ChartView {
       this.seq += 1;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
+      // A loss can cancel the wheel end timer or an in-flight view animation
+      // after its update frame set the private legend gate. There will be no
+      // matching public end event in that case. Clear the gate and retain one
+      // settled score for the first restored frame (which may have snapped to
+      // an animation target that was never rendered before the loss).
+      this._legendBestInteractionActive = false;
+      this._markBestLegendsDirty();
       if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
       this._wheelZoomRaf = null;
       this._pendingWheelZoom = null;
@@ -1095,6 +1979,10 @@ export class ChartView {
       this._dispatchChartEvent("context_lost", {
         loss_count: this._contextLossCount,
       });
+      // The host owns restoration of the one real context and will fan the
+      // restored event back out to every surviving client. Rebuilding or
+      // replacing this 2D presentation canvas cannot restore that context.
+      if (this._glHost) return;
       // A governed release keeps a snapshot and deliberately waits until the
       // chart is requested again. A browser-side eviction is different: the
       // canvas has no stand-in, and IntersectionObserver may not deliver a
@@ -1120,10 +2008,8 @@ export class ChartView {
         }, 0);
       }
       // A governed release whose re-acquire raced ahead of this event deferred
-      // its restoreContext() (see _recoverContext). Schedule the retry on the
-      // next task rather than calling it here: restoreContext() invoked
-      // synchronously inside the webglcontextlost dispatch is also ignored by
-      // Chromium — it must run after the loss event fully unwinds.
+      // its rebuild (see _recoverContext). Schedule the retry on the next task
+      // rather than rebuilding here, after the loss event fully unwinds.
       if (governedRelease && this._ctxRecoverRequested && !this._destroyed && this._ctxVisible) {
         this._ctxRecoverRequested = false;
         setTimeout(() => {
@@ -1164,10 +2050,34 @@ export class ChartView {
           String(err && err.message || err).startsWith("WebGL error ");
         if (transient) {
           this._contextRecoveryError = null;
-          this._scheduleContextRecovery();
+          if (this._glHost) {
+            if (this.gl && !this.gl.isContextLost()) {
+              try { this._destroyGlResources(); } catch (_cleanupError) {}
+            }
+            // A wedged context can report itself live (isContextLost() false)
+            // while every rebuild against it fails, so retries on it never
+            // succeed. After three consecutive failures, recycle the shared
+            // surface for a fresh context (§18). The capability check keeps a
+            // v1 host from an older duplicate bundle on plain retries.
+            this._glHostRebuildFailures = (this._glHostRebuildFailures || 0) + 1;
+            if (
+              this._glHostRebuildFailures >= 3 &&
+              typeof this._glHost.recycleSurface === "function"
+            ) {
+              this._glHostRebuildFailures = 0;
+              this._glHost.recycleSurface(); // host-wide restored event drives the next attempt
+            } else {
+              this._scheduleGlHostClientRecovery();
+            }
+          } else {
+            this._scheduleContextRecovery();
+          }
           return;
         }
         this._contextRecoveryError = err;
+        clearTimeout(this._glHostRecoveryTimer);
+        this._glHostRecoveryTimer = null;
+        this._glHostRecoveryDelay = 0;
         this.root.dataset.xyContextState = "failed";
         try { this._destroyGlResources(); } catch (_cleanupErr) {}
         this.gl = null;
@@ -1180,10 +2090,16 @@ export class ChartView {
       }
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
+      this._glHostRebuildFailures = 0;
       this._ctxRecoveryDelay = 0;
+      clearTimeout(this._glHostRecoveryTimer);
+      this._glHostRecoveryTimer = null;
+      this._glHostRecoveryDelay = 0;
       this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
-      XY_CONTEXT_GOVERNOR._announceLive(); // context recovered; peers rebalance
+      if (this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR._announceLive(); // fallback context recovered; peers rebalance
+      }
       this._scheduleViewRequest(this.view, { delay: 0 });
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
@@ -1199,6 +2115,7 @@ export class ChartView {
   // spec + payload rebuild everything on re-entry (§18/§27), riding the same
   // lost/restored machinery the lifecycle gate already exercises.
   _releaseContext() {
+    if (this._glHost) return false;
     if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
     const ext = this.gl.getExtension("WEBGL_lose_context");
     if (!ext) return false;
@@ -1236,13 +2153,12 @@ export class ChartView {
       snap.height = this.canvas.height;
       snap.style.cssText = this.canvas.style.cssText;
       snap.style.pointerEvents = "none";
-      // Do not copy the default WebGL framebuffer with drawImage(). Contexts
-      // use preserveDrawingBuffer=false, so Chrome may hand the 2D canvas an
-      // already-discarded transparent buffer even though _drawNow() just
-      // submitted the marks. Read the freshly drawn pixels synchronously
-      // before WEBGL_lose_context instead; this keeps governed releases from
-      // showing only the independently painted grid/chrome while scrolling a
-      // many-chart page.
+      // Keep the governed-release snapshot on the direct readPixels path. The
+      // native fallback now requests buffer preservation for settled legend
+      // scoring, but readPixels here is synchronous by contract and also keeps
+      // recovery correct for an older/embedded browser that ignored that
+      // attribute. It prevents a released view from showing only the
+      // independently painted grid/chrome while scrolling a many-chart page.
       const gl = this.gl;
       const w = this.canvas.width;
       const h = this.canvas.height;
@@ -1293,36 +2209,42 @@ export class ChartView {
     this._ctxSnapshot = null;
   }
 
-  // Re-acquire on scroll-into-view. Governed releases undo via
-  // restoreContext() -> the existing restored handler rebuilds; a real
-  // browser eviction cannot be force-restored, so the canvas is swapped for a
-  // fresh one and rebuilt from the retained spec + payload.
+  // Re-acquire on scroll-into-view / pointer entry. Governed releases and real
+  // browser evictions recover the same way: the canvas is swapped for a fresh
+  // one and rebuilt from the retained spec + payload (see below for why the
+  // released canvas is never restoreContext()ed).
   _recoverContext() {
     if (this._destroyed || !this._glLost) return;
+    if (this._glHost) {
+      // Host-wide recovery fans out its own restored event. This path handles
+      // a client-only rebuild that was deferred while its view or document
+      // was hidden after a transient allocation failure.
+      this._scheduleGlHostClientRecovery();
+      return;
+    }
     // Governed release, but its webglcontextlost event has not dispatched yet
-    // (scrolled back into view in the same task it was released). Chromium
-    // drops a restoreContext() issued before the loss event, stranding the
-    // context lost forever — so defer; the loss handler re-invokes us once the
-    // event lands (and restoreContext is then honored).
+    // (scrolled back into view in the same task it was released). The loss
+    // handler owns the loss bookkeeping (counter, seq bump, quiesce) and it is
+    // bound to the canvas being replaced — rebuilding first would strand that
+    // event on a canvas nobody listens to. Defer; the loss handler re-invokes
+    // us once the event lands.
     if (this._ctxReleasedExt && this._ctxLostPending) {
       this._ctxRecoverRequested = true;
       return;
     }
     this._ctxRecoveries += 1;
     if (this._ctxReleasedExt) {
-      const ext = this._ctxReleasedExt;
+      // Never restoreContext() the released canvas. Chromium (observed in 151)
+      // can bring that context back fully healthy — draws, readPixels and
+      // picking all succeed, the stamp reads "live" — while the compositor
+      // presents the canvas's frames as empty for good: a chart released while
+      // its tab sat hidden came back blank and no redraw could show it. Only a
+      // fresh canvas element presents again, so a governed release re-acquires
+      // exactly like a real eviction: cloned canvas + §18/§27 rebuild.
+      // Reserve first so the governor sheds an off-screen peer before this
+      // frame creates its replacement context.
       this._ctxReleasedExt = null;
-      try {
-        // Reserve before asking the browser to restore. The restored event is
-        // asynchronous, so the pending reservation must count against later
-        // recoveries in the same IntersectionObserver delivery.
-        XY_CONTEXT_GOVERNOR.reserve(this);
-        ext.restoreContext(); // restored event -> full rebuild
-        return;
-      } catch (_err) {
-        XY_CONTEXT_GOVERNOR.cancel(this);
-        // Extension refused (context was also evicted for real): fall through.
-      }
+      XY_CONTEXT_GOVERNOR.reserve(this);
     }
     this._rebuildEvictedContext();
   }
@@ -1357,6 +2279,46 @@ export class ChartView {
     this._ctxRecoveryTimer = setTimeout(() => {
       this._ctxRecoveryTimer = null;
       if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+    }, delay);
+  }
+
+  // A host can be healthy while one client fails transiently during its own
+  // shader/buffer rebuild. Retry that client without letting a hidden or
+  // off-screen chart spin at frame rate under persistent GPU pressure.
+  _scheduleGlHostClientRecovery() {
+    if (
+      this._glHostRecoveryTimer ||
+      this._destroyed ||
+      !this._glHost ||
+      !this._glLost ||
+      !this._ctxVisible
+    ) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState &&
+      document.visibilityState !== "visible"
+    ) return;
+    const delay = this._glHostRecoveryDelay || 50;
+    this._glHostRecoveryDelay = Math.min(1000, delay * 2);
+    const host = this._glHost;
+    this._glHostRecoveryTimer = setTimeout(() => {
+      this._glHostRecoveryTimer = null;
+      if (
+        this._destroyed ||
+        this._glHost !== host ||
+        !this._glLost ||
+        !this._ctxVisible ||
+        !host.ready ||
+        host.lost ||
+        !host.gl ||
+        host.gl.isContextLost() ||
+        (
+          typeof document !== "undefined" &&
+          document.visibilityState &&
+          document.visibilityState !== "visible"
+        )
+      ) return;
+      this._onGlHostContextRestored();
     }, delay);
   }
 
@@ -1398,10 +2360,18 @@ export class ChartView {
       return; // context pressure persists; the next visibility pass retries
     }
     this._ctxRecoveryDelay = 0;
+    this._contextRestoreCount += 1;
+    this._contextRecoveryError = null;
     this.canvas.dataset.xyCtx = "live";
     XY_CONTEXT_GOVERNOR._announceLive(); // rebuilt on a fresh canvas; peers rebalance
     this._scheduleViewRequest(this.view, { delay: 0 });
     this._dropContextSnapshot();
+    // Same contract as the restored handler: a loss is answered by exactly one
+    // restore, whichever path (§28 telemetry stays consistent across both).
+    this._dispatchChartEvent("context_restored", {
+      loss_count: this._contextLossCount,
+      restore_count: this._contextRestoreCount,
+    });
   }
 
   // Visibility feed for the governor: tracks least-recently-visible order and
@@ -1463,6 +2433,69 @@ export class ChartView {
     this._ctxIo.observe(this.root);
   }
 
+  // Re-upload the buffers whose values were baked at a device-pixel ratio, after
+  // dpr changed under them (browser zoom, or a window moving between displays).
+  //
+  // Per-instance stroke/line widths (`styleBuf` component 2) and corner radii
+  // (`radiusBuf`) are written in DEVICE pixels at build time, because the
+  // shaders consume device pixels. Everything else in the frame absorbs a dpr
+  // change through uniforms and the backing-store resize, so these two silently
+  // kept the OLD scale: after a zoom from 1x to 2x, a chart's authored 2 px
+  // strokes and 6 px wedge corners rendered at half their intended size, and
+  // only these marks were wrong. The streaming-append fast path already refuses
+  // to patch a trace whose `_styleDpr` is stale (54_kernel.ts); this is the
+  // matching repair for the traces already on the GPU.
+  _rescaleDprBakedBuffers() {
+    if (!this.gl || this._glLost) return;
+    const dpr = this.dpr;
+    const rescale = (record) => {
+      if (!record) return;
+      const previous = Number(record._styleDpr);
+      if (!(previous > 0) || previous === dpr) return;
+      // Repair in place ONLY while the CPU mirrors still cover every row the
+      // GPU holds. The streaming-append fast path extends styleBuf with a tail
+      // `bufferSubData` and advances `n` without growing `_cpuStyle`
+      // (54_kernel.ts), so after an append the mirror is short: re-uploading it
+      // would shrink the store out from under the appended rows, and scaling it
+      // would leave that tail at the old dpr either way. Leave `_styleDpr`
+      // stale instead — the append guard then refuses the fast path and its
+      // rebuild renormalizes every row at the current dpr, which is the
+      // fallback that case has always relied on.
+      const rows = Number(record.n);
+      if (!(rows > 0)) return;
+      if (record._cpuStyle && record._cpuStyle.length !== rows * 4) return;
+      if (record._cpuRadius && record._cpuRadius.length !== rows * 2) return;
+      const factor = dpr / previous;
+      // Widths ride component 2 of the canonical style row; the other three
+      // components (opacity, artist alpha, symbol) are dpr-independent.
+      const style = record._cpuStyle;
+      if (style && record.styleBuf) {
+        for (let i = 2; i < style.length; i += 4) style[i] *= factor;
+        this._reuploadBuffer(record.styleBuf, style);
+      }
+      const radius = record._cpuRadius;
+      if (radius && record.radiusBuf) {
+        for (let i = 0; i < radius.length; i++) radius[i] *= factor;
+        this._reuploadBuffer(record.radiusBuf, radius);
+      }
+      record._styleDpr = dpr;
+    };
+    for (const g of this.gpuTraces || []) {
+      rescale(g);
+      rescale(g.drill);
+      rescale(g.sampleOverlay);
+      for (const d of g.densityCache || []) rescale(d && d.overlay);
+      rescale(g.density && g.density.overlay);
+    }
+    for (const g of this._transitionOldTraces || []) rescale(g);
+  }
+
+  _reuploadBuffer(buffer, data) {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+  }
+
   // Container size changed (fluid mode). Cheap on purpose: data GPU buffers
   // are untouched — the _map() uniforms absorb the new aspect — and the pick
   // FBO realloc is deferred to the next actual pick (_renderPick checks dims).
@@ -1478,10 +2511,16 @@ export class ChartView {
     this.dpr = dpr;
     this.size.w = w;
     this.size.h = h;
+    // Before the layout/paint below, so this frame draws at the new scale.
+    this._rescaleDprBakedBuffers();
     this._layout();
     const p = this.plot;
-    this.root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
-    this.root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+    // Legends are bounded by the box they place in, which under polar is the
+    // reserved gutter rather than the plot rect — clamping to the plot would let
+    // a long label spill back over the disc the gutter exists to protect.
+    const lb = this._legendRect || p;
+    this.root.style.setProperty("--xy-legend-max-width", Math.max(40, lb.w - 12) + "px");
+    this.root.style.setProperty("--xy-legend-max-height", Math.max(40, lb.h - 12) + "px");
     this.canvas.style.left = p.x + "px";
     this.canvas.style.top = p.y + "px";
     this.canvas.style.width = p.w + "px";
@@ -1497,8 +2536,11 @@ export class ChartView {
     this.overlay.width = this.size.w * this.dpr;
     this.overlay.height = this.size.h * this.dpr;
     for (const lg of this._legends || []) {
-      this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
+      const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
+      this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
     }
+    this._markBestLegendsDirty();
+    this._positionTitles();
     this._positionReductionBadges();
     this._positionColorbar();
     this._fitModebar();
@@ -1520,10 +2562,10 @@ export class ChartView {
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
-      `--xy-legend-max-width:${Math.max(40, this.plot.w - 12)}px;` +
-      `--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
+      `--xy-legend-max-width:${Math.max(40, (this._legendRect || this.plot).w - 12)}px;` +
+      `--xy-legend-max-height:${Math.max(40, (this._legendRect || this.plot).h - 12)}px;` +
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
-      "font:12px system-ui,sans-serif;user-select:none;";
+      "user-select:none;";
     this._applySlot(root, "root");
     // A chart that brings its own backdrop (theme(background=) → inline root
     // background) marks itself so host-page overrides — VS Code's white
@@ -1545,7 +2587,8 @@ export class ChartView {
       document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
     );
     root.setAttribute("role", "region");
-    root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
+    const titleText = this._titleEntries().map((entry) => String(entry.text)).join(". ");
+    root.setAttribute("aria-label", titleText ? `Chart: ${titleText}` : "Interactive chart");
     this.a11ySummary = document.createElement("div");
     this.a11ySummary.id = `${a11yId}-summary`;
     this.a11ySummary.style.cssText = XY_SR_ONLY_STYLE;
@@ -1559,13 +2602,22 @@ export class ChartView {
     this.a11yLive.style.cssText = XY_SR_ONLY_STYLE;
     root.appendChild(this.a11yLive);
 
-    if (s.title) {
+    this._titleElements = [];
+    for (const entry of this._titleEntries()) {
       const t = document.createElement("div");
-      t.textContent = s.title;
-      t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
+      t.textContent = entry.text;
+      t.style.cssText =
+        "position:absolute;white-space:pre-line;line-height:1.2;";
       this._applySlot(t, "title");
+      for (const [property, value] of Object.entries(entry.style || {})) {
+        if (["color", "font-family", "font-size", "font-style", "font-weight"].includes(property)) {
+          t.style.setProperty(property, String(value));
+        }
+      }
       root.appendChild(t);
+      this._titleElements.push({ element: t, entry });
     }
+    this._positionTitles();
 
     this.chrome = document.createElement("canvas");
     this.chrome.style.cssText = "position:absolute;inset:0;pointer-events:none;";
@@ -1590,6 +2642,7 @@ export class ChartView {
     // The chrome canvas below keeps the plot background and grid.
     this.overlay = document.createElement("canvas");
     this.overlay.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+    this._applySlot(this.overlay, "annotation_layer");
     root.appendChild(this.overlay);
 
     this.labels = document.createElement("div");
@@ -1629,7 +2682,8 @@ export class ChartView {
 
   _a11ySummaryText() {
     const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
-    const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
+    const titles = this._titleEntries().map((entry) => String(entry.text));
+    const parts = [titles.length ? `${titles.join(". ")}.` : "Interactive chart."];
     parts.push(`${traces.length} data series.`);
     const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
     if (names.length) parts.push(`Series: ${names.join(", ")}.`);
@@ -1670,6 +2724,7 @@ export class ChartView {
       : (this.spec.traces || []);
     for (const entry of traces) {
       const t = entry.trace || entry;
+      if (entry._legendHidden) continue; // hidden series badge nothing
       if (t.tier !== "density" || !t.density) continue;
       // Badge what is actually drawn: the overlay _drawDensitySample chose
       // for the current view (T9 pairing). Before the first frame runs, the
@@ -1717,30 +2772,93 @@ export class ChartView {
 
   _buildLegend(root) {
     const s = this.spec;
+    // A chrome rebuild replaces the row nodes mid-hover, so their pointerleave
+    // never fires; release any active dim state before dropping the old boxes.
+    this._clearLegendHover();
+    // Visibility observers retain their observed nodes. A chrome rebuild can
+    // replace every legend, so disconnect before dropping those nodes and let
+    // `_legendBox` attach the shared observers to the replacements below.
+    this._legendBestResizeObserver?.disconnect();
+    this._legendBestResizeObserver = null;
+    this._legendBestMutationObserver?.disconnect();
+    this._legendBestMutationObserver = null;
     this._legends = [];
+    this._legendBestDirty = false;
+    // Toggle state survives chrome/GPU rebuilds: it lives on the view keyed
+    // by spec-trace index, and freshly built rows re-adopt it below.
+    this._legendOffTraces = this._legendOffTraces || new Set();
+    this._legendOffCats = this._legendOffCats || new Map();
     const items = [];
     if (s.show_legend !== false) {
-      for (const t of s.traces) {
-        if (t.tier === "density") {
-          items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
-        } else if (t.color && t.color.mode === "categorical") {
-          t.color.categories.forEach((cat, i) =>
-            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
-        } else if (t.color && t.color.mode === "continuous") {
-          items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
-        } else if (t.name) {
-          const c = (t.color && t.color.color) || (t.style && t.style.color);
-          // Line-family kinds get a short line sample (honoring the dash), the
-          // same handle the raster/SVG exporters draw — not a filled swatch.
-          const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
-          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
+      const explicit = (s.legend && s.legend.items) || [];
+      if (explicit.length) {
+        for (const it of explicit) {
+          items.push({
+            swatch: it.style && it.style.color,
+            name: it.name,
+            symbol: it.kind === "scatter" ? (it.style?.symbol || "circle") : null,
+            line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
+            style: it.style || {},
+          });
         }
+      } else {
+        // Two identically-encoded unnamed continuous traces must not stack two
+        // identical gradient rows; the row is about the encoding, so later
+        // traces join the first row's hover-target list instead.
+        const continuousRows = new Map();
+        s.traces.forEach((t, ti) => {
+          const style = { ...(t.style || {}) };
+          const useTraceSize = style._legend_trace_size === true;
+          delete style._legend_trace_size;
+          if (t.kind === "scatter" && useTraceSize &&
+              t.size?.mode === "constant" && Number.isFinite(Number(t.size.size))) {
+            style.size = Number(t.size.size);
+          }
+          // A density-tier surface encodes count as alpha and wears the mean
+          // point color (LOD doc §2), so it gets no colormap gradient swatch —
+          // a gradient would claim color == density. A named density trace
+          // falls through to the plain marker swatch below, matching the
+          // static SVG/raster exporters.
+          const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+          if (t.color && t.color.mode === "categorical") {
+            t.color.categories.forEach((cat, i) =>
+              items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, style, traces: [ti], cat: i }));
+          } else if (t.color && t.color.mode === "continuous") {
+            // Label precedence: explicit series name, then the encoding's own
+            // declarative label (the color="column" idiom). No generic fallback:
+            // an unnamed encoding has nothing truthful to say, so it gets no
+            // row — matching the static exporters, which draw name-bearing
+            // entries only.
+            const name = t.name || t.color.label;
+            if (!name) return;
+            const key = name + "\u0000" + colormapKey(t.color.colormap);
+            const existing = continuousRows.get(key);
+            if (existing) {
+              existing.traces.push(ti);
+              return;
+            }
+            const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] };
+            continuousRows.set(key, item);
+            items.push(item);
+          } else if (t.name) {
+            const c = (t.color && t.color.color) || (t.style && t.style.color);
+            // Line-family kinds get a short line sample (honoring the dash), the
+            // same handle the raster/SVG exporters draw — not a filled swatch.
+            items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] });
+          }
+        });
       }
-      if (items.length) this._legendBox(root, items, s.legend || {});
+      for (const it of items) {
+        if (!it.traces) continue;
+        it.off = it.cat != null
+          ? !!this._legendOffCats.get(it.traces[0])?.has(it.cat)
+          : it.traces.every((ti) => this._legendOffTraces.has(ti));
+      }
+      if (items.length) this._legendBox(root, items, s.legend || {}, "main");
     }
     // Manually added Legend artists ship explicit items + their own loc, so a
     // second legend (e.g. one per line group) renders as its own box.
-    for (const extra of s.extra_legends || []) {
+    for (const [extraIndex, extra] of (s.extra_legends || []).entries()) {
       const mapped = (extra.items || []).map((it) => ({
         swatch: it.style && it.style.color,
         name: it.name,
@@ -1748,123 +2866,1248 @@ export class ChartView {
         line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
         style: it.style || {},
       }));
-      if (mapped.length) this._legendBox(root, mapped, extra);
+      if (mapped.length) this._legendBox(root, mapped, extra, `extra:${extraIndex}`);
     }
   }
 
-  _legendBox(root, items, options) {
-    const lg = document.createElement("div");
+  _legendBox(root, items, options, source = null) {
+    const lg: any = document.createElement("div");
+    // Retain the declarative source across data-only updatePayload swaps. The
+    // chrome DOM stays mounted on that path, but a browser unable to sample
+    // its WebGL surface must still adopt the incoming concrete Python fallback.
+    lg._xyLegendSource = source;
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
     const horizontal = ncols > 1;
+    const handleHeight = options.handleheight == null
+      ? null
+      : Math.max(8, 11 * Number(options.handleheight));
+    const handleLength = Number.isFinite(Number(options.handlelength))
+      ? Math.max(0, Number(options.handlelength))
+      : 2;
+    const handleTextPad = Number.isFinite(Number(options.handletextpad))
+      ? Math.max(0, Number(options.handletextpad))
+      : 0.8;
+    // `minmax(0, max-content)`, not bare `max-content`: the box is capped at
+    // `--xy-legend-max-width`, and a column that refuses to shrink below its
+    // content made a long row overflow horizontally — a legend with a horizontal
+    // SCROLLBAR, which hides the label it is meant to be showing. Shrinkable
+    // columns let a long label WRAP inside its column instead, so the inline axis
+    // never needs to scroll and the text stays whole; the block axis still
+    // scrolls, which is the browser legend's advantage over the static
+    // exporters, which can only ellipsize. Row `title`/ARIA carries the full
+    // name either way, for the rows the block-axis cap does clip.
     lg.style.cssText = "position:absolute;" +
-      `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "overflow:auto;";
+      `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},minmax(0,max-content));` +
+      "column-gap:2em;row-gap:.5em;overflow-x:hidden;overflow-y:auto;";
     lg.dataset.xyLegendLoc = loc;
-    this._positionLegend(lg, loc);
+    if (Array.isArray(options.anchor)) {
+      lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
+    }
+    // Python/static export keeps `loc` concrete for deterministic files and
+    // ships the separate intent bit only when the author requested automatic
+    // placement. Anchors are authored geometry and polar legends own a gutter,
+    // so neither is ever reconsidered here.
+    if (
+      String(options.auto_loc || "").trim().toLowerCase() === "best" &&
+      !Array.isArray(options.anchor) &&
+      this.spec?.coords !== "polar"
+    ) {
+      lg.dataset.xyLegendAutoLoc = "best";
+      this._legendBestDirty = true;
+    }
+    if (Number.isFinite(Number(options.border_pad))) {
+      lg.dataset.xyLegendBorderPad = String(Math.max(0, Number(options.border_pad)));
+    }
+    this._positionLegend(lg, loc, options.anchor);
     this._applySlot(lg, "legend");
+    this._applyStyle(lg, options.style);
     if (options.title) {
       const title = document.createElement("div");
       title.textContent = String(options.title);
-      title.style.fontWeight = "600";
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
+      this._applySlot(title, "legend_title");
       lg.appendChild(title);
     }
+    const rows = [];
     for (const it of items) {
       const row = document.createElement("div");
       this._applySlot(row, "legend_item");
+      if (handleHeight != null) row.style.minHeight = `${handleHeight + 2}px`;
       const sw = document.createElement("span");
-      // Swatch geometry is a stylesheet default; only the paint (dynamic per
-      // series) stays inline, and it now has its own slot so it's classable.
-      sw.style.display = "inline-block";
-      sw.style.verticalAlign = "-1px";
+      // Renderer-owned paint/geometry feed private variables consumed by the
+      // base-layer slot rule. SVG paint lives on the wrapper and inherits into
+      // its path/line, so Tailwind fill-*/stroke-* utilities on this public slot
+      // can override it without copying layout classes onto SVG paint nodes.
+      sw.style.setProperty("--xy-legend-swatch-width", `${handleLength}em`);
+      sw.style.setProperty("--xy-legend-swatch-margin-right", `${handleTextPad}em`);
       let bg = it.swatch;
-      if (it.swatch === "gradient") {
+      // A continuous encoding paints the swatch with the colormap ramp, but
+      // the swatch keeps the mark's identity: a gradient-filled symbol for
+      // scatters, a gradient-stroked line sample for line-family kinds, and
+      // only the bare ramp chip when the mark has neither.
+      let gradientPaint = null;
+      if (it.swatch === "gradient" && (it.symbol || it.line)) {
+        gradientPaint = (svg) => this._legendGradientPaint(svg, it.cmap);
+      } else if (it.swatch === "gradient") {
         const stops = colormapStops(it.cmap);
         bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
-        sw.style.background = bg;
-      } else if (it.symbol) {
+        sw.style.setProperty("--xy-legend-swatch-paint", bg);
+      }
+      if (it.symbol) {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
         svg.setAttribute("viewBox", "0 0 18 14");
-        svg.setAttribute("width", "18");
+        svg.setAttribute("width", "100%");
         svg.setAttribute("height", "14");
-        const path = document.createElementNS(ns, "path");
-        const paths = {
-          square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
-          thin_diamond: "M9 2l3 5-3 5-3-5z",
-          triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
-          triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
-          plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
-          cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
-          x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
-          pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
-          hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
-          star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
-        };
-        const color = safeCssPaint(this.root, bg);
-        if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
-          if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
-          else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
-        } else path.setAttribute("d", paths[it.symbol] || paths.square);
-        path.setAttribute("fill", it.symbol.endsWith("_line") ? "none" : color);
-        path.setAttribute("stroke", color);
-        path.setAttribute("stroke-width", String(it.style?.stroke_width || 1));
-        svg.appendChild(path);
+        svg.style.overflow = "visible";
+        const color = gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg);
+        this._appendLegendMarker(
+          svg, sw, { ...(it.style || {}), symbol: it.symbol }, color, 9, 7, true,
+        );
         sw.appendChild(svg);
-        sw.style.width = "18px";
-        sw.style.height = "14px";
+        sw.style.setProperty("--xy-legend-swatch-height", "14px");
       } else if (it.line) {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
         svg.setAttribute("viewBox", "0 0 22 12");
-        svg.setAttribute("width", "22");
+        svg.setAttribute("width", "100%");
         svg.setAttribute("height", "12");
         const ln = document.createElementNS(ns, "line");
         ln.setAttribute("x1", "1");
         ln.setAttribute("y1", "6");
         ln.setAttribute("x2", "21");
         ln.setAttribute("y2", "6");
-        ln.setAttribute("stroke", safeCssPaint(this.root, bg));
+        const lineColor = gradientPaint
+          ? gradientPaint(svg)
+          : safeCssPaint(this.root, bg);
+        if (it.style?.legend_gap_color && it.style?.dash?.length) {
+          const gaps = document.createElementNS(ns, "line");
+          gaps.setAttribute("x1", "1");
+          gaps.setAttribute("y1", "6");
+          gaps.setAttribute("x2", "21");
+          gaps.setAttribute("y2", "6");
+          gaps.setAttribute(
+            "stroke",
+            safeCssPaint(this.root, it.style.legend_gap_color),
+          );
+          gaps.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
+          gaps.setAttribute("stroke-dasharray", "none");
+          svg.appendChild(gaps);
+        }
+        sw.style.setProperty("--xy-legend-swatch-fill", "none");
+        sw.style.setProperty(
+          "--xy-legend-swatch-stroke",
+          lineColor,
+        );
         // ?? not ||: an explicit lw=0 keeps 0 and draws nothing, like the
         // exporters' dict-default and Matplotlib itself.
-        ln.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
-        if (it.style?.dash && it.style.dash.length) ln.setAttribute("stroke-dasharray", it.style.dash.join(" "));
+        sw.style.setProperty(
+          "--xy-legend-swatch-stroke-width",
+          String(it.style?.width ?? 1.5),
+        );
+        if (it.style?.dash && it.style.dash.length) {
+          sw.style.setProperty("--xy-legend-swatch-dasharray", it.style.dash.join(" "));
+        }
         svg.appendChild(ln);
+        if (it.style?.legend_marker) {
+          this._appendLegendMarker(
+            svg, sw, it.style.legend_marker, lineColor, 11, 6, false,
+          );
+        }
         sw.appendChild(svg);
-        sw.style.width = "22px";
-        sw.style.height = "12px";
-      } else {
-        sw.style.background = safeCssPaint(this.root, bg);
+        sw.style.setProperty("--xy-legend-swatch-height", "12px");
+      } else if (it.swatch !== "gradient") {
+        // Keep the dynamic base paint on the security-audited safe sink, but
+        // expose it through the private variable consumed by the base-layer
+        // slot rule so Tailwind background utilities can still override it.
+        sw.style.setProperty(
+          "--xy-legend-swatch-paint",
+          safeCssPaint(this.root, bg),
+        );
+        const strokeWidth = Number(it.style?.stroke_width) || 0;
+        if (it.style?.stroke && strokeWidth > 0) {
+          sw.style.boxSizing = "border-box";
+          sw.style.borderStyle = "solid";
+          sw.style.borderWidth = `${strokeWidth}px`;
+          sw.style.borderColor = safeCssPaint(this.root, it.style.stroke);
+        }
+        // Hatch layers are explicit mark semantics and sit over that sanitized
+        // base paint without forcing the base color into an inline background.
+        if (it.style?.hatch) {
+          const hatchColor = safeCssPaint(this.root, it.style.hatch_color || "#222222");
+          const patterns = [];
+          const hatch = String(it.style.hatch);
+          if (hatch.includes("/") || hatch.includes("*"))
+            patterns.push(`repeating-linear-gradient(135deg,transparent 0 4px,${hatchColor} 4px 5px)`);
+          if (hatch.includes("\\") || hatch.includes("*"))
+            patterns.push(`repeating-linear-gradient(45deg,transparent 0 4px,${hatchColor} 4px 5px)`);
+          if (hatch.includes("-"))
+            patterns.push(`repeating-linear-gradient(0deg,transparent 0 4px,${hatchColor} 4px 5px)`);
+          if (hatch.includes("."))
+            patterns.push(`radial-gradient(circle,${hatchColor} 1px,transparent 1px)`);
+          sw.style.backgroundImage = patterns.join(",");
+          if (hatch.includes(".")) sw.style.backgroundSize = "5px 5px";
+        }
+        if (handleHeight != null) {
+          sw.style.setProperty("--xy-legend-swatch-height", `${handleHeight}px`);
+        }
       }
       this._applySlot(sw, "legend_swatch");
       row.appendChild(sw);
-      row.appendChild(document.createTextNode(it.name));
+      const label = document.createElement("span");
+      label.textContent = it.name;
+      this._applySlot(label, "legend_label");
+      row.appendChild(label);
+      // A row too wide for the capped box ellipsizes (the `legend_item` /
+      // `legend_label` rules in 20_theme.ts) rather than pushing a horizontal
+      // scrollbar onto the legend. Only the LABEL clips: the swatch is
+      // `flex:none` and keeps `overflow:visible`, so an authored oversized
+      // marker still draws outside its 18x14 box. Same full-text-in-title/ARIA
+      // rule categorical tick labels use, so nothing an ellipsis hides becomes
+      // unreachable.
+      if (it.name) {
+        row.title = String(it.name);
+        row.setAttribute("aria-label", String(it.name));
+      }
+      // Hover emphasis (interaction spec §9): rows backed by live traces dim the rest
+      // of the chart while hovered. Manually-added Legend artists carry no
+      // trace linkage, so extra_legends rows stay inert.
+      if (options.highlight !== false && it.traces && it.traces.length) {
+        row.addEventListener("pointerenter", () => this._setLegendHover(it, lg, row));
+        row.addEventListener("pointerleave", () => this._clearLegendHover());
+      }
+      // Click-to-toggle (interaction spec §10): hide/show what the row
+      // stands for. Same trace-linkage rule keeps extra_legends rows inert.
+      if (options.toggle !== false && it.traces && it.traces.length) {
+        row.style.cursor = "pointer";
+        row.addEventListener("click", () => this._legendToggle(it, row));
+      }
+      this._syncLegendRow(row, it);
+      rows.push({ row, it });
       lg.appendChild(row);
     }
+    lg._xyItemRows = rows;
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
+    if (this._legends.some((item) => item.dataset.xyLegendAutoLoc === "best")) {
+      for (const item of this._legends) this._observeBestLegendVisibility(item);
+    }
     return lg;
   }
 
-  _positionLegend(lg, loc) {
+  _appendLegendMarker(svg, sw, marker, defaultColor, cx, cy, wrapperPaint) {
+    const ns = "http://www.w3.org/2000/svg";
+    const requestedMarkerSize = Number(marker?.size);
+    const hasMarkerSize = Number.isFinite(requestedMarkerSize) && requestedMarkerSize >= 0;
+    const markerSize = hasMarkerSize ? requestedMarkerSize : 9;
+    const symbol = String(marker?.symbol || "circle");
+    // The generated default can be an internal SVG url(...); sanitize only
+    // user-authored paints so the gradient reference remains intact.
+    const fillColor = marker?.color != null
+      ? safeCssPaint(this.root, marker.color)
+      : defaultColor;
+    const hasStroke = marker?.stroke != null || marker?.stroke_width != null;
+    const strokeColor = hasStroke
+      ? (marker?.stroke != null
+          ? safeCssPaint(this.root, marker.stroke)
+          : fillColor)
+      : (wrapperPaint ? fillColor : "none");
+    const paths = {
+      square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+      thin_diamond: "M9 2l3 5-3 5-3-5z",
+      triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+      triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+      plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+      horizontal_line: "M4 7h10", vertical_line: "M9 2v10",
+      cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+      x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+      pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
+      hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+      star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+    };
+    if (marker?.marker_glyph) {
+      const text = document.createElementNS(ns, "text");
+      text.setAttribute("x", String(cx));
+      text.setAttribute("y", String(cy));
+      text.setAttribute("font-family", "DejaVu Sans");
+      text.setAttribute("font-size", String(markerSize));
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "central");
+      if (wrapperPaint) {
+        sw.style.setProperty("--xy-legend-swatch-fill", fillColor);
+        sw.style.setProperty("--xy-legend-swatch-stroke", "none");
+        sw.style.setProperty("--xy-legend-swatch-stroke-width", "0");
+      } else {
+        text.setAttribute("fill", fillColor);
+      }
+      text.textContent = String(marker.marker_glyph);
+      svg.appendChild(text);
+      return;
+    }
+    const path = document.createElementNS(ns, "path");
+    if (marker?.marker_path) {
+      const commands = [];
+      for (const contour of marker.marker_path.contours || []) {
+        for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+          const x = cx + markerSize * Number(contour[offset]);
+          const y = cy - markerSize * Number(contour[offset + 1]);
+          commands.push(`${offset === 0 ? "M" : "L"}${x} ${y}`);
+        }
+        if (marker.marker_path.filled) commands.push("Z");
+      }
+      path.setAttribute("d", commands.join(" "));
+    } else if (symbol === "circle" || symbol === "point" || symbol === "pixel") {
+      const radius = markerSize / 2;
+      if (symbol === "pixel")
+        path.setAttribute("d", `M${cx - radius} ${cy - radius}h${markerSize}v${markerSize}h-${markerSize}z`);
+      else
+        path.setAttribute("d", `M${cx} ${cy - radius}a${radius} ${radius} 0 1 0 0 ${markerSize}a${radius} ${radius} 0 1 0 0 -${markerSize}`);
+    } else {
+      path.setAttribute("d", paths[symbol] || paths.square);
+      const scale = hasMarkerSize ? markerSize / 9 : 1;
+      path.setAttribute(
+        "transform",
+        `translate(${cx} ${cy}) scale(${scale}) translate(-9 -7)`,
+      );
+    }
+    const lineMarker = symbol.endsWith("_line") ||
+      (marker?.marker_path && !marker.marker_path.filled);
+    const fill = lineMarker ? "none" : fillColor;
+    const requestedStrokeWidth = Number(marker?.stroke_width);
+    const strokeWidth = Number.isFinite(requestedStrokeWidth)
+      ? requestedStrokeWidth
+      : (wrapperPaint ? 1 : 0);
+    if (wrapperPaint) {
+      sw.style.setProperty("--xy-legend-swatch-fill", fill);
+      sw.style.setProperty("--xy-legend-swatch-stroke", strokeColor);
+      sw.style.setProperty("--xy-legend-swatch-stroke-width", String(strokeWidth));
+    } else {
+      path.setAttribute("fill", fill);
+      path.setAttribute("stroke", strokeColor);
+      path.setAttribute("stroke-width", String(strokeWidth));
+      path.setAttribute("stroke-dasharray", "none");
+    }
+    svg.appendChild(path);
+  }
+
+  // Paint an SVG swatch with the item's colormap ramp: registers a
+  // <linearGradient> in the swatch's own defs and returns its paint URL.
+  // IDs are document-global, so a module counter keeps multiple charts on
+  // one page from cross-referencing each other's ramps.
+  _legendGradientPaint(svg, cmap) {
+    const ns = "http://www.w3.org/2000/svg";
+    const id = `xy-legend-grad-${legendGradientSeq++}`;
+    const defs = document.createElementNS(ns, "defs");
+    const grad = document.createElementNS(ns, "linearGradient");
+    grad.setAttribute("id", id);
+    const stops = colormapStops(cmap);
+    stops.forEach((c, i) => {
+      const stop = document.createElementNS(ns, "stop");
+      stop.setAttribute("offset", `${(i / Math.max(1, stops.length - 1)) * 100}%`);
+      stop.setAttribute("stop-color", `rgb(${c[0]},${c[1]},${c[2]})`);
+      grad.appendChild(stop);
+    });
+    defs.appendChild(grad);
+    svg.appendChild(defs);
+    return `url(#${id})`;
+  }
+
+  // Legend hover emphasis: the hovered row's series keeps full opacity while
+  // every other series dims (and, for a categorical row, the trace's other
+  // categories dim through a background-blended palette LUT — the point
+  // shaders ignore LUT alpha, so the fade is baked into the RGB ramp).
+  // Whole density-tier traces dim through _drawDensity's uniform like any
+  // other series; a categorical row dims siblings inside an aggregated plane
+  // at CELL granularity (_densityRgbaDimmed — §28-recorded approximation).
+  _setLegendHover(item, lg, hoveredRow) {
+    if (item.off) return; // a hidden series has nothing to emphasize
+    this._legendHover = item;
+    const keep = new Set(item.traces);
+    // Resolved once for the whole pass: every blend below wants the same
+    // backdrop, and resolving it per trace would re-walk the ancestor chain
+    // (a forced style recalc) and defeat the _lutCache hit.
+    const bg = chartBackdrop(this.root, this.theme.bg);
+    for (let i = 0; i < (this.gpuTraces || []).length; i++) {
+      const g = this.gpuTraces[i];
+      g._legendDim = keep.has(i) ? 1 : LEGEND_DIM_OPACITY;
+      this._restoreLegendLuts(g);
+      const t = g.trace;
+      if (item.cat != null && keep.has(i) &&
+          t.color && t.color.mode === "categorical") {
+        if (g.tier === "density") {
+          // The plane cannot dim sibling categories exactly (§28), but its
+          // mean-color cells carry the categories' own drawn colors, so the
+          // LUT-dim rule applies at CELL granularity: classify each cell by
+          // nearest palette color and blend sibling cells toward the
+          // background; the hovered category's cells keep their full color.
+          // Mixed boundary cells dim by their nearest class — the recorded
+          // approximation of the exact per-point dim.
+          const d = g.density;
+          if (d && d.rgba && d.tex) {
+            g._legendHoverPrevTex = d.tex;
+            g._legendHoverTex = this._uploadGrid(
+              d.grid, d.w, d.h, d.normMax ?? d.max,
+              this._densityRgbaDimmed(d.rgba, t.color.palette, item.cat, bg),
+              d.filter, this._fillOpacity(t.style),
+            );
+            d.tex = g._legendHoverTex;
+          }
+          // The retained sample overlays ARE per-point scatters, so they dim
+          // siblings exactly, through the same palette LUT.
+          for (const s of this._densityOverlays(g)) {
+            this._dimLut(s, t.color.palette, item.cat, bg);
+          }
+        } else if (g._cpuFunnel) {
+          // A funnel carries resolved RGBA rows, not a palette LUT, so the
+          // sibling dim recolors the rows themselves with the same blend
+          // rule _paletteLutDimmed applies to LUT entries.
+          this._dimFunnelPaint(g, item.cat, bg);
+        } else {
+          this._dimLut(g, t.color.palette, item.cat, bg);
+        }
+      }
+    }
+    for (const pair of lg._xyItemRows || []) {
+      pair.row.style.opacity = pair.it.off
+        ? String(LEGEND_OFF_ROW)
+        : pair.row === hoveredRow ? "" : String(LEGEND_DIM_ROW);
+    }
+    // Color-pass-only change: geometry and view are untouched, so the pick
+    // snapshot stays valid (§17).
+    this.draw(true);
+  }
+
+  _clearLegendHover() {
+    if (!this._legendHover) return;
+    this._legendHover = null;
+    for (const g of this.gpuTraces || []) {
+      delete g._legendDim;
+      this._restoreLegendLuts(g);
+    }
+    for (const lg of this._legends || []) {
+      for (const pair of lg._xyItemRows || []) this._syncLegendRow(pair.row, pair.it);
+    }
+    this.draw(true);
+  }
+
+  // The per-point scatter entries a density-tier trace keeps alongside its
+  // aggregated plane (the retained deterministic sample and, when a reply
+  // carried one, the density's own overlay). Deduped: the two are often the
+  // same object.
+  _densityOverlays(g) {
+    return new Set([g.sampleOverlay, g.density && g.density.overlay].filter(Boolean));
+  }
+
+  // Swap a scatter-shaped entry's palette LUT for the hover-dimmed variant,
+  // stashing the original for _restoreLegendLuts.
+  _dimLut(s, palette, keepIdx, bg) {
+    if (!s || !s.lut) return;
+    s._legendPrevLut = s.lut;
+    s.lut = this._paletteLutDimmed(palette, keepIdx, bg);
+  }
+
+  // Legend-hover sibling dim for a funnel: the hovered stage keeps its full
+  // color, every other stage blends toward the backdrop by the same
+  // LEGEND_DIM_OPACITY weight the LUT path uses. Rebuilt from the retained
+  // full rows, uploaded through the shared filter-aware path.
+  _dimFunnelPaint(g, keepCode, bg) {
+    const full = g._funnelRgbaFull;
+    const codes = g._funnelCodes;
+    if (!full || !codes) return;
+    const rows = new Uint8Array(full.length);
+    for (let i = 0; i * 4 < full.length; i++) {
+      const keep = Math.round(codes[i]) === keepCode;
+      const w = keep ? 1 : LEGEND_DIM_OPACITY;
+      rows[i * 4] = full[i * 4] * w + bg[0] * 255 * (1 - w);
+      rows[i * 4 + 1] = full[i * 4 + 1] * w + bg[1] * 255 * (1 - w);
+      rows[i * 4 + 2] = full[i * 4 + 2] * w + bg[2] * 255 * (1 - w);
+      rows[i * 4 + 3] = full[i * 4 + 3];
+    }
+    g._funnelHoverDim = true;
+    this._uploadFunnelPaint(g, rows);
+  }
+
+  // Undo any hover LUT swap on a trace and its density sample overlays,
+  // and put back the plane's original texture if hover dimmed it.
+  _restoreLegendLuts(g) {
+    for (const s of new Set([g, ...this._densityOverlays(g)])) {
+      if (s._legendPrevLut !== undefined) {
+        s.lut = s._legendPrevLut;
+        delete s._legendPrevLut;
+      }
+    }
+    if (g._legendHoverTex) {
+      // A density reply may have replaced g.density mid-hover; only restore
+      // onto the object still wearing the hover texture.
+      if (g.density && g.density.tex === g._legendHoverTex) {
+        g.density.tex = g._legendHoverPrevTex;
+      }
+      this.gl.deleteTexture(g._legendHoverTex);
+      g._legendHoverTex = null;
+      g._legendHoverPrevTex = null;
+    }
+    if (g._funnelHoverDim) {
+      delete g._funnelHoverDim;
+      this._uploadFunnelPaint(g);
+    }
+  }
+
+  // Per-cell sibling dim for an aggregated categorical plane: each occupied
+  // cell classified by nearest palette color, non-hovered classes blended
+  // toward the background exactly like `_paletteLutDimmed` blends LUT
+  // entries. Alpha (the physical compositing of the cell's own points, LOD
+  // doc §2) is untouched — the dim is a color statement, not a count one.
+  _densityRgbaDimmed(rgba, palette, keepIdx, bg = chartBackdrop(this.root, this.theme.bg)) {
+    const cls = this._densityCellClasses(rgba, palette);
+    const keep = keepIdx % palette.length;
+    const w = LEGEND_DIM_OPACITY;
+    const out = new Uint8Array(rgba.length);
+    for (let i = 0, c = 0; i < rgba.length; i += 4, c++) {
+      const a = rgba[i + 3];
+      out[i + 3] = a;
+      if (!a) continue;
+      if (cls[c] === keep) {
+        out[i] = rgba[i]; out[i + 1] = rgba[i + 1]; out[i + 2] = rgba[i + 2];
+      } else {
+        out[i] = (rgba[i] / 255 * w + bg[0] * (1 - w)) * 255;
+        out[i + 1] = (rgba[i + 1] / 255 * w + bg[1] * (1 - w)) * 255;
+        out[i + 2] = (rgba[i + 2] / 255 * w + bg[2] * (1 - w)) * 255;
+      }
+    }
+    return out;
+  }
+
+  // Nearest-palette class per occupied cell of a mean-color plane. Depends
+  // only on (rgba, palette) — NOT on which row is hovered — so it is memoized
+  // against the plane's own buffer: scanning a legend's rows reclassifies the
+  // same grid once instead of once per row. Weak-keyed, so the map dies with
+  // the grid it describes (a reply replaces `density.rgba` wholesale).
+  _densityCellClasses(rgba, palette) {
+    if (!this._dimClassCache) this._dimClassCache = new WeakMap();
+    const paletteKey = palette.join(",");
+    const memo = this._dimClassCache.get(rgba);
+    if (memo && memo.paletteKey === paletteKey) return memo.classes;
+    const cols = this._paletteRgb(palette);
+    const classes = new Uint8Array(rgba.length / 4);
+    for (let i = 0, c = 0; i < rgba.length; i += 4, c++) {
+      if (!rgba[i + 3]) continue;
+      const r = rgba[i] / 255, gc = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
+      let best = 0, bestD = Infinity;
+      for (let k = 0; k < cols.length; k++) {
+        const dr = r - cols[k][0], dg = gc - cols[k][1], db = b - cols[k][2];
+        const dist = dr * dr + dg * dg + db * db;
+        if (dist < bestD) { bestD = dist; best = k; }
+      }
+      classes[c] = best;
+    }
+    this._dimClassCache.set(rgba, { paletteKey, classes });
+    return classes;
+  }
+
+  // Toggled-off rows stay visible but read as inactive. Opacity/filter are
+  // deliberate renderer-owned interaction state, so they remain inline and
+  // outrank ordinary utilities while active; the data attribute lets authors
+  // target that boundary explicitly (including with an important utility).
+  _syncLegendRow(row, it) {
+    const off = !!it.off;
+    row.style.opacity = off ? String(LEGEND_OFF_ROW) : "";
+    row.style.filter = off ? "grayscale(1)" : "";
+    if (off) row.dataset.xyLegendOff = "";
+    else delete row.dataset.xyLegendOff;
+  }
+
+  // Legend click-to-toggle (interaction spec §10). Whole-trace rows hide
+  // locally — buffers and density grids are per-trace, so there is nothing
+  // to re-aggregate. Category rows are a §34 filter predicate: direct-tier
+  // traces re-filter from the CPU columns already on the client (0 wire
+  // bytes, §37 filter-toggle row), density tiers drop their now-stale local
+  // aggregates and re-request a kernel re-bin computed under the mask.
+  // Either way the kernel records the state so selections stay truthful.
+  _legendToggle(it, row) {
+    const off = !it.off;
+    it.off = off;
+    this._clearLegendHover();
+    this._syncLegendRow(row, it);
+    this._hideTooltip?.();
+    if (it.cat != null) {
+      const ti = it.traces[0];
+      let set = this._legendOffCats.get(ti);
+      if (!set) this._legendOffCats.set(ti, (set = new Set()));
+      if (off) set.add(it.cat);
+      else set.delete(it.cat);
+      if (this.comm) {
+        this.comm.send({
+          type: "legend_toggle", trace: this.spec.traces[ti].id, category: it.cat, hidden: off,
+        });
+      }
+      this._applyCategoryVisibility(ti);
+    } else {
+      for (const ti of it.traces) {
+        if (off) this._legendOffTraces.add(ti);
+        else this._legendOffTraces.delete(ti);
+        const g = this.gpuTraces && this.gpuTraces[ti];
+        if (g) g._legendHidden = off;
+        if (this.comm) {
+          this.comm.send({ type: "legend_toggle", trace: this.spec.traces[ti].id, hidden: off });
+        }
+      }
+      this._refreshReductionBadges();
+    }
+    this._pickDirty = true;
+    this._updatePickable();
+    this._dispatchChartEvent("legendtoggle", {
+      name: it.name,
+      hidden: off,
+      traces: it.traces.map((ti) => this.spec.traces[ti].id),
+      ...(it.cat != null ? { category: it.cat } : {}),
+    });
+    this._markBestLegendsDirty();
+    this.draw();
+  }
+
+  _applyCategoryVisibility(ti) {
+    const g = this.gpuTraces && this.gpuTraces[ti];
+    if (!g) return;
+    const hidden = this._legendOffCats.get(ti);
+    if (g.tier === "density") {
+      // Local aggregates were computed unfiltered — stale under the new
+      // predicate (§34), and a cached window that still "serves" the view
+      // would elide the kernel request that applies the mask. Drop them and
+      // re-request. The retained sample overlays are filtered locally so
+      // the pre-reply frame (and the kernel-less standalone page) stops
+      // drawing the hidden category immediately.
+      lodDropPointCache(this, g);
+      this._dropDrill(g);
+      lodDropDensityCache(this, g);
+      // The live home grid survives the cache drop (it is what draws until
+      // the reply) but must not elide the request — it was binned under the
+      // previous mask (§34).
+      g._filterDirty = true;
+      for (const s of this._densityOverlays(g)) this._filterScatterRows(s, hidden);
+      this._scheduleViewRequest(this.view, { delay: 0 });
+    } else if (g._cpuFunnel) {
+      this._filterFunnelStages(g, hidden);
+    } else {
+      this._filterScatterRows(g, hidden);
+    }
+  }
+
+  // Hiding a funnel stage removes that segment and nothing else: the stage
+  // axis keeps its label and the surviving stages keep their own geometry and
+  // conversion arithmetic, because a funnel's stage values are the data, not
+  // a running total to be recomputed. Small-N, so the six instance columns and
+  // the paint rows are simply rebuilt from the retained CPU views rather than
+  // read back off the GPU the way the scatter filter must.
+  _filterFunnelStages(g, hidden) {
+    const f = g._cpuFunnel;
+    if (!f) return;
+    const codes = g._funnelCodes;
+    const visible = [];
+    for (let i = 0; i < f.n; i++) {
+      const code = codes ? Math.round(codes[i]) : i;
+      if (!hidden || !hidden.has(code)) visible.push(i);
+    }
+    // `_visMap` translates drawn instance → shipped stage row, so hover,
+    // tooltips and events keep naming the right stage while filtered.
+    g._visMap = visible.length === f.n ? null : Int32Array.from(visible);
+    g.n = visible.length;
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
+      const source = f[name];
+      const values = g._visMap
+        ? Float32Array.from(visible, (i) => source[i])
+        : source;
+      this._deleteBuffers(g, [slot + "Buf"]);
+      g[slot + "Buf"] = this._upload(values);
+    }
+    this._uploadFunnelPaint(g);
+  }
+
+  // Filter a scatter-shaped gpu entry's vertex buffers down to the rows whose
+  // categorical code is not hidden; an empty/absent set restores the full
+  // buffers. Gathers from the CPU views retained at build; per-point
+  // style/stroke buffers have no retained CPU copy, so they are read back
+  // once (WebGL2 getBufferSubData) and cached for later re-toggles.
+  // `_visMap` translates drawn vertex → shipped row (picks/readouts);
+  // `_visInv` maps shipped selection indices onto the filtered buffers.
+  _filterScatterRows(g, hidden) {
+    const gl = this.gl;
+    const codes = g._cpu && g._cpu.color;
+    if (!gl || !codes || g.colorMode !== 2) return;
+    if (g._fullN === undefined) g._fullN = g.n;
+    const full = g._fullN;
+    const readback = (buf, Type, comps) => {
+      const out = new Type(full * comps);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.getBufferSubData(gl.ARRAY_BUFFER, 0, out);
+      return out;
+    };
+    if (g.styleBuf && !g._cpuStyle) g._cpuStyle = readback(g.styleBuf, Float32Array, 4);
+    if (g.strokeBuf && !g._cpuStroke) g._cpuStroke = readback(g.strokeBuf, Uint8Array, 4);
+    let vis = null;
+    if (hidden && hidden.size) {
+      const idx = new Uint32Array(full);
+      let m = 0;
+      for (let i = 0; i < full; i++) if (!hidden.has(codes[i])) idx[m++] = i;
+      vis = idx.subarray(0, m);
+    }
+    const gather = (src, comps) => {
+      if (!vis) return src.length === full * comps ? src : src.subarray(0, full * comps);
+      const out = new (src.constructor)(vis.length * comps);
+      for (let j = 0; j < vis.length; j++) {
+        const r = vis[j];
+        for (let c = 0; c < comps; c++) out[j * comps + c] = src[r * comps + c];
+      }
+      return out;
+    };
+    const reupload = (buf, data) => {
+      if (!buf || !data) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    };
+    reupload(g.xBuf, gather(g._cpu.x, 1));
+    reupload(g.yBuf, gather(g._cpu.y, 1));
+    reupload(g.cBuf, gather(codes, 1));
+    if (g.sBuf && g._cpu.size) reupload(g.sBuf, gather(g._cpu.size, 1));
+    if (g.styleBuf && g._cpuStyle) reupload(g.styleBuf, gather(g._cpuStyle, 4));
+    if (g.strokeBuf && g._cpuStroke) reupload(g.strokeBuf, gather(g._cpuStroke, 4));
+    g.n = vis ? vis.length : full;
+    if (vis) {
+      g._visMap = vis;
+      const inv = new Int32Array(full).fill(-1);
+      for (let j = 0; j < vis.length; j++) inv[vis[j]] = j;
+      g._visInv = inv;
+    } else {
+      delete g._visMap;
+      delete g._visInv;
+    }
+    // A per-vertex selection mask built for the other vertex count would
+    // highlight arbitrary points; the kernel's canonical Selection (already
+    // hidden-aware) re-syncs the visual on the next brush.
+    g.selActive = false;
+    this._pickDirty = true;
+  }
+
+  // Rebuilds (context restore, streaming append) recreate gpuTraces from the
+  // spec, dropping transient per-trace state; toggle state lives on the view
+  // and is re-applied here after every rebuild.
+  _reapplyLegendVisibility() {
+    if (!this._legendOffTraces && !this._legendOffCats) return;
+    for (let i = 0; i < (this.gpuTraces || []).length; i++) {
+      const g = this.gpuTraces[i];
+      if (this._legendOffTraces && this._legendOffTraces.has(i)) g._legendHidden = true;
+      const cats = this._legendOffCats && this._legendOffCats.get(i);
+      if (!cats || !cats.size) continue;
+      if (g.tier === "density") {
+        // The rebuilt grid comes from the spec — unfiltered — so the next
+        // view request must re-bin under the mask, not stand on it.
+        g._filterDirty = true;
+        if (g.sampleOverlay) this._filterScatterRows(g.sampleOverlay, cats);
+      } else if (g._cpuFunnel) {
+        // _filterScatterRows is gated on CPU color codes a funnel does not
+        // have — routing a rebuilt funnel there silently un-hid its stages.
+        this._filterFunnelStages(g, cats);
+      } else {
+        this._filterScatterRows(g, cats);
+      }
+    }
+  }
+
+  _markBestLegendsDirty() {
+    const automatic = (this._legends || []).some(
+      (lg) => lg.dataset.xyLegendAutoLoc === "best" && !lg.dataset.xyLegendAnchor,
+    );
+    if (automatic) this._legendBestDirty = true;
+    return automatic;
+  }
+
+  _bestLegendIsVisible(legend) {
+    if (!legend?.isConnected || legend.hidden || !legend.getClientRects().length) return false;
+    // A transformed/collapsed box can still contribute a DOMRect entry whose
+    // visual width or height is zero. It is no more scoreable than display:none
+    // and would otherwise make `_bestLegendLocationForRaster` return null after
+    // the expensive canvas readback.
+    const rect = legend.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return false;
+    // `getClientRects` catches display:none/zero layout, but visibility,
+    // content-visibility, and opacity can suppress paint while retaining the
+    // same measurable box. Walk through the root because author utility
+    // classes commonly hide the whole chart or one legend at a breakpoint.
+    let node: any = legend;
+    while (node && node.nodeType === 1) {
+      const style = getComputedStyle(node);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        style.contentVisibility === "hidden" ||
+        (Number.isFinite(Number(style.opacity)) && Number(style.opacity) <= 0)
+      ) return false;
+      if (node === this.root) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  _syncBestLegendVisibility(remeasure = false) {
+    if (this._destroyed) return;
+    let needsScore = false;
+    for (const legend of this._legends || []) {
+      const wasVisible = legend._xyLegendBestVisible === true;
+      const visible = this._bestLegendIsVisible(legend);
+      const rect = visible ? legend.getBoundingClientRect() : null;
+      const sizeChanged = remeasure && wasVisible && visible && (
+        rect.width !== legend._xyLegendBestWidth || rect.height !== legend._xyLegendBestHeight
+      );
+      const fixedMoved = remeasure && wasVisible && visible &&
+        legend.dataset.xyLegendAutoLoc !== "best" && (
+          rect.left !== legend._xyLegendBestLeft || rect.top !== legend._xyLegendBestTop
+        );
+      legend._xyLegendBestVisible = visible;
+      legend._xyLegendBestLeft = rect?.left ?? 0;
+      legend._xyLegendBestTop = rect?.top ?? 0;
+      legend._xyLegendBestWidth = rect?.width ?? 0;
+      legend._xyLegendBestHeight = rect?.height ?? 0;
+      // Fixed/anchored legends are raster obstacles for automatic siblings.
+      // Re-score when either kind starts or stops painting; a hidden automatic
+      // box can likewise free a candidate for a later automatic sibling.
+      if (wasVisible !== visible || sizeChanged || fixedMoved) needsScore = true;
+    }
+    if (needsScore && this._markBestLegendsDirty()) this.draw();
+  }
+
+  _observeBestLegendVisibility(legend) {
+    if (legend._xyLegendBestObserved) return;
+    legend._xyLegendBestObserved = true;
+    const visible = this._bestLegendIsVisible(legend);
+    const rect = visible ? legend.getBoundingClientRect() : null;
+    legend._xyLegendBestVisible = visible;
+    legend._xyLegendBestLeft = rect?.left ?? 0;
+    legend._xyLegendBestTop = rect?.top ?? 0;
+    legend._xyLegendBestWidth = rect?.width ?? 0;
+    legend._xyLegendBestHeight = rect?.height ?? 0;
+
+    // ResizeObserver covers display:none and responsive stylesheet changes:
+    // a zero-sized legend receives a fresh nonzero entry when it participates
+    // in layout again. One observer per view is shared by every legend that
+    // participates in a chart with at least one automatic legend.
+    if (typeof ResizeObserver !== "undefined") {
+      this._legendBestResizeObserver ||= new ResizeObserver(() => {
+        this._syncBestLegendVisibility(true);
+      });
+      this._legendBestResizeObserver.observe(legend);
+    }
+    // Visibility/collapse/opacity can change without changing box dimensions.
+    // Observe only the legend's paint-affecting attributes; ancestor changes
+    // are already covered by the chart's theme observer, and a document-wide
+    // subtree observer would turn unrelated application churn into chart work.
+    if (typeof MutationObserver !== "undefined") {
+      this._legendBestMutationObserver ||= new MutationObserver(() => {
+        // Class/style mutations can alter the *visual* footprint through a
+        // nonzero CSS transform. ResizeObserver sees the unchanged layout box,
+        // so remeasure here as well as checking hidden/visible transitions.
+        this._syncBestLegendVisibility(true);
+      });
+      this._legendBestMutationObserver.observe(legend, {
+        attributes: true,
+        attributeFilter: ["class", "hidden", "style"],
+      });
+    }
+    if (!this._legendBestVisibilityEventsArmed) {
+      this._legendBestVisibilityEventsArmed = true;
+      const sync = () => this._syncBestLegendVisibility(true);
+      // Re-evaluate media-query visibility at its natural seams. These
+      // listeners are registered through `_listen`, so destroy removes them.
+      this._listen(window, "resize", sync);
+      this._listen(window, "pageshow", sync);
+      this._listen(document, "visibilitychange", sync);
+    }
+  }
+
+  _bestLegendLiveRasterAvailable() {
+    if (this._destroyed || this._glLost || !this.gl || !this.root?.isConnected) return false;
+    if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return false;
+    if (!(this.plot?.w > 0) || !(this.plot?.h > 0)) return false;
+    // A temporarily hidden legend does not remove the shared rendered-marks
+    // raster. Preserve its last live result; the visibility observer will
+    // re-arm a score when that individual box becomes measurable again.
+    return true;
+  }
+
+  _adoptBestLegendFallbacks(spec = this.spec) {
+    if (this._bestLegendLiveRasterAvailable()) return false;
+    let changed = false;
+    for (const legend of this._legends || []) {
+      if (legend.dataset.xyLegendAutoLoc !== "best" || legend.dataset.xyLegendAnchor) continue;
+      const source = legend._xyLegendSource;
+      const options = source === "main"
+        ? spec?.legend
+        : typeof source === "string" && source.startsWith("extra:")
+          ? spec?.extra_legends?.[Number(source.slice("extra:".length))]
+          : null;
+      if (
+        String(options?.auto_loc || "").trim().toLowerCase() !== "best" ||
+        Array.isArray(options?.anchor)
+      ) continue;
+      // This is a declarative Python fallback, not a rendered-geometry score.
+      // If live rasterization later returns, its first measurable placement
+      // must use the exact minimum rather than inheriting fallback stickiness.
+      legend._xyLegendBestLiveLoc = null;
+      const loc = String(options?.loc || "upper right");
+      if (legend.dataset.xyLegendLoc !== loc) {
+        legend.dataset.xyLegendLoc = loc;
+        this._positionLegend(legend, loc);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  _settleBestLegendInteraction() {
+    if (!this._legendBestInteractionActive) return false;
+    this._legendBestInteractionActive = false;
+    if (this._markBestLegendsDirty()) this.draw();
+    return true;
+  }
+
+  _fillBestLegendRasterRect(raster, rect) {
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return;
+    // DOMRects are visual coordinates (after CSS zoom/transform), so map them
+    // against the marks canvas's visual plot rect rather than adding unscaled
+    // layout offsets to the root rect.
+    const plotRect = raster.plot || this.canvas.getBoundingClientRect();
+    if (!(plotRect.width > 0) || !(plotRect.height > 0)) return;
+    const plotLeft = plotRect.left;
+    const plotTop = plotRect.top;
+    const left = Math.max(plotLeft, rect.left);
+    const right = Math.min(plotRect.right, rect.right);
+    const top = Math.max(plotTop, rect.top);
+    const bottom = Math.min(plotRect.bottom, rect.bottom);
+    if (!(right > left) || !(bottom > top)) return;
+    const x0 = Math.max(
+      0,
+      Math.min(raster.w, Math.floor(((left - plotLeft) / plotRect.width) * raster.w)),
+    );
+    const x1 = Math.max(
+      x0,
+      Math.min(raster.w, Math.ceil(((right - plotLeft) / plotRect.width) * raster.w)),
+    );
+    const y0 = Math.max(
+      0,
+      Math.min(raster.h, Math.floor(((top - plotTop) / plotRect.height) * raster.h)),
+    );
+    const y1 = Math.max(
+      y0,
+      Math.min(raster.h, Math.ceil(((bottom - plotTop) / plotRect.height) * raster.h)),
+    );
+    for (let row = y0; row < y1; row++) {
+      raster.occupancy.fill(1, row * raster.w + x0, row * raster.w + x1);
+    }
+  }
+
+  _bestLegendAnnotationPainted(label) {
+    // getClientRects catches display:none, but not an opacity-zero ancestor.
+    // Walk to the chart root so a utility class on the annotation layer does
+    // not reserve an obstacle for pixels the user cannot see.
+    let node: any = label;
+    let labelStyle = null;
+    while (node && node.nodeType === 1) {
+      const style = getComputedStyle(node);
+      if (node === label) labelStyle = style;
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        (Number.isFinite(Number(style.opacity)) && Number(style.opacity) <= 0)
+      ) return false;
+      if (node === this.root) break;
+      node = node.parentElement;
+    }
+    if (!labelStyle) return false;
+
+    // Computed transparent colors are serialized as rgba(..., 0) in current
+    // browsers; slash-alpha color() forms are handled as well. Detect only an
+    // exact zero here. Unknown paint syntaxes remain conservative obstacles.
+    const transparent = (paint) => {
+      const value = String(paint || "").trim().toLowerCase();
+      if (!value || value === "transparent") return true;
+      const zeroAlpha = /(?:,|\/)\s*0(?:\.0+)?%?\s*\)$/;
+      return zeroAlpha.test(value) && (value.startsWith("rgba(") || value.includes("/"));
+    };
+    if (!transparent(labelStyle.color)) return true;
+    if (!transparent(labelStyle.backgroundColor)) return true;
+    for (const side of ["Top", "Right", "Bottom", "Left"]) {
+      if (
+        labelStyle[`border${side}Style`] !== "none" &&
+        (parseFloat(labelStyle[`border${side}Width`]) || 0) > 0 &&
+        !transparent(labelStyle[`border${side}Color`])
+      ) return true;
+    }
+    if (
+      labelStyle.textDecorationLine !== "none" &&
+      !transparent(labelStyle.textDecorationColor)
+    ) return true;
+    // Shadows and generated content are not cheaply decomposable into alpha;
+    // if either is present, retaining the box is the safe visible-paint answer.
+    return labelStyle.textShadow !== "none" || labelStyle.boxShadow !== "none";
+  }
+
+  _bestLegendRaster() {
+    const p = this.plot;
+    if (!(p?.w > 0) || !(p?.h > 0) || !this.canvas || !this.overlay) return null;
+    // Native fallback canvases can only be sampled reliably when the browser
+    // honored the preservation attribute requested at context creation. The
+    // shared host presents into Canvas2D and does not need this gate.
+    if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return null;
+    const scratch = this._legendBestScratch || document.createElement("canvas");
+    this._legendBestScratch = scratch;
+    // Assigning the fixed dimensions clears the prior frame and resets 2D
+    // state. The readback below therefore remains a constant 27 KiB whether
+    // the plotted source has ten rows or ten billion.
+    scratch.width = LEGEND_BEST_GRID_W;
+    scratch.height = LEGEND_BEST_GRID_H;
+    const ctx = scratch.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    try {
+      ctx.clearRect(0, 0, LEGEND_BEST_GRID_W, LEGEND_BEST_GRID_H);
+      ctx.imageSmoothingEnabled = true;
+      // The marks surface is plot-local and transparent. The annotation
+      // overlay is chart-local, hence the plot crop in its source rectangle.
+      // Deliberately do not sample `chrome`: its plot background would mark
+      // every cell occupied and grid lines are not data.
+      ctx.drawImage(
+        this.canvas,
+        0,
+        0,
+        this.canvas.width,
+        this.canvas.height,
+        0,
+        0,
+        LEGEND_BEST_GRID_W,
+        LEGEND_BEST_GRID_H,
+      );
+      ctx.drawImage(
+        this.overlay,
+        p.x * this.dpr,
+        p.y * this.dpr,
+        p.w * this.dpr,
+        p.h * this.dpr,
+        0,
+        0,
+        LEGEND_BEST_GRID_W,
+        LEGEND_BEST_GRID_H,
+      );
+    } catch (_error) {
+      // A browser that cannot snapshot its live WebGL surface keeps the
+      // concrete Python-selected fallback rather than making a blind move.
+      return null;
+    }
+    let pixels;
+    try {
+      pixels = ctx.getImageData(0, 0, LEGEND_BEST_GRID_W, LEGEND_BEST_GRID_H).data;
+    } catch (_error) {
+      return null;
+    }
+    const occupancy = new Uint8Array(LEGEND_BEST_GRID_W * LEGEND_BEST_GRID_H);
+    for (let i = 0; i < occupancy.length; i++) {
+      // Downsampling can leave a one-device-pixel line at very low alpha. Any
+      // non-rounding alpha is painted geometry; opacity must not make the same
+      // line safe for a legend merely because the author styled it faintly.
+      if (pixels[i * 4 + 3] > 1) occupancy[i] = 1;
+    }
+    const raster = {
+      occupancy,
+      w: LEGEND_BEST_GRID_W,
+      h: LEGEND_BEST_GRID_H,
+      plot: this.canvas.getBoundingClientRect(),
+    };
+    // Annotation text is DOM chrome, not part of either sampled canvas. Treat
+    // its visible box as a solid important obstacle. Fixed/anchored legends
+    // likewise reserve their authored rectangles when an additional automatic
+    // legend is present.
+    for (const label of this.labels.querySelectorAll('[data-xy-slot="annotation_label"]')) {
+      if ((label as HTMLElement).hidden || !label.getClientRects().length) continue;
+      if (!this._bestLegendAnnotationPainted(label)) continue;
+      this._fillBestLegendRasterRect(raster, label.getBoundingClientRect());
+    }
+    for (const legend of this._legends || []) {
+      if (legend.dataset.xyLegendAutoLoc === "best") continue;
+      if (!this._bestLegendIsVisible(legend)) continue;
+      this._fillBestLegendRasterRect(raster, legend.getBoundingClientRect());
+    }
+    return raster;
+  }
+
+  _bestLegendLocationForRaster(
+    raster,
+    legend,
+    allowHysteresis = true,
+    blockedLocs = null,
+  ) {
+    const rect = legend.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+    const plotRect = raster.plot || this.canvas.getBoundingClientRect();
+    const plotW = plotRect.width || this.plot.w;
+    const plotH = plotRect.height || this.plot.h;
+    return xyLegendBestLocation(
+      raster.occupancy,
+      raster.w,
+      raster.h,
+      rect.width / plotW,
+      rect.height / plotH,
+      LEGEND_BEST_INSET_PX / this.plot.w,
+      LEGEND_BEST_INSET_PX / this.plot.h,
+      allowHysteresis &&
+        typeof legend._xyLegendBestLiveLoc === "string" &&
+        legend.dataset.xyLegendLoc === legend._xyLegendBestLiveLoc
+        ? legend._xyLegendBestLiveLoc
+        : null,
+      LEGEND_BEST_HYSTERESIS,
+      blockedLocs,
+    );
+  }
+
+  _maybePositionBestLegends() {
+    const automatic = (this._legends || []).filter(
+      (lg) => lg.dataset.xyLegendAutoLoc === "best" && !lg.dataset.xyLegendAnchor,
+    );
+    if (!automatic.length || this.spec?.coords === "polar") {
+      this._legendBestDirty = false;
+      return;
+    }
+    // Retain the last settled winner through gestures and every interpolation
+    // frame. Seeing a data/LOD transition makes the eventual settled frame
+    // dirty even if the end-of-gesture score already ran against the covering
+    // overview; fades schedule their own final draw, so the refined rendered
+    // representation gets exactly one follow-up score without a kernel hook.
+    if (
+      this._dataAnim ||
+      this._transitionView ||
+      this._interactionTransitionActive() ||
+      // Drill entry/exit clocks can finish before the aggregate backdrop and
+      // point-intensity easings. Their tick fields reset on the actual final
+      // frame, so this defers exactly through those frames and scores once
+      // against the settled rendered representation.
+      (this.gpuTraces || []).some((g) =>
+        Boolean(g._drillBackdropTick || g._blendTick || g.drill?._blendTick),
+      )
+    ) {
+      this._legendBestDirty = true;
+      return;
+    }
+    if (!this._legendBestDirty || this._legendBestInteractionActive) return;
+    // Visibility measurement reads layout/computed style, so keep it behind
+    // both settled-state gates. Clean hover frames and animation/gesture frames
+    // must not pay for geometry that cannot produce a new placement anyway.
+    const visibleAutomatic = automatic.filter((legend) => {
+      const visible = this._bestLegendIsVisible(legend);
+      const rect = visible ? legend.getBoundingClientRect() : null;
+      legend._xyLegendBestVisible = visible;
+      legend._xyLegendBestWidth = rect?.width ?? 0;
+      legend._xyLegendBestHeight = rect?.height ?? 0;
+      return visible;
+    });
+    // A hidden/collapsed legend has no box to score. Treat that settled state
+    // as clean instead of reading the canvases on every unrelated draw; its
+    // observer marks one fresh score when the box becomes measurable again.
+    if (!visibleAutomatic.length) {
+      this._legendBestDirty = false;
+      return;
+    }
+    const raster = this._bestLegendRaster();
+    if (!raster) return;
+    let positioned = 0;
+    const positionedRects = [];
+    for (const legend of visibleAutomatic) {
+      let loc = this._bestLegendLocationForRaster(raster, legend);
+      if (!loc) continue;
+      legend.dataset.xyLegendLoc = loc;
+      this._positionLegend(legend, loc);
+      let rect = legend.getBoundingClientRect();
+      const overlapsPrior = positionedRects.some((prior) =>
+        rect.left < prior.right && rect.right > prior.left &&
+        rect.top < prior.bottom && rect.bottom > prior.top,
+      );
+      if (overlapsPrior) {
+        // Occupancy hysteresis stabilizes small mark-density changes, not box
+        // collisions. Probe the nine bounded candidate rectangles only on this
+        // slow path, then re-run the exact score over non-colliding locations.
+        const blockedLocs = new Set();
+        for (const candidate of LEGEND_BEST_ORDER) {
+          this._positionLegend(legend, candidate);
+          const candidateRect = legend.getBoundingClientRect();
+          if (positionedRects.some((prior) =>
+            candidateRect.left < prior.right && candidateRect.right > prior.left &&
+            candidateRect.top < prior.bottom && candidateRect.bottom > prior.top,
+          )) blockedLocs.add(candidate);
+        }
+        const exactLoc = this._bestLegendLocationForRaster(
+          raster,
+          legend,
+          false,
+          blockedLocs,
+        );
+        if (exactLoc) {
+          loc = exactLoc;
+          legend.dataset.xyLegendLoc = loc;
+          this._positionLegend(legend, loc);
+          rect = legend.getBoundingClientRect();
+        }
+      }
+      legend._xyLegendBestLiveLoc = loc;
+      // Multiple automatic boxes choose in stable DOM order. Each settled box
+      // becomes an obstacle for the next, whose current corner cannot survive
+      // merely because the added box occupies less than the stability band.
+      this._fillBestLegendRasterRect(raster, rect);
+      positionedRects.push(rect);
+      positioned += 1;
+    }
+    this._legendBestDirty = positioned !== visibleAutomatic.length;
+  }
+
+  _positionLegend(lg, loc, anchor = null) {
     if (!lg) return;
     // Responsive anchors flow through private custom properties consumed by a
     // zero-specificity rule. Author classes or component styles can still set
     // real left/right/top/bottom/transform declarations and win normally.
-    const rightInset = this.size.w - (this.plot.x + this.plot.w);
+    //
+    // Cartesian legends place inside the plot rect; a polar chart hands over a
+    // gutter beside the disc instead (`_recutPolarPlot`), because a disc fills
+    // its rect and an inside box lands on the marks. An authored `anchor` is
+    // still resolved against the PLOT — it is a plot-relative coordinate — and
+    // reserves no gutter, so the two cannot disagree.
+    const plot = anchor ? this.plot : (this._legendRect || this.plot);
+    const rightInset = this.size.w - (plot.x + plot.w);
     const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
-    const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
-    const left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
-    const right = h === "right" ? rightInset + 6 : null;
-    const top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
-    const bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    const locTokens = loc.split(/[\s_-]+/);
+    const v = loc.includes("upper") || locTokens.includes("top")
+      ? "upper"
+      : loc.includes("lower") || locTokens.includes("bottom")
+        ? "lower"
+        : "center";
+    let left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
+    let right = h === "right" ? rightInset + 6 : null;
+    let top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
+    let bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    if (Array.isArray(anchor) && (anchor.length === 2 || anchor.length === 4)) {
+      const hx = h === "left" ? 0 : h === "right" ? 1 : 0.5;
+      const vy = v === "lower" ? 0 : v === "upper" ? 1 : 0.5;
+      const aw = anchor.length === 4 ? Number(anchor[2]) : 0;
+      const ah = anchor.length === 4 ? Number(anchor[3]) : 0;
+      const borderPad = Math.max(0, Number(lg.dataset.xyLegendBorderPad) || 0);
+      left = this.plot.x + (Number(anchor[0]) + hx * aw) * this.plot.w +
+        (hx === 0 ? borderPad : hx === 1 ? -borderPad : 0);
+      top = this.plot.y + (1 - Number(anchor[1]) - vy * ah) * this.plot.h +
+        (vy === 1 ? borderPad : vy === 0 ? -borderPad : 0);
+      right = null;
+      bottom = null;
+    }
     lg.style.setProperty("--xy-legend-left", left == null ? "auto" : left + "px");
     lg.style.setProperty("--xy-legend-right", right == null ? "auto" : right + "px");
     lg.style.setProperty("--xy-legend-top", top == null ? "auto" : top + "px");
     lg.style.setProperty("--xy-legend-bottom", bottom == null ? "auto" : bottom + "px");
-    const tx = h === "center" ? "-50%" : "0";
-    const ty = v === "center" ? "-50%" : "0";
+    const tx = h === "center" ? "-50%" : h === "right" && anchor ? "-100%" : "0";
+    const ty = v === "center" ? "-50%" : v === "lower" && anchor ? "-100%" : "0";
     lg.style.setProperty("--xy-legend-transform", `translate(${tx},${ty})`);
   }
 
@@ -1873,19 +4116,44 @@ export class ChartView {
     if (!cb) return;
     const box = document.createElement("div");
     const horizontal = cb.orientation === "horizontal";
+    const axesPlacement = cb.placement === "axes";
     box.style.cssText = "position:absolute;pointer-events:none;z-index:4;";
     this._applySlot(box, "colorbar");
 
     const bar = document.createElement("div");
     const levels = Math.max(0, Number(cb.levels) || 0);
+    const lineOnly = Boolean(cb.line_only);
     let gradient;
-    if (levels > 0) {
+    if (lineOnly) {
+      gradient = "linear-gradient(white,white)";
+    } else if (levels > 0) {
       const lut = buildLutData(cb.colormap || "viridis");
+      const exactColors = Array.isArray(cb.band_colors) && cb.band_colors.length === levels
+        ? cb.band_colors
+        : null;
+      const boundaries = Array.isArray(cb.boundaries)
+        ? cb.boundaries.map(Number)
+        : [];
+      const proportional =
+        cb.spacing === "proportional" &&
+        boundaries.length === levels + 1 &&
+        boundaries.every(Number.isFinite) &&
+        boundaries.every((value, index) => index === 0 || value > boundaries[index - 1]);
+      const fractions = proportional
+        ? boundaries.map(
+          (value) =>
+            (value - boundaries[0]) /
+            (boundaries[boundaries.length - 1] - boundaries[0]),
+        )
+        : Array.from({ length: levels + 1 }, (_, index) => index / levels);
       const bands = [];
       for (let index = 0; index < levels; index++) {
         const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
-        const color = `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
-        bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
+        const row = exactColors && exactColors[index];
+        const color = row
+          ? `rgb(${Number(row[0])},${Number(row[1])},${Number(row[2])})`
+          : `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
+        bands.push(`${color} ${100 * fractions[index]}% ${100 * fractions[index + 1]}%`);
       }
       gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
     } else {
@@ -1893,38 +4161,145 @@ export class ChartView {
       gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${stops.map((c) =>
         `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
     }
+    const barThickness = axesPlacement
+      ? (horizontal ? this.plot.h : this.plot.w)
+      : COLORBAR_THICKNESS;
     bar.style.cssText = horizontal
-      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;`
-      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;`;
+      ? `position:absolute;inset:0 0 auto 0;height:${barThickness}px;`
+      : `position:absolute;inset:0 auto 0 0;width:${barThickness}px;`;
     bar.style.setProperty("--xy-colorbar-gradient", gradient);
+    if (lineOnly) {
+      bar.dataset.xyColorbarLineOnly = "true";
+    }
     this._applySlot(bar, "colorbar_bar");
     box.appendChild(bar);
+    if (lineOnly && ["min", "max", "both"].includes(String(cb.extend))) {
+      const extension = (side) => {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        const atMinimum = side === "min";
+        svg.dataset.xyColorbarExtend = side;
+        svg.setAttribute("width", String(horizontal ? 9 : barThickness));
+        svg.setAttribute("height", String(horizontal ? barThickness : 9));
+        svg.style.cssText = horizontal
+          ? `position:absolute;top:0;${atMinimum ? "right:100%" : "left:100%"};overflow:visible;`
+          : `position:absolute;left:0;${atMinimum ? "top:100%" : "bottom:100%"};overflow:visible;`;
+        polygon.setAttribute("points", horizontal
+          ? (atMinimum
+            ? `9,0 9,${barThickness} 0,${barThickness / 2}`
+            : `0,0 0,${barThickness} 9,${barThickness / 2}`)
+          : (atMinimum
+            ? `0,0 ${barThickness},0 ${barThickness / 2},9`
+            : `0,9 ${barThickness},9 ${barThickness / 2},0`));
+        polygon.setAttribute("fill", "white");
+        polygon.setAttribute("stroke", "currentColor");
+        this._applySlot(polygon, "colorbar_extension");
+        svg.appendChild(polygon);
+        bar.appendChild(svg);
+      };
+      if (cb.extend === "min" || cb.extend === "both") extension("min");
+      if (cb.extend === "max" || cb.extend === "both") extension("max");
+    }
 
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
-    const tickResult = linearTicks(lo, hi, 8);
+    const logScale = cb.scale === "log";
+    const colorbarFraction = (value) => logScale
+      ? (hi === lo ? 0 : Math.log(value / lo) / Math.log(hi / lo))
+      : (value - lo) / span;
+    for (const line of Array.isArray(cb.lines) ? cb.lines : []) {
+      const value = Number(line && line.value);
+      if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
+      const fraction = colorbarFraction(value);
+      const marker = document.createElement("i");
+      marker.dataset.xyColorbarLine = "true";
+      const color = safeCssPaint(this.root, line.color || "currentColor");
+      const width = Math.max(0.5, Number(line.width) || 1);
+      const lineStyle = line.dash === "dashed" ? "dashed" : "solid";
+      marker.dataset.xyColorbarOrientation = horizontal ? "horizontal" : "vertical";
+      marker.style.cssText = horizontal
+        ? `position:absolute;left:${100 * fraction}%;inset-block:0;`
+        : `position:absolute;top:${100 * (1 - fraction)}%;inset-inline:0;`;
+      marker.style.setProperty("--xy-colorbar-line-width", `${width}px`);
+      marker.style.setProperty("--xy-colorbar-line-style", lineStyle);
+      marker.style.setProperty("--xy-colorbar-line-color", color);
+      this._applySlot(marker, "colorbar_line");
+      bar.appendChild(marker);
+    }
+    const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
+    const barLength = (horizontal ? this.plot.w : this.plot.h) * shrink;
+    const tickTarget = Math.max(2, Math.min(8, Math.floor(Math.max(0, barLength) / 48) + 1));
+    const tickResult = logScale ? logTicks(lo, hi, tickTarget) : linearTicks(lo, hi, tickTarget);
     const hasExplicitTicks = Array.isArray(cb.ticks);
-    const tickValues = hasExplicitTicks ? cb.ticks : tickResult.ticks;
+    const tickValues = hasExplicitTicks
+      ? cb.ticks
+      : (logScale ? (tickResult as any).labels : tickResult.ticks);
     const tickStep = tickResult.step;
-    for (const raw of tickValues) {
+    const fractionFor = (value) => logScale
+      ? (hi === lo ? 0 : Math.log(value / lo) / Math.log(hi / lo))
+      : (value - lo) / span;
+    for (let tickIndex = 0; tickIndex < tickValues.length; tickIndex++) {
+      const raw = tickValues[tickIndex];
       const value = Number(raw);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
-      const tick = document.createElement("span");
-      tick.textContent = hasExplicitTicks ? fmtGeneral(value) : fmtLinear(value, tickStep);
-      const fraction = (value - lo) / span;
+      // `any` because the node carries the stashed beside-the-bar cssText below
+      // (same reason as the legend box's `lg`).
+      const tick: any = document.createElement("span");
+      tick.textContent =
+        hasExplicitTicks &&
+          Array.isArray(cb.tick_labels) &&
+          cb.tick_labels.length === tickValues.length
+          ? String(cb.tick_labels[tickIndex])
+          : hasExplicitTicks
+            ? fmtGeneral(value)
+            : logScale
+              ? fmtLog(value)
+              : fmtLinear(value, tickStep);
+      const fraction = fractionFor(value);
+      // The compact vertical form keeps only the two extreme ticks (see
+      // `_positionColorbar`), so record each tick's position on the node and let
+      // positioning decide — the tick VALUES are generated here, and which of
+      // them survive is a responsive decision that changes with the container.
+      tick.dataset.xyColorbarFraction = String(fraction);
       tick.style.cssText = horizontal
-        ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+        ? `position:absolute;left:${100 * fraction}%;top:${barThickness + 2}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${barThickness + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+      // The compact form restacks the two endpoints above/below the gradient, so
+      // keep the beside-the-bar placement to restore when the container widens.
+      tick._xyBesideCss = tick.style.cssText;
       this._applySlot(tick, "colorbar_tick");
       box.appendChild(tick);
+    }
+    if (cb.minor_ticks) {
+      const orderedTicks = [...tickValues]
+        .map(Number)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      for (let index = 0; index + 1 < orderedTicks.length; index++) {
+        const left = orderedTicks[index], right = orderedTicks[index + 1];
+        for (let step = 1; step < 5; step++) {
+          const value = logScale
+            ? Math.pow(10, Math.log10(left) + (Math.log10(right) - Math.log10(left)) * step / 5)
+            : left + (right - left) * step / 5;
+          const fraction = fractionFor(value);
+          const tick = document.createElement("i");
+          tick.dataset.xyColorbarMinor = "true";
+          tick.dataset.xyColorbarOrientation = horizontal ? "horizontal" : "vertical";
+          tick.style.cssText = horizontal
+            ? `position:absolute;left:${100 * fraction}%;top:${barThickness}px;`
+            : `position:absolute;left:${barThickness}px;top:${100 * (1 - fraction)}%;`;
+          this._applySlot(tick, "colorbar_minor_tick");
+          box.appendChild(tick);
+        }
+      }
     }
     if (cb.label) {
       const label = document.createElement("span");
       label.textContent = String(cb.label);
       label.style.cssText = horizontal
-        ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+        ? `position:absolute;left:50%;top:${barThickness + 18}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${barThickness + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
       this._applySlot(label, "colorbar_title");
       box.appendChild(label);
     }
@@ -1937,22 +4312,73 @@ export class ChartView {
 
   _positionColorbar() {
     if (!this._colorbar) return;
+    const cb = this.spec.colorbar || {};
     const horizontal = this._colorbarHorizontal;
+    const axesPlacement = cb.placement === "axes";
     const compactVertical = !horizontal && this._compactVerticalColorbar;
-    const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
+    const gap = axesPlacement
+      ? 0
+      : (cb.pad == null
+        ? (compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP)
+        : Number(cb.pad) * (horizontal ? this.plot.h : this.plot.w));
+    const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
+    const anchor = Array.isArray(cb.anchor) ? cb.anchor : [0.5, 0.5];
+    const barWidth = this.plot.w * shrink;
+    const barHeight = this.plot.h * shrink;
     this._colorbar.style.left = (horizontal
-      ? this.plot.x
-      : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
+      ? axesPlacement
+        ? this.plot.x
+        : this.plot.x + (this.plot.w - barWidth) * Number(anchor[0] ?? 0.5)
+      : axesPlacement
+        ? this.plot.x
+        : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
     this._colorbar.style.top = (horizontal
-      ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
-      : this.plot.y) + "px";
+      ? axesPlacement
+        ? this.plot.y
+        : this.plot.y + this.plot.h + gap
+      : this.plot.y + (this.plot.h - barHeight) * (1 - Number(anchor[1] ?? 0.5))) + "px";
     this._colorbar.style.width = (horizontal
-      ? this.plot.w
-      : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
-    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+      ? axesPlacement ? this.plot.w : barWidth
+      : axesPlacement ? this.plot.w + 44 : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
+    this._colorbar.style.height = (horizontal
+      ? axesPlacement ? this.plot.h + 24 : 50
+      : Math.max(24, barHeight)) + "px";
     this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
+    // Compact keeps the two EXTREME tick labels — hiding all of them left a bare
+    // gradient with no numbers on it — and restacks them above and below the
+    // gradient. Beside the bar they would need a gutter wide enough for `0.25`,
+    // which costs 36 px of the plot width the compact collapse exists to protect;
+    // centred on an 18 px bar they overflow ~4 px a side into the gap already
+    // reserved. The interior ladder still drops, and so does the rotated title:
+    // at phone width it has nowhere to go, and the box's own `title`/ARIA text
+    // already names the scale and its range.
+    const ticks = [...this._colorbar.querySelectorAll('[data-xy-slot="colorbar_tick"]')];
+    const fractions = ticks.map((node) => Number(node.dataset.xyColorbarFraction));
+    const lowest = Math.min(...fractions);
+    const highest = Math.max(...fractions);
+    for (const [index, node] of ticks.entries()) {
+      const fraction = fractions[index];
+      const endpoint = !Number.isFinite(fraction) || fraction === lowest || fraction === highest;
+      node.hidden = compactVertical && !endpoint;
+      if (horizontal || !node._xyBesideCss) continue;
+      if (!compactVertical || !endpoint) {
+        node.style.cssText = node._xyBesideCss;
+        continue;
+      }
+      // Above the top of the gradient for the maximum, below the bottom for the
+      // minimum, both centred on the bar.
+      const above = fraction === highest;
+      const offset = COMPACT_COLORBAR_LABEL_GAP;
+      node.style.cssText =
+        "position:absolute;left:50%;white-space:nowrap;" +
+        (above
+          ? `top:-${offset}px;transform:translate(-50%,-100%);`
+          : `top:calc(100% + ${offset}px);transform:translateX(-50%);`);
+    }
+    // The rotated title and the text-free minor ticks are ink a phone-width chart
+    // cannot spend; `box.title` keeps the scale name reachable.
     for (const node of this._colorbar.querySelectorAll(
-      '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
+      '[data-xy-slot="colorbar_title"], [data-xy-colorbar-minor]'
     )) {
       node.hidden = compactVertical;
     }
@@ -1961,29 +4387,80 @@ export class ChartView {
   _initGl(buffer) {
     const dpr = window.devicePixelRatio || 1;
     this.dpr = dpr;
-    this.canvas.width = this.plot.w * dpr;
-    this.canvas.height = this.plot.h * dpr;
-    this.chrome.width = this.size.w * dpr;
-    this.chrome.height = this.size.h * dpr;
+    // A canvas backing-store write clears the canvas even at an unchanged
+    // value, and _initGl runs on every context-restore retry — write only on
+    // a real size change so the last presented frame survives a rebuild that
+    // fails transiently under GPU pressure (§18).
+    const sizeSurface = (surface, w, h) => {
+      w = Math.trunc(w);
+      h = Math.trunc(h);
+      if (surface.width !== w) surface.width = w;
+      if (surface.height !== h) surface.height = h;
+    };
+    sizeSurface(this.canvas, this.plot.w * dpr, this.plot.h * dpr);
+    sizeSurface(this.chrome, this.size.w * dpr, this.size.h * dpr);
     this.chrome.style.width = this.size.w + "px";
     this.chrome.style.height = this.size.h + "px";
-    this.overlay.width = this.size.w * dpr;
-    this.overlay.height = this.size.h * dpr;
+    sizeSurface(this.overlay, this.size.w * dpr, this.size.h * dpr);
     this.overlay.style.width = this.size.w + "px";
     this.overlay.style.height = this.size.h + "px";
 
-    // Stay inside the page's context budget before acquiring (governor above):
-    // at budget, the least-recently-visible off-screen view releases first.
-    XY_CONTEXT_GOVERNOR.reserve(this);
-    const gl = this.canvas.getContext("webgl2", {
-      antialias: false, premultipliedAlpha: true, alpha: true,
-    });
-    if (!gl) {
-      XY_CONTEXT_GOVERNOR.cancel(this);
-      throw new Error("webgl2 unavailable");
+    // A visible chart canvas is a normal 2D DOM surface; a detached GLHost
+    // owns the one WebGL2 context for every ChartView in this document. Keep a
+    // guarded native path for child frames, explicit rollback, and host
+    // allocation failure — that path retains the proven context governor.
+    if (!this._sharedGlAttempted) {
+      this._sharedGlAttempted = true;
+      const host = acquireGLHost(document, this);
+      if (host) {
+        const present = this.canvas.getContext("2d", { alpha: true });
+        if (present) {
+          this._glHost = host;
+          this._present2d = present;
+          this.canvas.dataset.xyGlHost = "shared";
+        } else {
+          host.release(this);
+        }
+      }
+    }
+
+    let gl;
+    if (this._glHost) {
+      gl = this._glHost.gl;
+      if (!gl || gl.isContextLost()) throw new Error("webgl2 unavailable");
+    } else {
+      if (!this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR.register(this);
+        this._governorRegistered = true;
+      }
+      // Stay inside the page's context budget before acquiring (governor
+      // fallback): at budget, the least-recently-visible view releases first.
+      XY_CONTEXT_GOVERNOR.reserve(this);
+      const needsLegendBestSnapshot = (this._legends || []).some(
+        (legend) =>
+          legend.dataset.xyLegendAutoLoc === "best" &&
+          !legend.dataset.xyLegendAnchor,
+      );
+      gl = this.canvas.getContext("webgl2", {
+        antialias: false,
+        premultipliedAlpha: true,
+        alpha: true,
+        // The shared host copies from its own preserved buffer into a 2D
+        // presentation canvas. Only a native chart with an automatic legend
+        // needs its just-drawn pixels retained for the settled drawImage
+        // downsample; fixed/no-legend charts keep WebGL's faster default.
+        preserveDrawingBuffer: needsLegendBestSnapshot,
+      });
+      if (!gl) {
+        XY_CONTEXT_GOVERNOR.cancel(this);
+        throw new Error("webgl2 unavailable");
+      }
+      this._legendBestCanvasSnapshotReady =
+        needsLegendBestSnapshot &&
+        gl.getContextAttributes()?.preserveDrawingBuffer === true;
+      XY_CONTEXT_GOVERNOR.acquired(this);
     }
     this.gl = gl;
-    XY_CONTEXT_GOVERNOR.acquired(this);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -1993,19 +4470,37 @@ export class ChartView {
     this._progCache = new Map();
     this._glPrograms = this._progCache; // deletion iterates the cache values
 
-    // Fullscreen quad for density/heatmap, plus its VAO (a_corner at slot 0).
-    this.quad = gl.createBuffer();
-    this.quad._fcId = ++this._bufSeq;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
-    this.quadVao = gl.createVertexArray();
-    gl.bindVertexArray(this.quadVao);
-    gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
-    gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
-    gl.bindVertexArray(null);
+    // Density/heatmap use one immutable fullscreen quad. It is safe to pool at
+    // host scope because fixed attribute slots make its VAO program-agnostic.
+    if (this._glHost) {
+      this.quad = this._glHost.sharedQuad;
+      this.quadVao = this._glHost.sharedQuadVao;
+    } else {
+      this.quad = gl.createBuffer();
+      this.quad._fcId = ++this._bufSeq;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+      this.quadVao = gl.createVertexArray();
+      gl.bindVertexArray(this.quadVao);
+      gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
+      gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
+      gl.bindVertexArray(null);
+    }
 
-    this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
+    // Build transactionally. A lost context or allocation failure midway
+    // through a trace list must not strand the buffers/programs already made
+    // for its prefix — shared-host recovery may retry this client in place.
+    this.gpuTraces = [];
+    try {
+      for (const trace of this.spec.traces) {
+        this.gpuTraces.push(this._buildTrace(buffer, trace));
+      }
+    } catch (error) {
+      try { this._destroyGlResources(); } catch (_cleanupError) {}
+      throw error;
+    }
+    this._reapplyLegendVisibility();
     this._updatePickable();
   }
 
@@ -2023,7 +4518,17 @@ export class ChartView {
   _prog(key, vs, fs) {
     let p = this._progCache.get(key);
     if (!p) {
-      p = makeProgram(this.gl, vs, fs);
+      // Uniforms are mutable program state. Keep programs client-owned until
+      // every mark pass is independently state-complete; sharing them would
+      // let one chart's transition/style uniforms leak into another chart.
+      const host = this._glHost;
+      // The resolver is an additive host capability. A singleton installed by
+      // an older duplicate bundle does not expose it, so mixed-version pages
+      // safely retain the native per-program shader lifecycle.
+      const resolveShader = host && typeof host.getOrCreateShader === "function"
+        ? host.getOrCreateShader.bind(host)
+        : undefined;
+      p = makeProgram(this.gl, vs, fs, resolveShader);
       this._progCache.set(key, p);
     }
     return p;
@@ -2034,6 +4539,10 @@ export class ChartView {
   get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
   get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
   get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
+  get ribbonProg() { return this._prog("ribbon", RIBBON_VS, RIBBON_FS); }
+  // The funnel program shares the ribbon fragment stage: same edge
+  // coverage, stroke inset, and match-fill outline contract.
+  get funnelProg() { return this._prog("funnel", FUNNEL_VS, RIBBON_FS); }
   get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
   get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
   get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
@@ -2042,7 +4551,11 @@ export class ChartView {
   get heatmapProg() { return this._prog("heatmap", GRID_VS, HEATMAP_FS); }
 
   _lut(name) {
-    if (this._lutCache.has(name)) return this._lutCache.get(name);
+    // Keyed by value, not identity: a custom colormap arrives as a fresh
+    // stops array on every spec, so caching on the array itself would leak a
+    // GL texture per frame.
+    const key = colormapKey(name);
+    if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -2051,8 +4564,18 @@ export class ChartView {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this._lutCache.set(name, tex);
+    this._lutCache.set(key, tex);
     return tex;
+  }
+
+  // One resolved [r,g,b,a] per palette entry. Every palette Python ships is
+  // already hex (components._palette_list normalizes it), so this decodes
+  // without touching the DOM — which matters: `resolveCssColor`'s probe
+  // returns "" while the root is still detached (notebook webviews attach
+  // asynchronously), and a palette LUT cached from that state is never
+  // rebuilt. The DOM fallback stays for hand-authored specs only.
+  _paletteRgb(palette) {
+    return palette.map((c) => hexColor(c) || parseColor(this.root, c, [0, 0, 0, 1]));
   }
 
   _paletteLut(palette) {
@@ -2062,11 +4585,51 @@ export class ChartView {
     if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
     const data = new Uint8Array(256 * 4);
+    // Resolve once per palette entry, not once per texel: a chart palette
+    // (xy.theme(palette=...)) may hold any CSS color, and parseColor's probe
+    // is a forced style recalc. Cache-miss only, so the cost is bounded.
+    const rgb = this._paletteRgb(palette);
     for (let i = 0; i < 256; i++) {
-      const c = hexColor(palette[i % palette.length]);
+      const c = rgb[i % rgb.length];
       data[i * 4] = c[0] * 255;
       data[i * 4 + 1] = c[1] * 255;
       data[i * 4 + 2] = c[2] * 255;
+      data[i * 4 + 3] = 255;
+    }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this._lutCache.set(key, tex);
+    return tex;
+  }
+
+  // Palette LUT with every category except `keepIdx` blended toward the plot
+  // background — the legend-hover dim for categorical traces. RGB-only on
+  // purpose: the point/line shaders read `texture(u_lut, ...).rgb` and force
+  // alpha to 1, so an alpha-based fade would be a silent no-op.
+  // `bg` is the resolved backdrop (see chartBackdrop); callers that dim
+  // several entries in one pass resolve it once and pass it in. theme.bg is
+  // a resolved [r,g,b,a] (or null for a transparent chart, in which case the
+  // page paints the backdrop) — never a CSS string, so it must not go
+  // through parseColor, which would silently fall back to white and BRIGHTEN
+  // dimmed entries on dark pages.
+  _paletteLutDimmed(palette, keepIdx, bg = chartBackdrop(this.root, this.theme.bg)) {
+    const key = "pal:" + palette.join(",") + ":dim" + keepIdx + ":" + bg.join(",");
+    if (this._lutCache.has(key)) return this._lutCache.get(key);
+    const gl = this.gl;
+    const data = new Uint8Array(256 * 4);
+    const rgb = this._paletteRgb(palette);
+    for (let i = 0; i < 256; i++) {
+      const c = rgb[i % palette.length];
+      const keep = i % palette.length === keepIdx % palette.length;
+      const w = keep ? 1 : LEGEND_DIM_OPACITY;
+      data[i * 4] = (c[0] * w + bg[0] * (1 - w)) * 255;
+      data[i * 4 + 1] = (c[1] * w + bg[1] * (1 - w)) * 255;
+      data[i * 4 + 2] = (c[2] * w + bg[2] * (1 - w)) * 255;
       data[i * 4 + 3] = 255;
     }
     const tex = gl.createTexture();
@@ -2095,14 +4658,26 @@ export class ChartView {
       const meta = this.spec.columns[d.buf];
       const raw = this._columnView(buffer, meta);
       const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
+      // Mean point color plane (LOD doc §2), copied because exposure
+      // re-encodes outlive the payload buffer; absent for constant-color
+      // traces, which tint the count texture instead.
+      const rgba = d.rgba !== undefined
+        ? new Uint8Array(this._columnView(buffer, this.spec.columns[d.rgba]))
+        : null;
       g.densityNormMax = d.max;
       const filter = d.filter || "linear";
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
-        grid: lodCopyGrid(grid), filter,
-        tex: this._uploadGrid(grid, d.w, d.h, d.max, filter),
+        // The home window's count seeds lodAggregateStands (T13): every
+        // zoom's points-band estimate starts from this until a closer
+        // window's reply recalibrates it.
+        visible: t.visible,
+        grid: lodCopyGrid(grid),
+        rgba,
+        filter,
+        tex: this._uploadGrid(grid, d.w, d.h, d.max, rgba, filter, this._fillOpacity(t.style)),
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
@@ -2119,6 +4694,18 @@ export class ChartView {
     // Per-mark GPU setup is dispatched through MARK_KINDS (55_marks.js) so a
     // new chart kind is an entry in that registry, not another branch here.
     markOf(t.kind).build(this, g, t, buffer);
+    if (t.tier === "decimated") {
+      // T1 covering representation for M4 traces.  Density has its texture
+      // cache; decimated line/area traces need the same guarantee while a
+      // window-specific re-decimation is in flight.  Keep the initial (home)
+      // buffers in a separate drawable so refined replies never overwrite
+      // the only geometry that covers the full initial domain.
+      g._homeDecimated = {
+        ...g, _vaos: null, _homeDecimated: null, _decimatedWindow: null,
+      };
+      g._decimatedWindow = [...this._axisRange(g.xAxis)];
+      g._decimatedRefined = false;
+    }
     if (t.keys && Number.isInteger(t.keys.lo) && Number.isInteger(t.keys.hi)) {
       const lo = this._columnView(buffer, this.spec.columns[t.keys.lo]);
       const hi = this._columnView(buffer, this.spec.columns[t.keys.hi]);
@@ -2172,7 +4759,15 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy(widthName, 2, this.dpr);
       copy("symbol", 3);
+      // Canvas-authored markers consume the same canonical style rows as the
+      // point shader.  Keep them CPU-readable instead of treating styleBuf as
+      // the only copy; filtering may still gather/reupload from this array.
+      g._cpuStyle = values;
       g.styleBuf = this._upload(values);
+      // Width rows are baked at the dpr in force right now. Record it so the
+      // streaming-append fast path can tell whether a later tail upload would
+      // write rows at a different scale than the prefix already holds (§4).
+      g._styleDpr = this.dpr;
     }
     const radius = channel("corner_radius");
     if (radius) {
@@ -2183,10 +4778,19 @@ export class ChartView {
         values[i * 2] = source[i * components] * this.dpr;
         values[i * 2 + 1] = (components > 1 ? source[i * components + 1] : source[i * components]) * this.dpr;
       }
+      // Kept CPU-readable for the same reason as `_cpuStyle`: these rows are
+      // baked at the dpr in force right now, and a later dpr change rescales
+      // them in place (`_rescaleDprBakedBuffers`) instead of leaving 1x radii
+      // on a 2x canvas.
+      g._cpuRadius = values;
       g.radiusBuf = this._upload(values);
+      // Also stamped here: a trace can carry corner radii without any style
+      // channels, and an unstamped record is one the rescale pass skips.
+      g._styleDpr = this.dpr;
     }
     if (t.stroke && t.stroke.mode === "direct_rgba") {
-      g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+      g._cpuStroke = this._columnView(buffer, this.spec.columns[t.stroke.buf]);
+      g.strokeBuf = this._upload(g._cpuStroke);
     }
   }
 
@@ -2226,7 +4830,8 @@ export class ChartView {
   // use each point's resolved LUT/palette color, never a generic trace color.
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
+    g.authoredMarker = s.marker_path || s.marker_glyph || null;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16, horizontal_line: 17, vertical_line: 18 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
@@ -2274,10 +4879,9 @@ export class ChartView {
 
   _destroySampleOverlay(s) {
     if (!s || !this.gl) return;
-    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
-      s.strokeBuf, s.selBuf, s.dBuf]) {
-      if (b) this.gl.deleteBuffer(b);
-    }
+    // Same shared list the trace teardown uses: an overlay is a point-tier
+    // clone of a trace and grows the same channel buffers.
+    this._deleteBuffers(s, TRACE_GPU_BUFFERS);
   }
 
   // Full teardown of every sample overlay this tier owns. Overlays ride their
@@ -2348,16 +4952,21 @@ export class ChartView {
       size: (sample.size && sample.size.size) || 4.0,
       sizeRange: [2, 18],
     };
+    const xValues = this._asF32(buffers[sample.x.buf]);
+    const yValues = this._asF32(buffers[sample.y.buf]);
+    s._cpu = { x: xValues, y: yValues, xMeta: s.xMeta, yMeta: s.yMeta };
     gl.bindBuffer(gl.ARRAY_BUFFER, s.xBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, xValues, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, yValues, gl.STATIC_DRAW);
     if (sample.color && sample.color.buf !== undefined) {
       s.colorMode = sample.color.mode === "continuous" ? 1 :
         (sample.color.mode === "categorical" ? 2 : 3);
       const colorValues = sample.color.dtype === "u8"
         ? this._asU8(buffers[sample.color.buf])
         : this._asF32(buffers[sample.color.buf]);
+      if (s.colorMode === 3) s._cpu.rgba = colorValues;
+      else s._cpu.color = colorValues;
       const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
       s[colorBufferName] = gl.createBuffer();
       this._tagChannelBuf(s[colorBufferName], colorValues, s.colorMode === 1);
@@ -2374,6 +4983,7 @@ export class ChartView {
       const sizeValues = sample.size.dtype === "u8"
         ? this._asU8(buffers[sample.size.buf])
         : this._asF32(buffers[sample.size.buf]);
+      s._cpu.size = sizeValues;
       s.sBuf = gl.createBuffer();
       this._tagChannelBuf(s.sBuf, sizeValues, true);
       gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
@@ -2404,10 +5014,15 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy("stroke_width", 2, this.dpr);
       copy("symbol", 3);
+      s._cpuStyle = values;
       s.styleBuf = this._upload(values);
+      // Overlays bake device-pixel widths like their parent trace, so they need
+      // the same stamp for `_rescaleDprBakedBuffers` to find them.
+      s._styleDpr = this.dpr;
     }
     if (sample.stroke && sample.stroke.mode === "direct_rgba") {
-      s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+      s._cpuStroke = this._asU8(buffers[sample.stroke.buf]);
+      s.strokeBuf = this._upload(s._cpuStroke);
     }
     this._pointMarkStyle(s, trace);
     if (g.density) {
@@ -2508,7 +5123,7 @@ export class ChartView {
     // stack in and premultiplies there (uniform and buffer strokes alike).
     const sc = g.strokeColor || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
-    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : (g.strokeMatchFill ? 2 : 0));
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
     this._setGradientUniforms(prog, g.grad);
   }
@@ -2524,6 +5139,7 @@ export class ChartView {
       ? [Number(cr[0]) || 0, Number(cr[1]) || 0]
       : [Number(cr) || 0, Number(cr) || 0];
     g.strokeWidth = Number(s.stroke_width) || 0;
+    g.strokeMatchFill = !!(t.stroke && t.stroke.mode === "match_fill");
     const opaque = [g.color[0], g.color[1], g.color[2], 1];
     g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
     g.grad = this._resolveMarkFill(s, g.color);
@@ -2534,6 +5150,11 @@ export class ChartView {
   // `_cpu` columns either way (`_nearestCpuIndex` limits to the source length).
   _smoothArrays(t, x, y, base, n) {
     if (!t.style || t.style.curve !== "smooth") return null;
+    // Polar draws chords, never smoothed curves: the Hermite control points
+    // are only exact under an affine map, and both static exporters already
+    // skip smoothing for the same reason (polar-axes.md §5). Resampling here
+    // made the browser render a rounded shape the exports do not have.
+    if (this.spec?.coords === "polar") return null;
     return xySmoothResample(x, y, base || null, n, 32768);
   }
 
@@ -2622,6 +5243,407 @@ export class ChartView {
     g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
   }
 
+  // Flow bands (ribbon geometry contract). The six geometry columns reuse the
+  // mesh attribute slots; the two paints ride a_rgba/a_rgba2. CPU copies are
+  // retained for hover: picking is deferred (the id pass is point-geometry
+  // only), so tooltips resolve by containment against the same cubic.
+  _buildRibbonMark(g, t, buffer) {
+    const names = [
+      ["x0", "x0"], ["x1", "x1"], ["y0", "y0"], ["y1", "y1"],
+      ["t0", "target_y0"], ["t1", "target_y1"],
+    ];
+    g._cpuRibbon = {};
+    for (const [slot, key] of names) {
+      const values = this._columnView(buffer, this.spec.columns[t[key]]);
+      g[slot + "Meta"] = { ...this.spec.columns[t[key]] };
+      g[slot + "Buf"] = this._upload(values);
+      g._cpuRibbon[slot] = values;
+      g.n = g.n === undefined ? values.length : Math.min(g.n, values.length);
+    }
+    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    if (t.color && t.color.mode === "direct_rgba") {
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+    }
+    if (t.color_target && t.color_target.mode === "direct_rgba") {
+      g.rgba2Buf = this._upload(
+        this._columnView(buffer, this.spec.columns[t.color_target.buf]),
+      );
+    }
+    g.colorTarget = t.color_target
+      ? parseColor(this.root, t.color_target.color, g.color)
+      : null;
+    // Outline paint (ribbon geometry contract). An omitted stroke colour means
+    // "match the band's own fill" — resolving it to g.color here would paint
+    // every band of a per-band (direct_rgba) ribbon with the constant
+    // fallback, which is not a colour the trace uses anywhere.
+    const style = t.style || {};
+    g.stroke = style.stroke ? parseColor(this.root, style.stroke, g.color) : null;
+    g.strokeWidth = Number(style.stroke_width) || 0;
+    g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
+  }
+
+  _drawRibbons(g, xm, ym) {
+    if (g.n < 1) return;
+    const gl = this.gl;
+    const prog = this.ribbonProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
+    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_t0", g.t0Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_t1", g.t1Meta, g.yAxis);
+    // RIBBON_VS reads the SHARED mode/constant uniforms (the RECT_VS design);
+    // the per-column _setAxisUniforms calls above only cover the *meta pairs,
+    // so without these four writes log/symlog axes silently render as linear.
+    gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
+    gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
+    gl.uniform1i(u("u_segments"), RIBBON_STEPS);
+    const transitionAlpha = (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha);
+    const stroke = g.stroke || [0, 0, 0, 0];
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
+    gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * transitionAlpha);
+    // A flat band must mix toward ITS OWN colour, so a per-band source buffer
+    // with no target buffer binds the source buffer to both attributes —
+    // mixing toward the constant fallback painted every node's right edge
+    // with a colour from a different band.
+    const rgba2Buf = g.rgba2Buf || g.rgbaBuf;
+    const parts = ["x0", "x1", "y0", "y1", "t0", "t1"].map((name) => g[name + "Buf"]._fcId);
+    parts.push(g.rgbaBuf ? g.rgbaBuf._fcId : 0, rgba2Buf ? rgba2Buf._fcId : 0);
+    this._bindVao(g, "ribbon", parts, () => {
+      this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax2, g.t0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay2, g.t1Buf, 0, 1);
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+      if (rgba2Buf) this._vaoAttr(ATTR_SLOTS.a_rgba2, rgba2Buf, 0, 1, 4, true);
+    });
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    if (!rgba2Buf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba2, ...(g.colorTarget || g.color));
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (RIBBON_STEPS + 1), g.n);
+  }
+
+  // Containment test against the same cubic the shader sweeps: solve the
+  // monotone bump curve for the cursor's x by bisection, then compare y with
+  // the band's two edges at that parameter.
+  _ribbonHover(g, dataX, dataY) {
+    const cpu = g._cpuRibbon;
+    if (!cpu) return null;
+    // The cubic is normative in axis-transformed space (ribbon geometry
+    // contract), so the pointer and every decoded endpoint go through the
+    // same transform the shader's xyMap applies — solving in raw data space
+    // would hit-test a curve the band does not follow on log/symlog axes.
+    // On linear axes the transform is the identity. A masked-log NaN endpoint
+    // fails every comparison and skips the band, matching the renderers.
+    const xAxis = { ...this._axis(g.xAxis), constant: this._axisConstant(g.xAxis) };
+    const yAxis = { ...this._axis(g.yAxis), constant: this._axisConstant(g.yAxis) };
+    const pointerX = this._axisCoord(xAxis, dataX);
+    const pointerY = this._axisCoord(yAxis, dataY);
+    // _decodeValue already returns data space; decoding twice put every
+    // containment test in a coordinate system nothing else uses.
+    const val = (slot, index) => this._decodeValue(cpu[slot], g[slot + "Meta"], index);
+    const xVal = (slot, index) => this._axisCoord(xAxis, val(slot, index));
+    const yVal = (slot, index) => this._axisCoord(yAxis, val(slot, index));
+    for (let index = 0; index < g.n; index++) {
+      const x0 = xVal("x0", index);
+      const x1 = xVal("x1", index);
+      const lo0 = Math.min(x0, x1);
+      const hi0 = Math.max(x0, x1);
+      if (!(pointerX >= lo0 && pointerX <= hi0) || hi0 === lo0) continue;
+      // x(t) is monotone between the faces (control points at the midpoint),
+      // so 24 bisection steps pin t to ~1e-7 of the span.
+      let a = 0.0;
+      let b = 1.0;
+      const xm = (x0 + x1) / 2;
+      const xAt = (t) => {
+        const uu = 1 - t;
+        return uu * uu * uu * x0 + 3 * uu * uu * t * xm + 3 * uu * t * t * xm + t * t * t * x1;
+      };
+      const rising = x1 >= x0;
+      for (let step = 0; step < 24; step++) {
+        const mid = (a + b) / 2;
+        if ((xAt(mid) < pointerX) === rising) a = mid; else b = mid;
+      }
+      const t = (a + b) / 2;
+      const w0 = (1 - t) ** 3 + 3 * (1 - t) ** 2 * t;
+      const w1 = 1 - w0;
+      const edgeLo = w0 * yVal("y0", index) + w1 * yVal("t0", index);
+      const edgeHi = w0 * yVal("y1", index) + w1 * yVal("t1", index);
+      if (pointerY >= Math.min(edgeLo, edgeHi) && pointerY <= Math.max(edgeLo, edgeHi)) {
+        return { trace: g.trace.id, index, g, dist: 0, synthetic: true };
+      }
+    }
+    return null;
+  }
+
+  // Funnel ships one symmetric quad per stage (pos0/pos1 along the stage
+  // axis, lo/hi cross edges at each end) plus a per-stage color channel. Each
+  // column uploads as a per-instance attribute with ITS OWN meta uniform —
+  // nothing is re-encoded client-side — and the funnel program sweeps a
+  // 4-vertex strip per stage, sharing RIBBON_FS for the fwidth edge coverage
+  // that keeps the slanted edges smooth on the antialias:false context.
+  _buildFunnelMark(g, t, buffer) {
+    const cols: any = {};
+    const metas: any = {};
+    let n = Infinity;
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
+      const values = this._columnView(buffer, this.spec.columns[t[name]]);
+      cols[name] = values;
+      metas[name] = { ...this.spec.columns[t[name]] };
+      g[slot + "Meta"] = metas[name];
+      g[slot + "Buf"] = this._upload(values);
+      n = Math.min(n, values.length);
+    }
+    n = Number.isFinite(n) ? n : 0;
+    g.n = n;
+    g.orientation = t.orientation === "horizontal" ? 1 : 0;
+    g._cpuFunnel = { ...cols, metas, n };
+    // Stage centers for keyboard traversal (declared order): the a11y walk
+    // reads g._cpu.x/y like any point group, so a funnel announces stage by
+    // stage from the first. Centers are decoded to data space and re-encoded
+    // against the pos0/lo0 metas the _cpu record carries.
+    const posMeta = metas.pos0;
+    const crossMeta = metas.lo0;
+    const dec = (name, i) => this._decodeValue(cols[name], metas[name], i);
+    const centerX = new Float32Array(n);
+    const centerY = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const pCenter = (dec("pos0", i) + dec("pos1", i)) / 2;
+      const cCenter = (dec("lo0", i) + dec("hi0", i) + dec("lo1", i) + dec("hi1", i)) / 4;
+      const encP = (pCenter - posMeta.offset) * (posMeta.scale || 1);
+      const encC = (cCenter - crossMeta.offset) * (crossMeta.scale || 1);
+      centerX[i] = g.orientation === 1 ? encP : encC;
+      centerY[i] = g.orientation === 1 ? encC : encP;
+    }
+    g._cpu = {
+      x: centerX,
+      y: centerY,
+      xMeta: { ...(g.orientation === 1 ? posMeta : crossMeta) },
+      yMeta: { ...(g.orientation === 1 ? crossMeta : posMeta) },
+    };
+    this._funnelPaint(g, t, buffer);
+    const style = t.style || {};
+    g.strokeWidth = Number(style.stroke_width) || 0;
+    g.stroke = style.stroke ? parseColor(this.root, style.stroke, [0, 0, 0, 1]) : null;
+    g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
+  }
+
+  // Per-stage fill resolved to one RGBA8 row per instance. Categorical codes
+  // look their palette entry up here — theme-resolving each CSS color, so a
+  // var(--…) palette entry follows light/dark — and the funnel program needs
+  // no LUT texture. Build stashes codes+palette on the record; refreshColor
+  // re-runs this with buffer=null to re-resolve against the new theme.
+  _funnelPaint(g, t, buffer) {
+    // Always resolved over the FULL stage count, never g.n: after a legend
+    // filter g.n is the visible count, and a theme refresh that rebuilt the
+    // cache at that length recolored the survivors by their DRAWN index and
+    // lost the hidden stages' rows for good — restoring a stage then drew
+    // garbage. The filter is applied at upload time instead.
+    const full = g._cpuFunnel ? g._cpuFunnel.n : g.n;
+    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    const channel = t.color || {};
+    if (buffer !== null && Number.isInteger(channel.buf)) {
+      if (channel.mode === "categorical") {
+        g._funnelCodes = this._columnView(buffer, this.spec.columns[channel.buf]);
+      } else if (channel.mode === "direct_rgba") {
+        g._funnelRgba = this._columnView(buffer, this.spec.columns[channel.buf]);
+      }
+    }
+    let rgba = null;
+    if (channel.mode === "categorical" && g._funnelCodes) {
+      const palette = Array.isArray(channel.palette) && channel.palette.length
+        ? channel.palette : ["#4c78a8"];
+      const table = palette.map((css) => parseColor(this.root, css, [0.3, 0.47, 0.66, 1]));
+      rgba = new Uint8Array(full * 4);
+      for (let i = 0; i < full; i++) {
+        const c = table[Math.round(g._funnelCodes[i]) % table.length];
+        rgba.set([c[0] * 255, c[1] * 255, c[2] * 255, c[3] * 255], i * 4);
+      }
+    } else if (channel.mode === "direct_rgba" && g._funnelRgba) {
+      rgba = g._funnelRgba;
+    }
+    // Full-length rows kept for the legend filter and hover dim, which build
+    // their visible/dimmed subsets from them rather than reading the GPU back.
+    g._funnelRgbaFull = rgba || null;
+    this._uploadFunnelPaint(g);
+  }
+
+  // Upload the paint rows the current legend filter leaves visible. The one
+  // place rgbaBuf is (re)created, so a theme refresh, a filter toggle, and a
+  // legend-hover dim can never disagree about row order.
+  _uploadFunnelPaint(g, rows = null) {
+    if (g.rgbaBuf) this._deleteBuffers(g, ["rgbaBuf"]);
+    const full = rows || g._funnelRgbaFull;
+    if (!full) return;
+    let out = full;
+    if (g._visMap) {
+      out = new Uint8Array(g._visMap.length * 4);
+      for (let k = 0; k < g._visMap.length; k++) {
+        const i = g._visMap[k];
+        out.set(full.subarray(i * 4, i * 4 + 4), k * 4);
+      }
+    }
+    g.rgbaBuf = this._upload(out);
+  }
+
+  // Mix the six per-stage geometry columns for the current animation frame
+  // and write them into the LIVE buffers in place (same WebGLBuffer objects,
+  // so the VAO signature holds). Small-N by contract, so the per-frame CPU
+  // mix is cheaper than a second attribute set and the shader stays as-is.
+  // Covers the update interpolation (prev -> current by progress), the
+  // enter grow (cross edges expand from the segment spine), and the settled
+  // re-upload after either finishes.
+  _mixFunnelGeometry(g) {
+    const f = g._cpuFunnel;
+    if (!f) return;
+    const prev = g._transitionPrevFunnelValues;
+    const progress = g._transitionPositionProgress;
+    const grow = g._transitionGrow ?? 1;
+    const mixing = (prev && Number.isFinite(progress) && progress < 1) || grow < 1;
+    if (!mixing) {
+      if (!g._funnelGeomMixed) return;
+      delete g._funnelGeomMixed;
+    }
+    const gl = this.gl;
+    const rows = g._visMap;
+    const count = rows ? rows.length : f.n;
+    const scratch = (g._funnelMixScratch ||= {});
+    const mixed = {};
+    for (const name of Object.keys(FUNNEL_SLOTS)) {
+      const out = scratch[name] && scratch[name].length === count
+        ? scratch[name]
+        : (scratch[name] = new Float32Array(count));
+      const cur = f[name];
+      const start = prev && prev[name];
+      for (let k = 0; k < count; k++) {
+        const i = rows ? rows[k] : k;
+        let value = cur[i];
+        if (start && Number.isFinite(progress) && progress < 1) {
+          value = start[i] + (value - start[i]) * progress;
+        }
+        out[k] = value;
+      }
+      mixed[name] = out;
+    }
+    if (grow < 1) {
+      // Grow from the spine: both cross edges of each end expand from their
+      // midpoint, so a vertical funnel widens out of its centerline exactly
+      // as a bar grows out of its baseline. Encoded space is fine — the two
+      // edges share a meta per column pair only after decoding, so mix the
+      // DECODED midpoint per end via the metas.
+      const dec = (name, values, index) => this._decodeValue(values, f.metas[name], index);
+      const enc = (name, value) => (value - f.metas[name].offset) * (f.metas[name].scale || 1);
+      for (let k = 0; k < count; k++) {
+        for (const [lo, hi] of [["lo0", "hi0"], ["lo1", "hi1"]]) {
+          const a = dec(lo, mixed[lo], k);
+          const b = dec(hi, mixed[hi], k);
+          const mid = (a + b) / 2;
+          mixed[lo][k] = enc(lo, mid + (a - mid) * grow);
+          mixed[hi][k] = enc(hi, mid + (b - mid) * grow);
+        }
+      }
+    }
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
+      const buf = g[slot + "Buf"];
+      if (!buf) continue;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, mixed[name], gl.DYNAMIC_DRAW);
+    }
+    if (mixing) g._funnelGeomMixed = true;
+  }
+
+  _drawFunnels(g, xm, ym) {
+    if (g.n < 1) return;
+    const gl = this.gl;
+    const prog = this.funnelProg;
+    this._mixFunnelGeometry(g);
+    gl.useProgram(prog);
+    const u = (name) => uniformOf(gl, prog, name);
+    const horizontal = g.orientation === 1;
+    const posAxis = horizontal ? g.xAxis : g.yAxis;
+    const crossAxis = horizontal ? g.yAxis : g.xAxis;
+    gl.uniform2f(u("u_pmap"), ...(horizontal ? xm : ym));
+    gl.uniform2f(u("u_cmap"), ...(horizontal ? ym : xm));
+    this._setAxisUniforms(prog, "u_p0", g.x0Meta, posAxis);
+    this._setAxisUniforms(prog, "u_p1", g.x1Meta, posAxis);
+    this._setAxisUniforms(prog, "u_l0", g.y0Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_h0", g.y1Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_l1", g.x2Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_h1", g.y2Meta, crossAxis);
+    gl.uniform1i(u("u_pmode"), this._axisMode(posAxis));
+    gl.uniform1f(u("u_pconstant"), this._axisConstant(posAxis));
+    gl.uniform1i(u("u_cmode"), this._axisMode(crossAxis));
+    gl.uniform1f(u("u_cconstant"), this._axisConstant(crossAxis));
+    gl.uniform1i(u("u_horizontal"), horizontal ? 1 : 0);
+    const transitionAlpha = (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha);
+    const stroke = g.stroke || [0, 0, 0, 0];
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
+    gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * transitionAlpha);
+    const parts = Object.values(FUNNEL_SLOTS).map((slot) => g[slot + "Buf"]._fcId);
+    parts.push(g.rgbaBuf ? g.rgbaBuf._fcId : 0);
+    this._bindVao(g, "funnel", parts, () => {
+      for (const slot of Object.values(FUNNEL_SLOTS)) {
+        this._vaoAttr(ATTR_SLOTS["a" + slot], g[slot + "Buf"], 0, 1);
+      }
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+    });
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+  }
+
+  // Containment against the same linear edges the mesh triangles draw, in
+  // axis-transformed space (the ribbon rule: the pointer and the decoded
+  // endpoints go through the transform the shader applies, so log/symlog
+  // axes hit-test the drawn shape, and on linear axes it is the identity).
+  // Index is the QUAD (= stage) index, which is what tooltip_rows and the
+  // kernel exact-pick expect.
+  _funnelHover(g, dataX, dataY) {
+    const f = g._cpuFunnel;
+    if (!f) return null;
+    const horizontal = g.orientation === 1;
+    const posAxis = horizontal ? g.xAxis : g.yAxis;
+    const crossAxis = horizontal ? g.yAxis : g.xAxis;
+    const posAxisRec = { ...this._axis(posAxis), constant: this._axisConstant(posAxis) };
+    const crossAxisRec = { ...this._axis(crossAxis), constant: this._axisConstant(crossAxis) };
+    const pointerPos = this._axisCoord(posAxisRec, horizontal ? dataX : dataY);
+    const pointerCross = this._axisCoord(crossAxisRec, horizontal ? dataY : dataX);
+    const val = (name, i) => this._decodeValue(f[name], f.metas[name], i);
+    const posVal = (name, i) => this._axisCoord(posAxisRec, val(name, i));
+    const crossVal = (name, i) => this._axisCoord(crossAxisRec, val(name, i));
+    // A legend-hidden stage draws nothing, so it must not hover either; the
+    // returned index stays the SHIPPED stage row, which is what tooltip_rows
+    // and the kernel exact-pick speak.
+    const rows = g._visMap ? Array.from(g._visMap) : null;
+    for (let k = 0; k < (rows ? rows.length : f.n); k++) {
+      const i = rows ? rows[k] : k;
+      const p0 = posVal("pos0", i);
+      const p1 = posVal("pos1", i);
+      const lo = Math.min(p0, p1);
+      const hi = Math.max(p0, p1);
+      if (!(pointerPos >= lo && pointerPos <= hi) || hi === lo) continue;
+      const t = (pointerPos - p0) / (p1 - p0);
+      const eLo = crossVal("lo0", i) + (crossVal("lo1", i) - crossVal("lo0", i)) * t;
+      const eHi = crossVal("hi0", i) + (crossVal("hi1", i) - crossVal("hi0", i)) * t;
+      if (pointerCross >= Math.min(eLo, eHi) && pointerCross <= Math.max(eLo, eHi)) {
+        return { trace: g.trace.id, index: i, g, dist: 0, synthetic: true };
+      }
+    }
+    return null;
+  }
+
   _buildMeshMark(g, t, buffer) {
     for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
       const values = this._columnView(buffer, this.spec.columns[t[name]]);
@@ -2647,6 +5669,7 @@ export class ChartView {
     const style = t.style || {};
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+    g.strokeMatchFill = !!(t.stroke && t.stroke.mode === "match_fill");
   }
 
   // Hexbin ships cell centers plus one color value per cell; every hexagon
@@ -2849,10 +5872,10 @@ export class ChartView {
     return tex;
   }
 
-  _uploadGrid(f32, w, h, maxVal, filter) {
+  _uploadGrid(f32, w, h, maxVal, rgba = null, filter = "linear", pointAlpha = 1) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, filter);
+    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, rgba, filter, pointAlpha);
     return tex;
   }
 
@@ -3065,6 +6088,389 @@ export class ChartView {
     gl.uniform1f(u(`${prefix}constant`), this._axisConstant(axisId));
   }
 
+  // Widest angular span, in the theta axis's own data units, across a
+  // four-edge-column trace. Cached on the trace: it is a property of the data,
+  // not of the view, so it survives pan/zoom and cannot make the subdivision
+  // count view-dependent (§28). Rebuilt traces get a fresh object and re-measure.
+  _polarRectMaxSpan(g) {
+    if (g._polarMaxSpan !== undefined) return g._polarMaxSpan;
+    const cpu = g._cpuRect;
+    // No CPU copy to measure (a path that does not retain one) means fall back
+    // to the full-turn count rather than guess narrow.
+    let widest = cpu ? 0 : NaN;
+    if (cpu) {
+      for (let i = 0; i < g.n; i++) {
+        const span = this._decodeValue(cpu.x1, cpu.x1Meta, i)
+          - this._decodeValue(cpu.x0, cpu.x0Meta, i);
+        if (Number.isFinite(span)) widest = Math.max(widest, Math.abs(span));
+      }
+    }
+    g._polarMaxSpan = widest;
+    return widest;
+  }
+
+  // Geometry of the polar disc, in the units the shaders and the CPU-side
+  // hover math both need. Null on a cartesian chart.
+  //
+  // The GL canvas is sized and positioned to exactly the plot rect, so clip
+  // space [-1,1] IS the plot rect. Full turns center there; partial sectors fit
+  // their visible bounding box and can move the polar origin. Radius therefore
+  // converts to clip units per axis (2R/w, 2R/h) — a vec2, because a round
+  // circle in a non-square rect cannot use one scalar.
+  _polarGeometry() {
+    if (this.spec?.coords !== "polar") return null;
+    const p = this.plot;
+    if (!p || !(p.w > 0) || !(p.h > 0)) return null;
+    const thetaAxis = this._axis("x") || {};
+    const radialAxis = this._axis("y") || {};
+    const rawZero = thetaAxis.theta_zero ?? "E";
+    const zero = typeof rawZero === "string" ? (THETA_ZERO[rawZero] ?? 0) : Number(rawZero) || 0;
+    const dir = thetaAxis.theta_direction === "clockwise" ? -1 : 1;
+    const unitScale = thetaAxis.theta_unit === "degrees" ? Math.PI / 180 : 1;
+    const angularTurn = thetaAxis.theta_unit === "degrees" ? 360 : 2 * Math.PI;
+    const authoredSector = Array.isArray(thetaAxis.sector) && thetaAxis.sector.length === 2
+      ? [Number(thetaAxis.sector[0]), Number(thetaAxis.sector[1])]
+      : [0, angularTurn];
+    const sectorStart = Number.isFinite(authoredSector[0]) ? authoredSector[0] : 0;
+    const sectorEnd = Number.isFinite(authoredSector[1]) ? authoredSector[1] : angularTurn;
+    const sectorSpan = Math.max(0, sectorEnd - sectorStart);
+    const fullSector = sectorSpan >= angularTurn * (1 - 1e-10);
+    const categories = thetaAxis.kind === "category" ? (thetaAxis.categories || []) : null;
+    const categoryCount = categories ? categories.length : 0;
+    let thetaStart = sectorStart;
+    let thetaEnd = sectorEnd;
+    let dirUnit = dir * unitScale;
+    let angleBase = zero;
+    if (categories) {
+      // Full turns are N equal bands with no duplicated seam. Partial sectors
+      // instead place the first and last category centers on the authored
+      // endpoints, hence N-1 intervals.
+      const intervals = fullSector
+        ? Math.max(categoryCount, 1)
+        : Math.max(categoryCount - 1, 1);
+      dirUnit = dir * unitScale * sectorSpan / intervals;
+      angleBase = zero + dir * unitScale * sectorStart;
+      thetaStart = 0;
+      thetaEnd = fullSector ? Math.max(categoryCount, 1) : Math.max(categoryCount - 1, 0);
+    }
+    const dataTurn = (2 * Math.PI) / Math.max(Math.abs(dirUnit), 1e-30);
+    const [rLoRaw, rHiRaw] = this._axisRange("y");
+    const rLo = this._axisCoord(radialAxis, rLoRaw);
+    const rHi = this._axisCoord(radialAxis, rHiRaw);
+    const originRaw = radialAxis.r_origin != null && Number.isFinite(Number(radialAxis.r_origin))
+      ? Number(radialAxis.r_origin)
+      : Number(rLoRaw);
+    const rOrigin = this._axisCoord(radialAxis, originRaw);
+    const hole = Math.max(0, Math.min(0.999999, Number(radialAxis.hole) || 0));
+    const angleStart = zero + dir * unitScale * sectorStart;
+    const angleEnd = zero + dir * unitScale * sectorEnd;
+    let radius;
+    let cx;
+    let cy;
+    if (fullSector) {
+      radius = Math.min(p.w, p.h) / 2;
+      cx = p.x + p.w / 2;
+      cy = p.y + p.h / 2;
+    } else {
+      // Fit the sector's actual bounding box, including its visible inner
+      // boundary. A semicircular gauge should use the whole plot instead of
+      // reserving an invisible half-disc.
+      const denom = rHi - rOrigin;
+      const inner = Math.max(0, Math.min(1, Math.abs(denom) > 1e-30
+        ? hole + (1 - hole) * ((rLo - rOrigin) / denom)
+        : 0));
+      const loAngle = Math.min(angleStart, angleEnd);
+      const hiAngle = Math.max(angleStart, angleEnd);
+      const angles = [angleStart, angleEnd];
+      for (const cardinal of [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]) {
+        const first = Math.ceil((loAngle - cardinal) / (2 * Math.PI));
+        const last = Math.floor((hiAngle - cardinal) / (2 * Math.PI));
+        for (let turnIndex = first; turnIndex <= last; turnIndex++) {
+          angles.push(cardinal + turnIndex * 2 * Math.PI);
+        }
+      }
+      const xs = [];
+      const ys = [];
+      for (const angle of angles) {
+        xs.push(Math.cos(angle), inner * Math.cos(angle));
+        ys.push(-Math.sin(angle), -inner * Math.sin(angle));
+      }
+      if (inner <= 1e-12) {
+        xs.push(0);
+        ys.push(0);
+      }
+      const xmin = Math.min(...xs);
+      const xmax = Math.max(...xs);
+      const ymin = Math.min(...ys);
+      const ymax = Math.max(...ys);
+      const xspan = Math.max(xmax - xmin, 1e-12);
+      const yspan = Math.max(ymax - ymin, 1e-12);
+      radius = Math.min(p.w / xspan, p.h / yspan);
+      const left = p.x + (p.w - radius * xspan) / 2;
+      const top = p.y + (p.h - radius * yspan) / 2;
+      cx = left - radius * xmin;
+      cy = top - radius * ymin;
+    }
+    return {
+      radius,
+      cx,
+      cy,
+      clipCx: ((cx - p.x) / p.w) * 2 - 1,
+      clipCy: 1 - ((cy - p.y) / p.h) * 2,
+      clipRx: (2 * radius) / p.w,
+      clipRy: (2 * radius) / p.h,
+      rLo,
+      rHi,
+      rLoRaw,
+      rHiRaw,
+      rOrigin,
+      rOriginRaw: originRaw,
+      hole,
+      zero: angleBase,
+      rawZero: zero,
+      dir,
+      dirUnit,
+      unitScale,
+      turn: dataTurn,
+      angularTurn,
+      thetaStart,
+      thetaEnd,
+      sectorStart,
+      sectorEnd,
+      sectorSpan,
+      fullSector,
+      angleStart,
+      angleEnd,
+      categoryCount,
+      gridShape: thetaAxis.grid_shape || "circular",
+    };
+  }
+
+  _polarPositiveMod(value, period) {
+    return ((value % period) + period) % period;
+  }
+
+  _polarThetaValue(geom, angle) {
+    const raw = (angle - geom.zero) / (geom.dirUnit || 1);
+    return geom.thetaStart
+      + this._polarPositiveMod(raw - geom.thetaStart, geom.turn || 1);
+  }
+
+  _polarThetaVisible(geom, theta) {
+    const sweep = geom.thetaEnd - geom.thetaStart;
+    if (sweep >= geom.turn * (1 - 1e-10)) return true;
+    const offset = this._polarPositiveMod(theta - geom.thetaStart, geom.turn || 1);
+    return offset <= sweep + geom.turn * 1e-10;
+  }
+
+  _polarThetaAngle(geom, theta) {
+    return geom.zero + geom.dirUnit * theta;
+  }
+
+  _polarRadius(geom, value, { coord = false } = {}) {
+    const radial = coord ? Number(value) : this._axisCoord(this._axis("y"), value);
+    const denom = geom.rHi - geom.rOrigin;
+    if (!Number.isFinite(radial) || !Number.isFinite(denom) || Math.abs(denom) <= 1e-30) {
+      return NaN;
+    }
+    const fraction = geom.hole
+      + (1 - geom.hole) * ((radial - geom.rOrigin) / denom);
+    return fraction * geom.radius;
+  }
+
+  _polarProjectCoords(thetaCoord, rCoord, geom) {
+    if (!geom || !this._polarThetaVisible(geom, thetaCoord)) return [NaN, NaN];
+    const rMin = Math.min(geom.rLo, geom.rHi);
+    const rMax = Math.max(geom.rLo, geom.rHi);
+    if (!Number.isFinite(rCoord) || rCoord < rMin - 1e-10 || rCoord > rMax + 1e-10) {
+      return [NaN, NaN];
+    }
+    const projectedRadius = this._polarRadius(geom, rCoord, { coord: true });
+    if (!Number.isFinite(projectedRadius)
+        || projectedRadius < geom.hole * geom.radius - 1e-6
+        || projectedRadius > geom.radius + 1e-6) return [NaN, NaN];
+    const angle = this._polarThetaAngle(geom, thetaCoord);
+    return [
+      geom.cx + projectedRadius * Math.cos(angle),
+      geom.cy - projectedRadius * Math.sin(angle),
+    ];
+  }
+
+  _polarProject(theta, radius, geom = this._polarGeometry()) {
+    return this._polarProjectCoords(
+      this._axisCoord(this._axis("x"), theta),
+      this._axisCoord(this._axis("y"), radius),
+      geom,
+    );
+  }
+
+  _projectDataPoint(xAxisId, yAxisId, x, y, geom = this._polarGeometry()) {
+    if (geom) return this._polarProject(x, y, geom);
+    return [this._dataPx(xAxisId, x), this._dataPx(yAxisId, y)];
+  }
+
+  _projectSegmentEndpoints(g, cpu, index, geom = this._polarGeometry()) {
+    const theta0 = this._decodeValue(cpu.x0, g.x0Meta, index);
+    const theta1 = this._decodeValue(cpu.x1, g.x1Meta, index);
+    const radial0 = this._decodeValue(cpu.y0, g.y0Meta, index);
+    const radial1 = this._decodeValue(cpu.y1, g.y1Meta, index);
+    if (!geom) {
+      return [
+        this._projectDataPoint(g.xAxis, g.yAxis, theta0, radial0, null),
+        this._projectDataPoint(g.xAxis, g.yAxis, theta1, radial1, null),
+      ];
+    }
+    const thetaAxis = this._axis("x");
+    const radialAxis = this._axis("y");
+    const th0 = this._axisCoord(thetaAxis, theta0);
+    const th1 = this._axisCoord(thetaAxis, theta1);
+    const r0 = this._axisCoord(radialAxis, radial0);
+    const r1 = this._axisCoord(radialAxis, radial1);
+    const rMin = Math.min(geom.rLo, geom.rHi);
+    const rMax = Math.max(geom.rLo, geom.rHi);
+    if (Math.max(r0, r1) < rMin || Math.min(r0, r1) > rMax) {
+      return [[NaN, NaN], [NaN, NaN]];
+    }
+    const dr = r1 - r0;
+    let t0 = 0;
+    let t1 = 1;
+    if (Math.abs(dr) > 1e-30) {
+      const ta = (rMin - r0) / dr;
+      const tb = (rMax - r0) / dr;
+      t0 = Math.max(0, Math.min(ta, tb));
+      t1 = Math.min(1, Math.max(ta, tb));
+    }
+    return [
+      this._polarProjectCoords(
+        th0 + (th1 - th0) * t0,
+        Math.max(rMin, Math.min(rMax, r0 + dr * t0)),
+        geom,
+      ),
+      this._polarProjectCoords(
+        th0 + (th1 - th0) * t1,
+        Math.max(rMin, Math.min(rMax, r0 + dr * t1)),
+        geom,
+      ),
+    ];
+  }
+
+  // Concentric rings for radial ticks and spokes for angular ticks. Partial
+  // sectors get radial edges; `grid_shape="linear"` connects spoke
+  // intersections into polygon rings instead of drawing circular arcs.
+  _drawPolarGrid(ctx, geom, thetaTicks, rTicks, thetaAxis, rAxis, hideTheta, hideR) {
+    const sweep = geom.thetaEnd - geom.thetaStart;
+    const full = sweep >= geom.turn * (1 - 1e-10);
+    const angularOffset = (value) => this._polarPositiveMod(
+      value - geom.thetaStart,
+      geom.turn || 1,
+    );
+    const thetaValues = [...thetaTicks, ...(full ? [] : [geom.thetaStart, geom.thetaEnd])]
+      .filter((value) => Number.isFinite(value) && this._polarThetaVisible(geom, value))
+      .sort((a, b) => angularOffset(a) - angularOffset(b))
+      .filter((value, index, values) => (
+        index === 0 || Math.abs(angularOffset(value) - angularOffset(values[index - 1])) > 1e-10
+      ));
+    if (full && thetaValues.length > 1) {
+      const first = angularOffset(thetaValues[0]);
+      const last = angularOffset(thetaValues[thetaValues.length - 1]);
+      if (Math.abs((last - first) - geom.turn) <= geom.turn * 1e-10) thetaValues.pop();
+    }
+    const angles = thetaValues.map((value) => this._polarThetaAngle(geom, value));
+    const point = (angle, radius) => [
+      geom.cx + radius * Math.cos(angle),
+      geom.cy - radius * Math.sin(angle),
+    ];
+    const ringPath = (radius) => {
+      if (!(radius > 0) || radius > geom.radius + 1e-6) return;
+      if (geom.gridShape === "linear" && angles.length >= (full ? 3 : 2)) {
+        const [x0, y0] = point(angles[0], radius);
+        ctx.moveTo(x0, y0);
+        for (let i = 1; i < angles.length; i++) {
+          const [x, y] = point(angles[i], radius);
+          ctx.lineTo(x, y);
+        }
+        if (full) ctx.closePath();
+        return;
+      }
+      if (full) {
+        ctx.moveTo(geom.cx + radius, geom.cy);
+        ctx.arc(geom.cx, geom.cy, radius, 0, Math.PI * 2);
+      } else {
+        const start = this._polarThetaAngle(geom, geom.thetaStart);
+        const end = this._polarThetaAngle(geom, geom.thetaEnd);
+        const [x, y] = point(start, radius);
+        ctx.moveTo(x, y);
+        ctx.arc(geom.cx, geom.cy, radius, -start, -end, geom.dir > 0);
+      }
+    };
+    if (!hideR) {
+      ctx.strokeStyle = this._axisStylePaint(rAxis, "grid_color", this.theme.grid);
+      ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(rAxis, "grid_width", 1));
+      ctx.globalAlpha = this._axisStyleNumber(rAxis, "grid_opacity", 1);
+      ctx.setLineDash(this._axisGridDash(rAxis));
+      ctx.beginPath();
+      for (const v of rTicks) {
+        ringPath(this._polarRadius(geom, v));
+      }
+      ctx.stroke();
+    }
+    if (hideTheta) return;
+    ctx.strokeStyle = this._axisStylePaint(thetaAxis, "grid_color", this.theme.grid);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(thetaAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(thetaAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(thetaAxis));
+    ctx.beginPath();
+    const innerRadius = Math.max(
+      0,
+      Math.min(geom.radius, this._polarRadius(geom, geom.rLo, { coord: true })),
+    );
+    for (const a of angles) {
+      const [x0, y0] = point(a, innerRadius);
+      const [x1, y1] = point(a, geom.radius);
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+    }
+    ctx.stroke();
+    // Polar spines cannot be represented by the cartesian DIV spines.
+    ctx.strokeStyle = this._axisStylePaint(thetaAxis, "axis_color", this.theme.axis);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(thetaAxis, "axis_width", 1));
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ringPath(geom.radius);
+    if (innerRadius > 1e-6) ringPath(innerRadius);
+    if (!full && angles.length >= 2) {
+      for (const a of [angles[0], angles[angles.length - 1]]) {
+        const [x0, y0] = point(a, innerRadius);
+        const [x1, y1] = point(a, geom.radius);
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+      }
+    }
+    ctx.stroke();
+  }
+
+  _setPolarUniforms(prog) {
+    const gl = this.gl;
+    const u = (n) => uniformOf(gl, prog, n);
+    // Fragment-stage polar clipping uses device-pixel gl_FragCoord, including
+    // in the pick framebuffer. Programs without the clip helper optimize this
+    // uniform away; WebGL treats the resulting null location as a no-op.
+    gl.uniform2f(u("u_clipRes"), this.canvas.width, this.canvas.height);
+    const g = this._polarGeometry();
+    if (!g) {
+      gl.uniform1i(u("u_coordMode"), 0);
+      return;
+    }
+    gl.uniform1i(u("u_coordMode"), 1);
+    gl.uniform4f(u("u_polar"), g.clipCx, g.clipCy, g.clipRx, g.clipRy);
+    gl.uniform2f(u("u_rrange"), g.rLo, g.rHi);
+    gl.uniform2f(u("u_zdir"), g.zero, g.dirUnit);
+    gl.uniform2f(u("u_trange"), g.thetaStart, g.thetaEnd);
+    gl.uniform1f(u("u_turn"), g.turn);
+    gl.uniform2f(u("u_rshape"), g.rOrigin, g.hole);
+  }
+
   // `keepPick` marks a frame whose ONLY trigger is hover-highlight state: the
   // highlight lives in the color pass, so the pick framebuffer's geometry/view
   // snapshot stays valid and the frame must not invalidate it. Coalescing is
@@ -3086,9 +6492,13 @@ export class ChartView {
   }
 
 
-  _drawNow() {
-    if (this._destroyed || !this.gl || this._glLost) return;
+  _renderGlFrame() {
     this._healStaleTheme();
+    // `_drawPoints` records authored-marker draws here so the Canvas overlay
+    // paints the exact direct/sample/drill entries and LOD alpha chosen by
+    // this frame.  Reconstructing them from gpuTraces would lose density
+    // window selection and transition fades.
+    this._authoredScatterDraws = [];
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -3101,12 +6511,30 @@ export class ChartView {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     const drawTrace = (g) => {
+      if (g._legendHidden) return; // legend click-toggle (interaction spec §10)
       if (g.tier === "density") {
         // Tier frame (drill/fades/cache) lives in 45_lod.js — chart-agnostic.
         const [gx0, gx1] = this._axisRange(g.xAxis);
         const [gy0, gy1] = this._axisRange(g.yAxis);
         lodDrawDensityTier(this, g, gx0, gx1, gy0, gy1);
         return;
+      }
+      if (g.tier === "decimated" && g._decimatedRefined && g._homeDecimated) {
+        const r = g._decimatedWindow;
+        // _axisRange preserves axis direction (a reversed axis yields
+        // hi-before-lo) while the served window arrives normalized, so the
+        // coverage compare runs on normalized bounds.
+        const [vx0, vx1] = this._axisRange(g.xAxis);
+        const viewLo = Math.min(vx0, vx1);
+        const viewHi = Math.max(vx0, vx1);
+        const eps = r ? Math.abs(r[1] - r[0]) * 1e-9 + 1e-300 : 0;
+        // A prior refined window is not a truthful covering representation
+        // after a pan/zoom leaves it.  Draw the retained overview until the
+        // pending reply installs a buffer covering this view (T1/T8).
+        if (!r || viewLo < r[0] - eps || viewHi > r[1] + eps) {
+          markOf(g.trace.kind).draw(this, g._homeDecimated, x0, x1, y0, y1);
+          return;
+        }
       }
       markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
     };
@@ -3115,6 +6543,24 @@ export class ChartView {
       drawTrace(g);
     }
     this._drawHoverState();
+  }
+
+  _drawNow() {
+    if (this._destroyed || !this.gl || this._glLost) return;
+    let rendered;
+    if (this._glHost) {
+      rendered = this._glHost.render(
+        this,
+        this._present2d,
+        this.canvas.width,
+        this.canvas.height,
+        () => this._renderGlFrame(),
+      );
+    } else {
+      rendered = this._renderGlFrame();
+    }
+    // Presentation now owns the GL pixels. Do DOM/2D overlay work afterward
+    // so the shared default framebuffer is copied immediately after GPU work.
     // Keep a visible tooltip anchored through pan, zoom, and linked views.
     this._repositionTooltip();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
@@ -3122,7 +6568,10 @@ export class ChartView {
     if (!this._rafKeepPick) this._pickDirty = true;
     this._rafKeepPick = false;
     this._drawChrome();
+    this._maybePositionBestLegends();
     this._renderLassoSelection?.();
+    this._renderBoxSelection?.();
+    return rendered;
   }
 
   // Centralized clock seam for animation state machines. Production uses the
@@ -3184,7 +6633,15 @@ export class ChartView {
   }
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
-    opacityScale *= g._transitionOpacity ?? 1;
+    opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    // Pyplot-authored contours and glyphs keep these resident point buffers
+    // for picking/transitions but paint on the Canvas2D overlay below. Queue
+    // the actual draw invocation (including density-sample/drill fades)
+    // instead of rediscovering only top-level direct traces in `_drawChrome`.
+    if (g.authoredMarker) {
+      (this._authoredScatterDraws ||= []).push({ g, opacityScale });
+      return;
+    }
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
@@ -3198,6 +6655,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     gl.uniform1f(u("u_dpr"), this.dpr);
     const zoomStyle = this._pointZoomStyle(g);
     const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
@@ -3245,10 +6703,12 @@ export class ChartView {
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
     }
-    // Drill handoff (§5): blend from the density ramp toward native colors.
-    // The shown weight eases toward the kernel's target so successive drill
-    // updates recolor smoothly instead of stepping. Time-based decay (τ=90ms)
-    // — a per-frame factor would converge 2.4× faster on a 144Hz display.
+    // Drill handoff (§5): blend from the aggregate's local count-alpha toward
+    // native opacity (hue already matches — the texture wears the mean point
+    // color, LOD doc §2). The shown weight eases toward the kernel's target
+    // so successive drill updates re-weight smoothly instead of stepping.
+    // Time-based decay (τ=90ms) — a per-frame factor would converge 2.4×
+    // faster on a 144Hz display.
     const blendTarget = g.lodBlend ?? 0;
     let blend = g.lodBlendShown ?? blendTarget;
     if (Math.abs(blend - blendTarget) > 0.005 && !this._prefersReducedMotion()) {
@@ -3263,12 +6723,7 @@ export class ChartView {
       g._blendTick = 0;
     }
     gl.uniform1f(u("u_dblend"), blend);
-    const blendOn = blend > 0.001 && g.dBuf && g.dlut;
-    if (blendOn) {
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, g.dlut);
-    }
-    gl.uniform1i(u("u_dlut"), 1); // sampler must always point at a valid unit
+    const blendOn = blend > 0.001 && g.dBuf;
 
     this._bindVao(
       g,
@@ -3322,6 +6777,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     gl.uniform1f(u("u_dpr"), this.dpr);
     const zoomStyle = this._pointZoomStyle(g);
     const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
@@ -3352,13 +6808,15 @@ export class ChartView {
     const hit = this._hoverTarget;
     if (!hit || !hit.g) return;
     const g = hit.g;
-    if (g.trace.kind !== "scatter" || g.tier === "density") return;
-    if (!Number.isInteger(hit.index) || hit.index < 0 || hit.index >= g.n) return;
+    if (g.trace.kind !== "scatter" || g.tier === "density" || g._legendHidden) return;
+    // Filtered buffers are addressed by the drawn index, not the shipped one.
+    const index = hit.drawIndex ?? hit.index;
+    if (!Number.isInteger(index) || index < 0 || index >= g.n) return;
     const [x0, x1] = this._axisRange(g.xAxis);
     const [y0, y1] = this._axisRange(g.yAxis);
     this._drawHoverPoint(
       g,
-      hit.index,
+      index,
       this._map(g.xMeta, x0, x1, g.xAxis),
       this._map(g.yMeta, y0, y1, g.yAxis)
     );
@@ -3373,6 +6831,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     // Size-channel points hover at their encoded size, not the scalar default
     // (sample traces keep no CPU copy of the size column; they fall back).
     const sVal = g.sizeMode === 1 && g._cpu?.size ? g._cpu.size[index] : null;
@@ -3420,7 +6879,7 @@ export class ChartView {
     // WebGL error that aborts the draw, so treat an invalid texture as "nothing
     // to draw" rather than risk it.
     if (!d || !d.tex || !gl.isTexture(d.tex)) return;
-    opacityScale *= g._transitionOpacity ?? 1;
+    opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     const prog = this.densityProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
@@ -3441,7 +6900,18 @@ export class ChartView {
       this._axisCoord(xAxis, d.xRange[0]), this._axisCoord(xAxis, d.xRange[1]),
       this._axisCoord(yAxis, d.yRange[0]), this._axisCoord(yAxis, d.yRange[1]),
     );
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+    // Mean-color textures bake the style opacity INSIDE their physical
+    // compositing (LOD doc §2 rule 1 — dense cells saturate past it exactly
+    // like overplotted marks), so the uniform carries only the transition
+    // fades for them; count-only grids keep style opacity here as before.
+    gl.uniform1f(
+      u("u_opacity"),
+      (d.rgba ? 1 : this._fillOpacity(g.trace.style)) * opacityScale,
+    );
+    // Mean-color grids carry their colors in the texture (LOD doc §2);
+    // count-only grids tint with the constant trace color or, failing that,
+    // fall back to the LUT ramp (hand-built/legacy specs).
+    gl.uniform1i(u("u_meanColor"), d.rgba ? 1 : 0);
     const constant = d.color;
     gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
     gl.uniform4f(u("u_color"), ...(constant || [1, 1, 1, 1]));
@@ -3470,6 +6940,7 @@ export class ChartView {
     gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
+    this._setPolarUniforms(prog);
     // Grid row/column 0 anchors to the bottom/left edge of the grid rect in
     // *display* orientation — the raster/SVG exporters' convention (the shim's
     // imshow pre-flips rows for origin='upper' assuming it). A reversed axis
@@ -3483,7 +6954,7 @@ export class ChartView {
       h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
       h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
     );
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, h.tex);
@@ -3506,6 +6977,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(this.lineProg);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
     gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
@@ -3513,9 +6985,14 @@ export class ChartView {
     const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
     gl.uniform1f(u("u_revealProgress"), reveal);
     gl.uniform1f(u("u_revealSegments"), g.n - 1);
-    gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
+    const lineWidth = (width ?? g.trace.style.width ?? 1.5) * this.dpr;
+    gl.uniform1f(u("u_width"), lineWidth);
+    // Absent cap/join keys mean XY's default, which is round for both — the
+    // trace only carries them when they differ from it (marks._stroke_geometry).
+    const cap = LINE_CAP_MODES[g.trace.style.linecap] ?? LINE_CAP_MODES.round;
+    gl.uniform1i(u("u_cap"), cap);
     const [r, gg, b, a] = color || g.color;
-    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1);
+    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
     const dashed = this._lineDash(g);
     this._bindVao(
@@ -3542,6 +7019,7 @@ export class ChartView {
       }
     );
     const segments = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+    gl.uniform1i(u("u_capSegments"), segments);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
   }
 
@@ -3557,12 +7035,13 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
     this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
     this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+    this._setPolarUniforms(prog);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
     gl.uniform1f(u("u_animationProgress"), g._transitionScale ?? 1);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
-    gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -3622,11 +7101,9 @@ export class ChartView {
     };
     const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
     const dpr = this.dpr;
+    const polarGeom = this._polarGeometry();
     for (let i = 0; i < n; i++) {
-      const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
-      const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
-      const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
-      const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
+      const [[x0, y0], [x1, y1]] = this._projectSegmentEndpoints(g, cpu, i, polarGeom);
       k0[i] = key(x0, y0); k1[i] = key(x1, y1);
       lengths[i] = Math.hypot(x1 - x0, y1 - y0) * dpr;
       add(k0[i], i); add(k1[i], i);
@@ -3684,15 +7161,15 @@ export class ChartView {
     for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
     gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
     // Straight alpha: MESH_FS folds u_strokeOpacity and the per-item alpha
     // stack in and premultiplies there (uniform and buffer strokes alike).
     const stroke = g.meshStroke || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
-    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
-    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : (g.strokeMatchFill ? 2 : 0));
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style) * (g._legendDim ?? 1));
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3733,13 +7210,24 @@ export class ChartView {
     if (!g._lenArr || g._lenArr.length !== n) g._lenArr = new Float32Array(n);
     const lens = g._lenArr;
     const dpr = this.dpr;
-    let px = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, 0));
-    let py = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, 0));
+    const polarGeom = this._polarGeometry();
+    let [px, py] = this._projectDataPoint(
+      g.xAxis,
+      g.yAxis,
+      this._decodeValue(g._dashX, g.xMeta, 0),
+      this._decodeValue(g._dashY, g.yMeta, 0),
+      polarGeom,
+    );
     let acc = 0;
     lens[0] = 0;
     for (let i = 1; i < n; i++) {
-      const nx = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, i));
-      const ny = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, i));
+      const [nx, ny] = this._projectDataPoint(
+        g.xAxis,
+        g.yAxis,
+        this._decodeValue(g._dashX, g.xMeta, i),
+        this._decodeValue(g._dashY, g.yMeta, i),
+        polarGeom,
+      );
       if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
         acc += Math.hypot(nx - px, ny - py) * dpr;
       }
@@ -3776,12 +7264,13 @@ export class ChartView {
     gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
     const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
     gl.uniform1f(u("u_revealProgress"), reveal);
     gl.uniform1f(u("u_revealSegments"), g.n - 1);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     this._setGradientUniforms(prog, g.grad);
     this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
@@ -3815,9 +7304,13 @@ export class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
+    // Four edge columns are an annular sector under polar — this is the path
+    // unequal-width slices (a pie or donut) take, since the compact bar path
+    // ships one scalar width.
+    this._setPolarUniforms(prog);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const colorOn = !!g.cBuf;
@@ -3854,7 +7347,21 @@ export class ChartView {
     if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
     if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    // Unequal widths ship four edge columns, so one instanced draw covers wedges
+    // of different sweeps: the count follows the WIDEST of them (recorded once at
+    // build time, from data alone), which keeps every narrower wedge inside the
+    // same flattening bound. A pie's widest slice sets the cost for the pie.
+    const rectGeom = this._polarGeometry();
+    const rectPolarSegments = rectGeom
+      ? xyPolarBarSegments(this._polarRectMaxSpan(g) * rectGeom.dirUnit, 2 * Math.PI)
+      : 0;
+    if (rectPolarSegments) {
+      gl.uniform1f(u("u_wedgeGap"), (Number(g.trace.style?.wedge_gap) || 0) * this.dpr);
+      gl.uniform1i(u("u_polarSegments"), rectPolarSegments);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (rectPolarSegments + 1), g.n);
+    } else {
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    }
   }
 
   _drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad = 0) {
@@ -3871,6 +7378,10 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_p", g.posMeta, pAxis);
     this._setAxisUniforms(prog, "u_v1", g.value1Meta, vAxis);
     this._setAxisUniforms(prog, "u_v0", g.value0Meta, vAxis);
+    // Bars name their axes u_p/u_v rather than u_x/u_y, so they need this
+    // explicitly — without it u_coordMode stays 0 and a polar bar chart draws
+    // cartesian rectangles inside correct polar chrome.
+    this._setPolarUniforms(prog);
     gl.uniform1i(u("u_pmode"), this._axisMode(pAxis));
     gl.uniform1f(u("u_pconstant"), this._axisConstant(pAxis));
     gl.uniform1i(u("u_vmode"), this._axisMode(vAxis));
@@ -3891,7 +7402,7 @@ export class ChartView {
     gl.uniform1f(u("u_prevWidth"), g._transitionPrevWidth ?? g.width);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
@@ -3942,7 +7453,25 @@ export class ChartView {
     if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
     if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    // A polar bar sweeps an annular sector: segments+1 vertex PAIRS instead of
+    // one quad's four corners. The count follows this trace's own angular width
+    // (xyPolarBarSegments) rather than the full-turn worst case, at the same
+    // flattening bound — a 22.5-degree wind-rose sector costs 14 vertices, not
+    // 194. The compact bar path carries ONE scalar width, so the whole instanced
+    // draw shares one honest count.
+    const barGeom = this._polarGeometry();
+    const polarSegments = barGeom
+      ? xyPolarBarSegments(Number(g.width) * barGeom.dirUnit, 2 * Math.PI)
+      : 0;
+    if (polarSegments) {
+      gl.uniform1f(u("u_wedgeGap"), (Number(g.trace.style?.wedge_gap) || 0) * this.dpr);
+      gl.uniform1i(u("u_polarSegments"), polarSegments);
+      const vAxisId = g.orientation === 1 ? g.xAxis : g.yAxis;
+      gl.uniform1f(u("u_polarV0C"), this._axisCoord(this._axis(vAxisId), g.value0Const ?? 0));
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (polarSegments + 1), g.n);
+    } else {
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    }
   }
 
   _dataPxX(value) {
@@ -3951,6 +7480,28 @@ export class ChartView {
 
   _dataPxY(value) {
     return this._dataPx("y", value);
+  }
+
+  // A point-anchored (theta, r) pair in canvas px. The separable _dataPxX /
+  // _dataPxY pair cannot express polar placement: it reads (0, 0) — the disc
+  // centre, at any angle — as the bottom-left corner, and strings a set of
+  // labels out in a horizontal row in theta order. Mirrors the `point()`
+  // helper in `_annotation_svg` and the `marker` branch of
+  // `annotation_label_placement` (python/xy/_svg.py), which the two exporters
+  // already share; without this the browser and the exports disagree about
+  // where every annotation on a polar chart belongs.
+  //
+  // Point-anchored kinds only. `rule` and `band` are genuinely different
+  // geometry on a disc (a theta rule is a spoke, an r rule is a ring) and stay
+  // deferred on the cartesian path, exactly as they do in the exporters.
+  _dataPxPoint(x, y, xAxisId = "x", yAxisId = "y") {
+    return this._projectDataPoint(
+      xAxisId,
+      yAxisId,
+      Number(x),
+      Number(y),
+      this._polarGeometry(),
+    );
   }
 
   _styleNumber(style, key, fallback) {
@@ -3983,7 +7534,32 @@ export class ChartView {
 
   _axisTickLabelStrategy(axis) {
     const value = String((axis && axis.tick_label_strategy) || "auto").replace(/-/g, "_");
-    return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
+    return ["auto", "hide", "rotate", "stagger", "preserve", "none", "off"].includes(value)
+      ? value : "auto";
+  }
+
+  _axisDefaultSide(axis) {
+    const id = String(axis && axis.id || "x");
+    if (id.startsWith("x")) return "bottom";
+    return id === "y" ? "left" : "right";
+  }
+
+  _axisTickSides(axis) {
+    const isX = String(axis && axis.id || "x").startsWith("x");
+    const allowed = isX ? ["bottom", "top"] : ["left", "right"];
+    if (!Array.isArray(axis && axis.tick_sides)) {
+      return [axis && axis.side || this._axisDefaultSide(axis)];
+    }
+    return allowed.filter((side) => axis.tick_sides.includes(side));
+  }
+
+  _axisTickLabelSides(axis) {
+    const isX = String(axis && axis.id || "x").startsWith("x");
+    const allowed = isX ? ["bottom", "top"] : ["left", "right"];
+    if (!Array.isArray(axis && axis.tick_label_sides)) {
+      return [axis && axis.side || this._axisDefaultSide(axis)];
+    }
+    return allowed.filter((side) => axis.tick_label_sides.includes(side));
   }
 
   _axisTickLabelAnchor(axis) {
@@ -4008,9 +7584,31 @@ export class ChartView {
     return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
   }
 
-  _estimateTickLabel(text, fontSize) {
-    const s = String(text || "");
-    return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+  // `maxWidth` word-wraps the block before measuring, so `h` is the height the
+  // wrapped text actually occupies. Mirrors `_textblock.measure(max_width=...)`
+  // in python/xy/_textblock.py, including the wrap rule in `xyWrapLines`.
+  _estimateTickLabel(text, fontSize, maxWidth = null) {
+    let lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+    const context = typeof document !== "undefined"
+      ? (
+        this._tickMeasureCanvas
+        || (this._tickMeasureCanvas = document.createElement("canvas"))
+      ).getContext("2d")
+      : null;
+    // Match the root's default font shorthand in 20_theme.ts. Measuring with
+    // the browser's generic sans-serif while the DOM paints system-ui can
+    // under-reserve long y labels enough to consume the title's 0.4 em gap.
+    if (context) context.font = `${fontSize}px system-ui, sans-serif`;
+    const advance = (line) =>
+      context?.measureText(line).width || xyTextAdvance(line, fontSize);
+    const limit = Number(maxWidth);
+    if (Number.isFinite(limit) && limit > 0) lines = xyWrapLines(lines, advance, limit);
+    return {
+      lines,
+      w: Math.max(fontSize * 0.7, ...lines.map(advance)),
+      h: Math.max(fontSize * 1.2, lines.length * fontSize * 1.2),
+      lineStep: fontSize * 1.2,
+    };
   }
 
   _tickLabelExtent(label, dim, fontSize) {
@@ -4089,6 +7687,7 @@ export class ChartView {
     const explicitAngle = this._axisTickLabelAngle(axis);
     const baseAngle = explicitAngle === null ? 0 : explicitAngle;
     const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+    if (strategyValue === "preserve") return withBase;
     let strategy = strategyValue;
     if (strategy === "auto") {
       if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap, anchor)) return withBase;
@@ -4150,7 +7749,7 @@ export class ChartView {
     const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
     if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
     if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
-      return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+      return { css: "white-space:pre-line;text-align:center;", style: rawPosition };
     }
 
     const p = this.plot;
@@ -4173,7 +7772,7 @@ export class ChartView {
         css:
           `left:${x}px;top:${y}px;` +
           `transform:translateX(${translateX}%) rotate(${angle}deg);` +
-          "transform-origin:center;font-weight:500;white-space:nowrap;",
+          "transform-origin:center;white-space:pre-line;text-align:center;",
         style: null,
       };
     }
@@ -4188,7 +7787,7 @@ export class ChartView {
       css:
         `left:${x}px;top:${y}px;` +
         `transform:translate(-50%,-50%) rotate(${angle}deg);` +
-        "transform-origin:center;font-weight:500;white-space:nowrap;",
+        "transform-origin:center;white-space:pre-line;text-align:center;",
       style: null,
     };
   }
@@ -4207,7 +7806,15 @@ export class ChartView {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.size.w, this.size.h);
     const now = this._now();
-    const labelCadenceMs = this._viewAnim ? 80 : 0;
+    // Tick labels are DOM: `this.labels` is emptied and every label, baseline
+    // and tick div is recreated. A view animation throttles that to 80 ms
+    // because the ranges are moving. A DATA animation was not throttled at all,
+    // so an entrance or update transition rebuilt the whole label layer 60 times
+    // a second while the axes stood still — the labels are identical between
+    // those frames unless `_transitionView` is also interpolating the view, and
+    // that case is covered by the same cadence. The final frame runs with
+    // `_dataAnim` already cleared, so the settled labels always land.
+    const labelCadenceMs = (this._viewAnim || this._dataAnim) ? 80 : 0;
     const updateLabels = labelCadenceMs === 0
       || this._lastLabelDraw === null
       || now - this._lastLabelDraw >= labelCadenceMs;
@@ -4237,15 +7844,59 @@ export class ChartView {
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
     const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+    const minorTicks = (axis, axisId) => {
+      if (!Array.isArray(axis.minor_tick_values)) return [];
+      const [lo, hi] = this._axisRange(axisId);
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      return axis.minor_tick_values.map(Number)
+        .filter((v) => Number.isFinite(v) && v >= a && v <= b);
+    };
+    const xmt = minorTicks(xAxis, "x");
+    const ymt = minorTicks(yAxis, "y");
+    const minorAxis = (axis) => ({ ...axis, style: axis.minor_style || {} });
+    const xmAxis = minorAxis(xAxis);
+    const ymAxis = minorAxis(yAxis);
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
+
+    const polarGeom = this._polarGeometry();
+    if (polarGeom) {
+      this._drawPolarGrid(ctx, polarGeom, xt.ticks, yt.ticks, xAxis, yAxis, hideX, hideY);
+    }
+    ctx.strokeStyle = this._axisStylePaint(xmAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xmAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(xmAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(xmAxis));
+    ctx.beginPath();
+    for (const v of (hideX || polarGeom ? [] : xmt)) {
+      const px = this._dataPx("x", v);
+      if (!Number.isFinite(px)) continue;
+      const x = xEdge(px);
+      ctx.moveTo(x, p.y);
+      ctx.lineTo(x, p.y + p.h);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(ymAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(ymAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(ymAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(ymAxis));
+    ctx.beginPath();
+    for (const v of (hideY || polarGeom ? [] : ymt)) {
+      const py = this._dataPx("y", v);
+      if (!Number.isFinite(py)) continue;
+      const y = yEdge(py);
+      ctx.moveTo(p.x, y);
+      ctx.lineTo(p.x + p.w, y);
+    }
+    ctx.stroke();
 
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
     ctx.globalAlpha = this._axisStyleNumber(xAxis, "grid_opacity", 1);
     ctx.setLineDash(this._axisGridDash(xAxis));
     ctx.beginPath();
-    for (const v of (hideX ? [] : xt.ticks)) {
+    for (const v of (hideX || polarGeom ? [] : xt.ticks)) {
       const px = this._dataPx("x", v);
       if (!Number.isFinite(px)) continue;
       const x = xEdge(px);
@@ -4259,7 +7910,7 @@ export class ChartView {
     ctx.globalAlpha = this._axisStyleNumber(yAxis, "grid_opacity", 1);
     ctx.setLineDash(this._axisGridDash(yAxis));
     ctx.beginPath();
-    for (const v of (hideY ? [] : yt.ticks)) {
+    for (const v of (hideY || polarGeom ? [] : yt.ticks)) {
       const py = this._dataPx("y", v);
       if (!Number.isFinite(py)) continue;
       const y = yEdge(py);
@@ -4281,69 +7932,176 @@ export class ChartView {
     // instead of covering the chrome line drawn behind it (grid lines stay on
     // the chrome canvas, behind the data). Rebuilt with the labels; static
     // between throttled zoom frames since the plot rect doesn't move on zoom.
+    const tickParts = (axis) => {
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      if (direction === "in") return { inward: length, outward: 0, width };
+      if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
+      return { inward: 0, outward: length, width };
+    };
     if (updateLabels) {
-      const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
+      const rule = (
+        styleAxis,
+        left,
+        top,
+        w,
+        h,
+        colorKey = "axis_color",
+        slot = "axis_line",
+        tickKind = "",
+        side = "",
+      ) => {
         const d = document.createElement("div");
         d.style.cssText =
-          `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;` +
-          `background:${this._axisStylePaint(styleAxis, colorKey, this.theme.axis)};` +
+          `position:absolute;left:${left}px;top:${top}px;` +
           "pointer-events:none;";
+        d.style.setProperty("--xy-axis-rule-width", `${w}px`);
+        d.style.setProperty("--xy-axis-rule-height", `${h}px`);
+        d.style.setProperty(
+          "--xy-axis-rule-paint",
+          this._axisStylePaint(styleAxis, colorKey, this.theme.axis),
+        );
+        d.dataset.xyAxis = styleAxis && styleAxis.id !== undefined
+          ? String(styleAxis.id)
+          : "";
+        d.dataset.xyAxisSide = side || this._axisDefaultSide(styleAxis);
+        if (tickKind) d.dataset.xyTickKind = tickKind;
+        this._applySlot(d, slot);
         this.labels.appendChild(d);
       };
-      const frameSides = Array.isArray(s.frame_sides)
-        ? s.frame_sides
-        : [xAxis.side || "bottom", yAxis.side || "left"];
-      if (!hideY) {
+      // Under polar the frame is one ring drawn on the chrome canvas below;
+      // "side" has no polar meaning, so frame_sides is not consulted. Axis
+      // spines are background-coloured DIVs and cannot express a circle.
+      const frameSides = polarGeom
+        ? []
+        : (Array.isArray(s.frame_sides)
+          ? s.frame_sides
+          : [xAxis.side || "bottom", yAxis.side || "left"]);
+      const explicitFrameSides = !polarGeom && Array.isArray(s.frame_sides);
+      if (!hideY || explicitFrameSides) {
         const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
-        if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
-        if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
+        if (frameSides.includes("left")) {
+          rule(yAxis, p.x, p.y, yWidth, p.h, "axis_color", "axis_line", "", "left");
+        }
+        if (frameSides.includes("right")) {
+          rule(
+            yAxis,
+            p.x + p.w - yWidth,
+            p.y,
+            yWidth,
+            p.h,
+            "axis_color",
+            "axis_line",
+            "",
+            "right",
+          );
+        }
       }
-      if (!hideX) {
+      if (!hideX || explicitFrameSides) {
         const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
-        if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
-        if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
+        if (frameSides.includes("top")) {
+          rule(xAxis, p.x, p.y, p.w, xHeight, "axis_color", "axis_line", "", "top");
+        }
+        if (frameSides.includes("bottom")) {
+          rule(
+            xAxis,
+            p.x,
+            p.y + p.h - xHeight,
+            p.w,
+            xHeight,
+            "axis_color",
+            "axis_line",
+            "",
+            "bottom",
+          );
+        }
       }
       for (const axis of extraXAxes) {
         if (this._axisTickLabelStrategy(axis) === "none") continue;
         const h = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
         const y = axis.side === "top" ? p.y : p.y + p.h - h;
-        rule(axis, p.x, y, p.w, h);
+        rule(axis, p.x, y, p.w, h, "axis_color", "axis_line", "", axis.side);
       }
       for (const axis of extraYAxes) {
         if (this._axisTickLabelStrategy(axis) === "none") continue;
         const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
         const x = axis.side === "left" ? p.x : p.x + p.w - w;
-        rule(axis, x, p.y, w, p.h);
+        rule(axis, x, p.y, w, p.h, "axis_color", "axis_line", "", axis.side);
       }
 
-      const tickParts = (axis) => {
-        const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
-        const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
-        const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
-        if (direction === "in") return { inward: length, outward: 0, width };
-        if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
-        return { inward: 0, outward: length, width };
-      };
-      if (!hideX) {
-        const tick = tickParts(xAxis);
-        const side = xAxis.side || "bottom";
-        const edge = side === "top" ? p.y : p.y + p.h;
-        for (const value of xt.ticks) {
+      // Edge-anchored tick marks have no polar geometry; the spec records
+      // tick_length/tick_width/tick_direction as ignored under polar.
+      if (!hideX && !polarGeom) {
+        const minorTick = tickParts(xmAxis);
+        const minorSide = xAxis.side || "bottom";
+        const minorEdge = minorSide === "top" ? p.y : p.y + p.h;
+        for (const value of xmt) {
           const x = this._dataPx("x", value);
           if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
-          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-          rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+          const top = minorSide === "top"
+            ? minorEdge - minorTick.outward : minorEdge - minorTick.inward;
+          rule(
+            xmAxis, x - minorTick.width / 2, top, minorTick.width,
+            minorTick.inward + minorTick.outward, "tick_color",
+            "tick_mark", "minor", minorSide,
+          );
+        }
+        const tick = tickParts(xAxis);
+        for (const side of this._axisTickSides(xAxis)) {
+          const edge = side === "top" ? p.y : p.y + p.h;
+          for (const value of xt.ticks) {
+            const x = this._dataPx("x", value);
+            if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+            const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+            rule(
+              xAxis,
+              x - tick.width / 2,
+              top,
+              tick.width,
+              tick.inward + tick.outward,
+              "tick_color",
+              "tick_mark",
+              "major",
+              side,
+            );
+          }
         }
       }
-      if (!hideY) {
-        const tick = tickParts(yAxis);
-        const side = yAxis.side || "left";
-        const edge = side === "right" ? p.x + p.w : p.x;
-        for (const value of yt.ticks) {
+      if (!hideY && !polarGeom) {
+        const minorTick = tickParts(ymAxis);
+        const minorSide = yAxis.side || "left";
+        const minorEdge = minorSide === "right" ? p.x + p.w : p.x;
+        for (const value of ymt) {
           const y = this._dataPx("y", value);
           if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
-          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-          rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+          const left = minorSide === "right"
+            ? minorEdge - minorTick.inward : minorEdge - minorTick.outward;
+          rule(
+            ymAxis, left, y - minorTick.width / 2,
+            minorTick.inward + minorTick.outward, minorTick.width, "tick_color",
+            "tick_mark", "minor", minorSide,
+          );
+        }
+        const tick = tickParts(yAxis);
+        for (const side of this._axisTickSides(yAxis)) {
+          const edge = side === "right" ? p.x + p.w : p.x;
+          for (const value of yt.ticks) {
+            const y = this._dataPx("y", value);
+            if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+            const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+            rule(
+              yAxis,
+              left,
+              y - tick.width / 2,
+              tick.inward + tick.outward,
+              tick.width,
+              "tick_color",
+              "tick_mark",
+              "major",
+              side,
+            );
+          }
         }
       }
       for (const axis of extraXAxes) {
@@ -4353,13 +8111,24 @@ export class ChartView {
           this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
         );
         const tick = tickParts(axis);
-        const side = axis.side || "bottom";
-        const edge = side === "top" ? p.y : p.y + p.h;
-        for (const value of ticks.ticks) {
-          const x = this._dataPx(axis.id, value);
-          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
-          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-          rule(axis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+        for (const side of this._axisTickSides(axis)) {
+          const edge = side === "top" ? p.y : p.y + p.h;
+          for (const value of ticks.ticks) {
+            const x = this._dataPx(axis.id, value);
+            if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+            const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+            rule(
+              axis,
+              x - tick.width / 2,
+              top,
+              tick.width,
+              tick.inward + tick.outward,
+              "tick_color",
+              "tick_mark",
+              "major",
+              side,
+            );
+          }
         }
       }
       for (const axis of extraYAxes) {
@@ -4369,19 +8138,30 @@ export class ChartView {
           this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
         );
         const tick = tickParts(axis);
-        const side = axis.side || "right";
-        const edge = side === "right" ? p.x + p.w : p.x;
-        for (const value of ticks.ticks) {
-          const y = this._dataPx(axis.id, value);
-          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
-          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-          rule(axis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+        for (const side of this._axisTickSides(axis)) {
+          const edge = side === "right" ? p.x + p.w : p.x;
+          for (const value of ticks.ticks) {
+            const y = this._dataPx(axis.id, value);
+            if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+            const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+            rule(
+              axis,
+              left,
+              y - tick.width / 2,
+              tick.inward + tick.outward,
+              tick.width,
+              "tick_color",
+              "tick_mark",
+              "major",
+              side,
+            );
+          }
         }
       }
     }
 
     const label = (text, css, axis, kind = "tick", extraStyle = null, yPlacement = null) => {
-      if (!updateLabels) return;
+      if (!updateLabels) return null;
       const d = document.createElement("div");
       d.textContent = text;
       d.dataset.xyLabelKind = kind;
@@ -4406,7 +8186,9 @@ export class ChartView {
       if (this._axisStyleValue(axis, sizeKey) !== undefined) {
         size = `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, 11))}px;`;
       }
-      d.style.cssText = `position:absolute;line-height:1.2;white-space:nowrap;${color}${size}${css}`;
+      d.style.cssText =
+        `position:absolute;line-height:1.2;white-space:pre-line;text-align:center;` +
+        `${color}${size}${css}`;
       // Categorical y labels can exceed the space between their pinned anchor
       // and the chart edge. Placement owns side/anchor/angle; consume that
       // metadata here instead of re-deriving it and drifting from rendering.
@@ -4418,7 +8200,22 @@ export class ChartView {
         d.style.boxSizing = "border-box";
       }
       this._applySlot(d, kind === "label" ? "axis_title" : "tick_label");
-      this._applyStyle(d, extraStyle);
+      const axisLabelStyle = kind === "label" ? {
+        "font-family": this._axisStyleValue(axis, "label_font_family"),
+        "font-style": this._axisStyleValue(axis, "label_font_style"),
+        "font-weight": this._axisStyleValue(axis, "label_font_weight"),
+      } : null;
+      if (axisLabelStyle) {
+        for (const key of Object.keys(axisLabelStyle)) {
+          if (axisLabelStyle[key] === undefined) delete axisLabelStyle[key];
+        }
+      }
+      this._applyStyle(
+        d,
+        axisLabelStyle || extraStyle
+          ? { ...(axisLabelStyle || {}), ...(extraStyle || {}) }
+          : null,
+      );
       this.labels.appendChild(d);
       if (kind === "tick" && axis && axis.kind === "category" && yPlacement) {
         // Rotation contributes half the untransformed label height to each
@@ -4444,6 +8241,7 @@ export class ChartView {
         d.style.maxWidth =
           `min(var(--chart-tick-label-max-width, ${available}px), ${available}px)`;
       }
+      return d;
     };
     const xLabelCandidates = [];
     for (const v of (xt.labels || xt.ticks)) {
@@ -4457,16 +8255,49 @@ export class ChartView {
       "tick_label_size",
       this._axisStyleNumber(xAxis, "tick_size", 11),
     );
-    for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
-      const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
-      const placement = this._xTickLabelTransform(xAxis, item.angle);
-      label(
-        item.text,
-        `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
-          `transform-origin:${placement.origin};`,
-        xAxis,
-      );
+    // Spine→label distance. mpl measures tick padding from the outward end of
+    // the tick mark, and a `top` label then needs `fontRoomPx` more to clear its
+    // own line box. That derived geometry only applies once the axis authors
+    // tick geometry: core's default tick_length is 0 and it has no default
+    // tick_label_pad, so deriving it unconditionally would move the labels of
+    // every chart that styles no ticks. Unstyled axes keep `unstyled`, the
+    // per-side gap this client has always used (pyplot supplies mpl's
+    // {x,y}tick.major.pad, so it takes the derived branch). Mirrors
+    // `_axis_tick_label_offset` in `_svg.py`/`_raster.py`.
+    const tickLabelOffset = (axis, unstyled, fontRoomPx = 0) => {
+      const rawPadding = this._axisStyleValue(axis, "tick_padding");
+      const rawLength = this._axisStyleValue(axis, "tick_length");
+      const rawWidth = this._axisStyleValue(axis, "tick_width");
+      const hiddenSentinel = Number(rawLength) === 0 && Number(rawWidth) === 0;
+      const authored = rawPadding !== undefined
+        || (rawLength !== undefined && !hiddenSentinel);
+      if (!authored) return unstyled;
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
+      const pad = outward + this._axisStyleNumber(axis, "tick_padding", 4);
+      return pad + fontRoomPx;
+    };
+    for (const side of this._axisTickLabelSides(xAxis)) {
+      // Polar places its own labels around the rim below; sides are meaningless
+      // on a disc. Guarded here rather than around the loop so all four axis
+      // paths keep calling _axisTickLabelSides (asserted by a source guard in
+      // tests/pyplot/test_tick_side_rendering.py).
+      if (polarGeom) break;
+      const sideAxis = { ...xAxis, side };
+      for (const item of this._layoutTickLabels(sideAxis, "x", xLabelCandidates)) {
+        const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+        const top = side === "top"
+          ? p.y - tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+          : p.y + p.h + tickLabelOffset(xAxis, 6) + rowOffset;
+        const placement = this._xTickLabelTransform(sideAxis, item.angle);
+        label(
+          item.text,
+          `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+            `transform-origin:${placement.origin};`,
+          sideAxis,
+        );
+      }
     }
     for (const axis of extraXAxes) {
       const ticks = this._axisTicks(
@@ -4479,26 +8310,31 @@ export class ChartView {
         if (px < p.x - 1 || px > p.x + p.w + 1) continue;
         labelCandidates.push({ pos: px, text: this._axisTickText(axis, value, ticks.step) });
       }
-      for (const item of this._layoutTickLabels(axis, "x", labelCandidates)) {
-        const tickLabelSize = this._axisStyleNumber(
-          axis,
-          "tick_label_size",
-          this._axisStyleNumber(axis, "tick_size", 11),
-        );
-        const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-        const top = axis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
-        const placement = this._xTickLabelTransform(axis, item.angle);
-        label(
-          item.text,
-          `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
-            `transform-origin:${placement.origin};`,
-          axis,
-        );
+      for (const side of this._axisTickLabelSides(axis)) {
+        const sideAxis = { ...axis, side };
+        for (const item of this._layoutTickLabels(sideAxis, "x", labelCandidates)) {
+          const tickLabelSize = this._axisStyleNumber(
+            axis,
+            "tick_label_size",
+            this._axisStyleNumber(axis, "tick_size", 11),
+          );
+          const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+          const top = side === "top"
+            ? p.y - tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+            : p.y + p.h + tickLabelOffset(axis, 6) + rowOffset;
+          const placement = this._xTickLabelTransform(sideAxis, item.angle);
+          label(
+            item.text,
+            `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+              `transform-origin:${placement.origin};`,
+            sideAxis,
+          );
+        }
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
         const fallbackCss =
-          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);`;
         const placement = this._axisLabelCss(axis, "x", fallbackCss);
         label(axis.label, placement.css, axis, "label", placement.style);
       }
@@ -4515,7 +8351,8 @@ export class ChartView {
     // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
     // the plot, "start" right of it — reproducing the classic layout.
     const yLabelPlacement = (axis, onRight, item) => {
-      const pin = onRight ? p.x + p.w + 8 : p.x - 8;
+      const offset = tickLabelOffset(axis, 8);
+      const pin = onRight ? p.x + p.w + offset : p.x - offset;
       const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
       const angle = Number(item.angle || 0);
       const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
@@ -4529,10 +8366,118 @@ export class ChartView {
         angle,
       };
     };
-    for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
-      const placement = yLabelPlacement(yAxis, yAxis.side === "right", item);
-      label(item.text, placement.css, yAxis, "tick", null, placement);
+    if (polarGeom) {
+      // Angular labels around the rim, radial labels along the 22.5-degree
+      // spoke. Mirrors _polar_tick_labels in python/xy/_svg.py; the cartesian
+      // label machinery is edge-relative and neither concept survives a disc.
+      const RLABEL = (POLAR_RLABEL_DEG * Math.PI) / 180;
+      const GAP = POLAR_TICK_GAP;
+      // "off" hides only the label text; "none" (hideX/hideY) kills the chrome.
+      const offX = this._axisTickLabelStrategy(xAxis) === "off";
+      const offY = this._axisTickLabelStrategy(yAxis) === "off";
+      if (!hideX && !offX) {
+        for (const v of (xt.labels || xt.ticks)) {
+          const a = this._polarThetaAngle(polarGeom, v);
+          const cos = Math.cos(a);
+          const sin = Math.sin(a);
+          const lx = polarGeom.cx + (polarGeom.radius + GAP) * cos;
+          const ly = polarGeom.cy - (polarGeom.radius + GAP) * sin;
+          const align = Math.abs(cos) < 0.3 ? "-50%" : (cos > 0 ? "0%" : "-100%");
+          const vshift = Math.abs(sin) < 0.3 ? "-50%" : (sin > 0 ? "-100%" : "0%");
+          const spinX = Number(xAxis.tick_label_angle) || 0;
+          label(
+            this._axisTickText(xAxis, v, xt.step),
+            `left:${lx}px;top:${ly}px;transform:translate(${align}, ${vshift})` +
+              (spinX ? ` rotate(${spinX}deg)` : "") + ";",
+            xAxis,
+          );
+        }
+      }
+      if (!hideY && !offY) {
+        const sectorSweep = Math.abs(polarGeom.dirUnit)
+          * Math.max(0, polarGeom.thetaEnd - polarGeom.thetaStart);
+        const labelOffset = Math.min(RLABEL, sectorSweep / 2);
+        const angle = this._polarThetaAngle(polarGeom, polarGeom.thetaStart)
+          + Math.sign(polarGeom.dirUnit || 1) * labelOffset;
+        for (const v of this._polarThinRadialLabels(yt.labels || yt.ticks, polarGeom)) {
+          const radius = this._polarRadius(polarGeom, v);
+          if (!(radius > 0) || radius > polarGeom.radius + 1e-6) continue;
+          const spinY = Number(yAxis.tick_label_angle) || 0;
+          label(
+            this._axisTickText(yAxis, v, yt.step),
+            `left:${polarGeom.cx + radius * Math.cos(angle) + 3}px;` +
+              `top:${polarGeom.cy - radius * Math.sin(angle) - 3}px;` +
+              `transform:translate(0, -100%)` + (spinY ? ` rotate(${spinY}deg)` : "") + ";",
+            yAxis,
+          );
+        }
+      }
     }
+    for (const side of this._axisTickLabelSides(yAxis)) {
+      if (polarGeom) break;
+      const sideAxis = { ...yAxis, side };
+      for (const item of this._layoutTickLabels(sideAxis, "y", yLabelCandidates)) {
+        const placement = yLabelPlacement(sideAxis, side === "right", item);
+        label(item.text, placement.css, sideAxis, "tick", null, placement);
+      }
+    }
+    const pendingYTitleAttachments = [];
+    const measureYTitleAttachment = (title, axis, onRight, root) => {
+      if (!title || !axis) return;
+      const position = String(axis.label_position || "center").replace(/-/g, "_");
+      if (position.startsWith("inside_")) return;
+      const tickLabels = [...this.labels.children].filter((element) =>
+        element.dataset.xyLabelKind === "tick"
+        && element.dataset.xyAxis === String(axis.id ?? "")
+        && element.dataset.xyAxisSide === (onRight ? "right" : "left")
+      );
+      const tickRects = tickLabels.map((element) => element.getBoundingClientRect());
+      const titleRect = title.getBoundingClientRect();
+      const fontSize = parseFloat(getComputedStyle(title).fontSize) || 12;
+      const rawOffset = axis.label_offset;
+      const gap = rawOffset !== undefined
+        && rawOffset !== null
+        && Number.isFinite(Number(rawOffset))
+        ? Number(rawOffset)
+        : 0.4 * fontSize;
+      // Matplotlib centers the title along the axis, then offsets it
+      // perpendicular to the union of the tick-label bounds and the
+      // corresponding spine. Including the spine keeps inward/negative-pad
+      // labels from pulling an outside title back into the plot.
+      const spineEdge = root.left + (onRight ? p.x + p.w : p.x);
+      const tickEdge = onRight
+        ? Math.max(spineEdge, ...tickRects.map((rect) => rect.right))
+        : Math.min(spineEdge, ...tickRects.map((rect) => rect.left));
+      const targetEdge = onRight ? tickEdge + gap : tickEdge - gap;
+      const currentEdge = onRight ? titleRect.left : titleRect.right;
+      const currentLeft = parseFloat(title.style.left) || 0;
+      const delta = targetEdge - currentEdge;
+      // Keep an unusually large title inside the chart canvas. Moving an
+      // absolutely positioned label by `delta` translates its measured box by
+      // the same amount, so derive the clamp from the captured geometry and
+      // avoid a write-then-layout-read on every chrome redraw.
+      const adjustedLeft = titleRect.left + delta;
+      const adjustedRight = titleRect.right + delta;
+      const correction = adjustedLeft < root.left
+        ? root.left - adjustedLeft + 1
+        : adjustedRight > root.right ? root.right - adjustedRight - 1 : 0;
+      return { title, left: currentLeft + delta + correction };
+    };
+    const renderYTitle = (axis, text, onRight) => {
+      const angle = onRight ? 90 : -90;
+      const fallbackCss =
+        `left:${onRight ? p.x + p.w : p.x}px;top:${p.y + p.h / 2}px;` +
+        `transform:translate(-50%,-50%) rotate(${angle}deg);` +
+        "transform-origin:center;";
+      const placement = this._axisLabelCss(axis, "y", fallbackCss);
+      const title = label(text, placement.css, axis, "label", placement.style);
+      // A structured CSS label_position is the placement authority. It may
+      // deliberately omit `left` in favor of `right`, so tick attachment must
+      // not synthesize a competing left offset.
+      if (title && placement.style === null) {
+        pendingYTitleAttachments.push({ title, axis, onRight });
+      }
+    };
     for (const axis of extraYAxes) {
       const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
       const labelCandidates = [];
@@ -4542,34 +8487,44 @@ export class ChartView {
         const text = this._axisTickText(axis, v, ticks.step);
         labelCandidates.push({ pos: py, text });
       }
-      for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
-        const placement = yLabelPlacement(axis, axis.side !== "left", item);
-        label(item.text, placement.css, axis, "tick", null, placement);
+      for (const side of this._axisTickLabelSides(axis)) {
+        const sideAxis = { ...axis, side };
+        for (const item of this._layoutTickLabels(sideAxis, "y", labelCandidates)) {
+          const placement = yLabelPlacement(sideAxis, side === "right", item);
+          label(item.text, placement.css, sideAxis, "tick", null, placement);
+        }
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
-        const fallbackCss = axis.side === "left"
-          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
-          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
-        const placement = this._axisLabelCss(axis, "y", fallbackCss);
-        label(axis.label, placement.css, axis, "label", placement.style);
+        renderYTitle(axis, axis.label, axis.side !== "left");
       }
     }
     if (s.x_axis.label && !hideX) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
-      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);`;
       const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
       label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label && !hideY) {
-      const fallbackCss = yAxis.side === "right"
-        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
-        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
-      const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
-      label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
+      renderYTitle(yAxis, s.y_axis.label, yAxis.side === "right");
+    }
+    if (pendingYTitleAttachments.length) {
+      // Finish creating every y-axis label before the first geometry read,
+      // then apply all offsets after the complete measurement pass. Keeping
+      // DOM reads and writes in separate phases avoids one forced layout per
+      // named axis during settled interaction redraws.
+      const root = this.root.getBoundingClientRect();
+      const adjustments = pendingYTitleAttachments
+        .map(({ title, axis, onRight }) =>
+          measureYTitleAttachment(title, axis, onRight, root))
+        .filter(Boolean);
+      for (const { title, left } of adjustments) {
+        title.style.left = `${left}px`;
+      }
     }
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is
     // painted, keeping its start attached when an edge clamp moves the text.
+    this._drawAuthoredScatterMarkers(octx);
     this._drawAnnotationShapes(octx);
   }
 
@@ -4588,11 +8543,8 @@ export class ChartView {
 
   // -- picking (§17) --------------------------------------------------------
 
-  _renderPick() {
+  _renderPickPass() {
     const gl = this.gl;
-    if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
-      this._allocPickTex(); // deferred resize catch-up
-    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.BLEND);
@@ -4609,7 +8561,8 @@ export class ChartView {
     for (const g of this.gpuTraces) {
       // Density traces pick only while drilled to points (§5); the drill
       // sibling carries the buffers, the host g keeps the range → trace id.
-      const pg = g.tier === "density"
+      // Legend-hidden traces draw nothing, so they must pick nothing.
+      const pg = g._legendHidden ? null : g.tier === "density"
         ? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
         : (markOf(g.trace.kind).pointPick ? g : null);
       if (!pg || !pg.n || base + pg.n > 0x7fffffff) {
@@ -4627,6 +8580,11 @@ export class ChartView {
       gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
       this._setAxisUniforms(prog, "u_x", pg.xMeta, pg.xAxis || g.xAxis);
       this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis);
+      // The pick buffer must use the SAME transform as the colour pass. Left
+      // cartesian under polar it still returns ids, so the picture stays right
+      // while hover silently reports whichever row happens to sit at the
+      // untransformed location.
+      this._setPolarUniforms(prog);
       const zoomStyle = this._pointZoomStyle(pg);
       gl.uniform1f(u("u_size"), pg.size * zoomStyle.sizeFactor);
       gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
@@ -4662,6 +8620,23 @@ export class ChartView {
     gl.enable(gl.BLEND);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this._pickDirty = false;
+    return true;
+  }
+
+  _renderPick() {
+    if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
+      this._allocPickTex(); // deferred resize catch-up
+    }
+    if (this._glHost) {
+      return this._glHost.pick(
+        this,
+        this.pickFbo,
+        this.canvas.width,
+        this.canvas.height,
+        () => this._renderPickPass(),
+      ) === true;
+    }
+    return this._renderPickPass();
   }
 
   _pickAt(cssX, cssY) {
@@ -4673,7 +8648,7 @@ export class ChartView {
     ) return null;
     if (this._pickDirty) {
       try {
-        this._renderPick();
+        if (!this._renderPick()) return null;
       } catch (err) {
         // Native eviction can race pointer movement before the asynchronous
         // webglcontextlost event updates `_glLost`. Suppress only that lost-
@@ -4688,6 +8663,7 @@ export class ChartView {
     if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
     const buf = new Uint8Array(4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+    if (this._glHost) gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     // Reassemble the global 32-bit id; zero is the background sentinel.
@@ -4697,7 +8673,13 @@ export class ChartView {
       (t) => t.pickBase > 0 && id >= t.pickBase && id < t.pickBase + t.pickCount
     );
     if (!g) return null;
-    return { trace: g.trace.id, index: id - g.pickBase, g };
+    const raw = id - g.pickBase;
+    // Category-filtered buffers draw a subset (interaction spec §10):
+    // `index` translates back to the shipped row so CPU readouts and kernel
+    // picks stay exact; `drawIndex` keeps addressing the filtered GPU
+    // buffers (hover marker).
+    const index = g._visMap ? g._visMap[raw] : raw;
+    return { trace: g.trace.id, index, drawIndex: raw, g };
   }
 
   _decodeValue(values, meta, index) {
@@ -4710,6 +8692,25 @@ export class ChartView {
     const [y0, y1] = this._axisRange(yAxisId);
     const xAxis = this._axis(xAxisId);
     const yAxis = this._axis(yAxisId);
+    const geom = this._polarGeometry();
+    if (geom) {
+      // Screen -> (theta, r), the inverse of xyPolarPos. cssX/cssY are canvas
+      // relative, whereas geometry is chart-relative.
+      const dx = cssX - (geom.cx - this.plot.x);
+      const dy = (geom.cy - this.plot.y) - cssY; // flip out of screen space
+      const displayed = Math.hypot(dx, dy) / (geom.radius || 1);
+      if (displayed > 1 + 1e-10 || displayed < geom.hole - 1e-10) {
+        return [NaN, NaN];
+      }
+      const theta = this._polarThetaValue(geom, Math.atan2(dy, dx));
+      if (!this._polarThetaVisible(geom, theta)) return [NaN, NaN];
+      const radialFraction = (displayed - geom.hole) / Math.max(1 - geom.hole, 1e-30);
+      const rCoord = geom.rOrigin + radialFraction * (geom.rHi - geom.rOrigin);
+      const rMin = Math.min(geom.rLo, geom.rHi);
+      const rMax = Math.max(geom.rLo, geom.rHi);
+      if (rCoord < rMin - 1e-10 || rCoord > rMax + 1e-10) return [NaN, NaN];
+      return [theta, this._axisValue(yAxis, rCoord)];
+    }
     const cx0 = this._axisCoord(xAxis, x0);
     const cx1 = this._axisCoord(xAxis, x1);
     const cy0 = this._axisCoord(yAxis, y0);
@@ -4746,11 +8747,72 @@ export class ChartView {
     return best;
   }
 
+  _nearestPolarCpuIndex(g, cssX, cssY) {
+    const cpu = g && g._cpu;
+    if (!cpu || !cpu.x || !cpu.y) return -1;
+    const xMeta = cpu.xMeta || g.xMeta;
+    const yMeta = cpu.yMeta || g.yMeta;
+    const progress = g._transitionPositionProgress;
+    const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
+    const geom = this._polarGeometry();
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < limit; i++) {
+      const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
+        ? g._transitionPrevXValues[i] + (cpu.x[i] - g._transitionPrevXValues[i]) * progress
+        : cpu.x[i];
+      const yEncoded = g._transitionPrevYValues && Number.isFinite(progress)
+        ? g._transitionPrevYValues[i] + (cpu.y[i] - g._transitionPrevYValues[i]) * progress
+        : cpu.y[i];
+      const x = xEncoded / (xMeta.scale || 1) + xMeta.offset;
+      const y = yEncoded / (yMeta.scale || 1) + yMeta.offset;
+      const [chartX, chartY] = this._projectDataPoint(g.xAxis, g.yAxis, x, y, geom);
+      const dist = Math.hypot(chartX - this.plot.x - cssX, chartY - this.plot.y - cssY);
+      if (Number.isFinite(dist) && dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  _segmentHover(g, cssX, cssY, maxPx) {
+    const cpu = g && g._segmentCpu;
+    if (!cpu) return null;
+    let best = null;
+    const limit = Math.min(cpu.x0.length, cpu.x1.length, cpu.y0.length, cpu.y1.length, g.n);
+    const geom = this._polarGeometry();
+    for (let i = 0; i < limit; i++) {
+      const [[x0, y0], [x1, y1]] = this._projectSegmentEndpoints(g, cpu, i, geom);
+      const ax = x0 - this.plot.x;
+      const ay = y0 - this.plot.y;
+      const bx = x1 - this.plot.x;
+      const by = y1 - this.plot.y;
+      if (![ax, ay, bx, by].every(Number.isFinite)) continue;
+      const vx = bx - ax;
+      const vy = by - ay;
+      const denom = vx * vx + vy * vy;
+      const t = denom > 0
+        ? Math.max(0, Math.min(1, ((cssX - ax) * vx + (cssY - ay) * vy) / denom))
+        : 0;
+      const dist = Math.hypot(cssX - (ax + t * vx), cssY - (ay + t * vy));
+      if (dist <= maxPx && (!best || dist < best.dist)) {
+        best = { trace: g.trace.id, index: i, g, dist, synthetic: true };
+      }
+    }
+    return best;
+  }
+
   _hoverAt(cssX, cssY) {
     const maxPx = 12;
     let best = null;
+    const polarGeom = this._polarGeometry();
     for (const g of this.gpuTraces) {
       if (g.tier === "density") continue;
+      // A legend-hidden series draws nothing, so it must not answer hover
+      // either (interaction spec §10) — before this guard every CPU-hover
+      // kind (bar, rect, ribbon, funnel) kept reporting invisible geometry.
+      if (g._legendHidden) continue;
       const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
       if (!Number.isFinite(dataX) || !Number.isFinite(dataY)) continue;
       if (g.heatmap && g._cpuHeatmap) {
@@ -4763,13 +8825,32 @@ export class ChartView {
         if (hit) return hit;
         continue;
       }
+      if (g._cpuRibbon) {
+        const hit = this._ribbonHover(g, dataX, dataY);
+        if (hit) return hit;
+        continue;
+      }
+      if (g._cpuFunnel) {
+        // Before the generic point path: the funnel's _cpu holds stage
+        // centers for keyboard traversal, not hoverable point geometry.
+        const hit = this._funnelHover(g, dataX, dataY);
+        if (hit) return hit;
+        continue;
+      }
       if (g._cpuRect) {
         const hit = this._rectHover(g, dataX, dataY);
         if (hit) return hit;
         continue;
       }
+      if (g._segmentCpu) {
+        const hit = this._segmentHover(g, cssX, cssY, maxPx);
+        if (hit && (!best || hit.dist < best.dist)) best = hit;
+        continue;
+      }
       if (!g._cpu || !g._cpu.x || !g._cpu.y) continue;
-      const idx = this._nearestCpuIndex(g, dataX);
+      const idx = polarGeom
+        ? this._nearestPolarCpuIndex(g, cssX, cssY)
+        : this._nearestCpuIndex(g, dataX);
       if (idx < 0) continue;
       const progress = g._transitionPositionProgress;
       const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
@@ -4780,8 +8861,15 @@ export class ChartView {
         : g._cpu.y[idx];
       const x = xEncoded / (g._cpu.xMeta.scale || 1) + g._cpu.xMeta.offset;
       const y = yEncoded / (g._cpu.yMeta.scale || 1) + g._cpu.yMeta.offset;
-      const px = this._dataPx(g.xAxis, x) - this.plot.x;
-      const py = this._dataPx(g.yAxis, y) - this.plot.y;
+      const [chartX, chartY] = this._projectDataPoint(
+        g.xAxis,
+        g.yAxis,
+        x,
+        y,
+        polarGeom,
+      );
+      const px = chartX - this.plot.x;
+      const py = chartY - this.plot.y;
       const dist = Math.hypot(px - cssX, py - cssY);
       if (dist <= maxPx && (!best || dist < best.dist)) {
         best = { trace: g.trace.id, index: idx, g, dist, synthetic: true };
@@ -4790,9 +8878,21 @@ export class ChartView {
     return best;
   }
 
+  // Seam-aware angular containment for wedge hover: |dataX - centre| in
+  // unwrapped data space misses any wedge straddling theta = 0/turn (a
+  // wind-rose "N" sector), which draws fine and was silently un-hoverable on
+  // its wrap side. Distances re-base through the same positive-mod the
+  // heatmap inverse uses (spec section 3.2: any angular metric must wrap).
+  _polarAngularDistance(geom, a, b) {
+    const turn = geom.turn || 1;
+    const forward = this._polarPositiveMod(a - b, turn);
+    return Math.min(forward, turn - forward);
+  }
+
   _barHover(g, dataX, dataY) {
     const cpu = g._cpu;
     const horizontal = g.orientation === 1;
+    const geom = this._polarGeometry();
     const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
     for (let i = 0; i < limit; i++) {
       const x = this._decodeValue(cpu.x, cpu.xMeta, i);
@@ -4806,8 +8906,13 @@ export class ChartView {
         if (dataX >= lo && dataX <= hi && Math.abs(dataY - y) <= g.width / 2) {
           return { trace: g.trace.id, index: i, g, synthetic: true };
         }
-      } else if (Math.abs(dataX - x) <= g.width / 2 && dataY >= lo && dataY <= hi) {
-        return { trace: g.trace.id, index: i, g, synthetic: true };
+      } else {
+        const near = geom
+          ? this._polarAngularDistance(geom, dataX, x) <= g.width / 2
+          : Math.abs(dataX - x) <= g.width / 2;
+        if (near && dataY >= lo && dataY <= hi) {
+          return { trace: g.trace.id, index: i, g, synthetic: true };
+        }
       }
     }
     return null;
@@ -4815,16 +8920,31 @@ export class ChartView {
 
   _rectHover(g, dataX, dataY) {
     const r = g._cpuRect;
+    const geom = this._polarGeometry();
     const limit = Math.min(r.x0.length, r.x1.length, r.y0.length, r.y1.length, g.n || r.x0.length);
     for (let i = 0; i < limit; i++) {
       const x0 = this._decodeValue(r.x0, r.x0Meta, i);
       const x1 = this._decodeValue(r.x1, r.x1Meta, i);
       const y0 = this._decodeValue(r.y0, r.y0Meta, i);
       const y1 = this._decodeValue(r.y1, r.y1Meta, i);
-      if (
-        dataX >= Math.min(x0, x1) && dataX <= Math.max(x0, x1) &&
-        dataY >= Math.min(y0, y1) && dataY <= Math.max(y0, y1)
-      ) {
+      let insideX;
+      if (geom) {
+        // Both renderers draw the band as the DIRECT interval between the two
+        // edges — GLSL takes `abs(a1 - a0)` with `dir = a1 >= a0 ? 1 : -1`, and
+        // `wedge_angles` takes `min(raw0, raw1) .. max(raw0, raw1)` — so the
+        // span is unwrapped and edge order carries no meaning. Measuring it
+        // with a *directional* `mod(x1 - x0, turn)` while anchoring at
+        // `min(x0, x1)` made the two disagree: a descending pair (350, 300)
+        // covered 300..610 instead of 300..350. Only the offset needs wrapping,
+        // so a seam-crossing bar whose edges are emitted unwrapped (-15..15) is
+        // still reachable from dataX = 355.
+        const turn = geom.turn || 1;
+        const span = Math.abs(x1 - x0);
+        insideX = this._polarPositiveMod(dataX - Math.min(x0, x1), turn) <= span;
+      } else {
+        insideX = dataX >= Math.min(x0, x1) && dataX <= Math.max(x0, x1);
+      }
+      if (insideX && dataY >= Math.min(y0, y1) && dataY <= Math.max(y0, y1)) {
         return { trace: g.trace.id, index: i, g, synthetic: true };
       }
     }
@@ -4836,12 +8956,18 @@ export class ChartView {
     if (!h || !g._cpuHeatmap) return null;
     const [x0, x1] = h.xRange;
     const [y0, y1] = h.yRange;
-    if (dataX < x0 || dataX > x1 || dataY < y0 || dataY > y1) return null;
+    const geom = this._polarGeometry();
+    const sampleX = geom
+      ? x0 + this._polarPositiveMod(dataX - x0, geom.turn)
+      : dataX;
+    if (sampleX < Math.min(x0, x1) || sampleX > Math.max(x0, x1)
+        || dataY < Math.min(y0, y1) || dataY > Math.max(y0, y1)) return null;
     // Mirror _drawHeatmap's display-orientation anchoring: on a reversed axis
     // buffer row/column 0 sits at the opposite end of the data range.
     const [ax0, ax1] = this._axisRange(g.xAxis) ?? [this.view.x0, this.view.x1];
     const [ay0, ay1] = this._axisRange(g.yAxis) ?? [this.view.y0, this.view.y1];
-    const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1)) ? (x1 - dataX) : (dataX - x0);
+    const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1))
+      ? (x1 - sampleX) : (sampleX - x0);
     const fy = ((ay0 ?? this.view.y0) > (ay1 ?? this.view.y1)) ? (y1 - dataY) : (dataY - y0);
     const col = Math.min(h.w - 1, Math.max(0, Math.floor((fx / (x1 - x0)) * h.w)));
     const row = Math.min(h.h - 1, Math.max(0, Math.floor((fy / (y1 - y0)) * h.h)));
@@ -4923,8 +9049,15 @@ export class ChartView {
     const id = hit.trace * 1e9 + hit.index;
     this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
     if (id === this._hoverId) {
-      // Anchored tooltips do not need a per-pointermove DOM rebuild.
-      if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      // Point tooltips stay attached to their data point. Sankey ribbons and
+      // nodes — and funnel segments — cover an area instead, so keep their
+      // tooltip at the pointer as it travels through the same picked shape.
+      if (hit.g && (hit.g._cpuRibbon || hit.g._cpuFunnel)) {
+        this._setTooltipAnchor(hit, this._lastRow, e.clientX, e.clientY);
+        this._repositionTooltip();
+      } else if (!this._tooltipAnchor) {
+        this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      }
       return;
     }
     this._hoverId = id;
@@ -4978,6 +9111,7 @@ export class ChartView {
   refreshTheme() {
     if (this._destroyed) return;
     this._applyTheme();
+    this._markBestLegendsDirty();
     this.draw();
   }
 
@@ -4996,11 +9130,16 @@ export class ChartView {
     if (this._dataAnim) {
       this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
     }
-    XY_CONTEXT_GOVERNOR.unregister(this);
+    if (this._governorRegistered) {
+      XY_CONTEXT_GOVERNOR.unregister(this);
+      this._governorRegistered = false;
+    }
     this._ctxIo?.disconnect();
     this._ctxIo = null;
     clearTimeout(this._ctxRecoveryTimer);
     this._ctxRecoveryTimer = null;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
     clearTimeout(this._rebinTimer);
     if (this._rebinWorker) {
       this._rebinWorker.terminate();
@@ -5008,6 +9147,10 @@ export class ChartView {
       this._rebinWorker = null;
     }
     this._ro?.disconnect();
+    this._legendBestResizeObserver?.disconnect();
+    this._legendBestResizeObserver = null;
+    this._legendBestMutationObserver?.disconnect();
+    this._legendBestMutationObserver = null;
     this._io?.disconnect();
     this._io = null;
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
@@ -5050,8 +9193,14 @@ export class ChartView {
     // repeated rebuilds (e.g. an on_view_change-driven refresh) and trip the
     // "too many active WebGL contexts" eviction. Listeners are already removed
     // above and _destroyed is set, so the resulting event starts no recovery.
-    const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
-    if (loseExt) loseExt.loseContext();
+    if (this._glHost) {
+      const host = this._glHost;
+      this._glHost = null;
+      host.release(this);
+    } else {
+      const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+      if (loseExt) loseExt.loseContext();
+    }
     this.gl = null;
     this.root.remove();
   }
@@ -5073,21 +9222,30 @@ export class ChartView {
   _destroyTraceResources(g, texSeen) {
     if (!g) return;
     this._destroyDensitySample(g);
+    lodDropPointCache(this, g); // retired point windows die with the trace (T13)
     this._deleteVaos(g);
+    this._deleteVaos(g._homeDecimated);
     this._deleteVaos(g.drill);
-    this._deleteBuffers(g, [
-      "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
-      "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
-      "posBuf", "value1Buf", "value0Buf",
-      "_transitionPrevXBuf", "_transitionPrevYBuf",
-      "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
-    ]);
-    this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
+    // TRACE_GPU_BUFFERS is the single list of every buffer field a built trace
+    // can own; the build paths and this teardown must not drift apart, so both
+    // sides read the same names (see the constant for how it is enforced).
+    this._deleteBuffers(g, TRACE_GPU_BUFFERS);
+    // Only geometry is owned independently by the retained M4 overview;
+    // style/channel buffers are shared with the live trace and were deleted
+    // above exactly once.
+    if (g._decimatedRefined) {
+      this._deleteBuffers(g._homeDecimated, ["xBuf", "yBuf", "baseBuf"]);
+    }
+    this._deleteBuffers(g.drill, TRACE_GPU_BUFFERS);
     const textures = [];
     if (g.heatmap) textures.push(g.heatmap.tex);
     for (const d of g.densityCache || []) textures.push(d && d.tex);
     if (g.density) textures.push(g.density.tex);
     if (g._shownDensity) textures.push(g._shownDensity.tex);
+    // Mid-hover the plane's ORIGINAL texture lives only here (density.tex is
+    // the dimmed one), and the paths that destroy a live trace — append,
+    // spec swap, animation — do not clear legend hover first.
+    textures.push(g._legendHoverTex, g._legendHoverPrevTex);
     for (const tex of textures) {
       if (tex && !texSeen.has(tex)) {
         texSeen.add(tex);
@@ -5097,9 +9255,12 @@ export class ChartView {
     g.drill = null;
     g.density = null;
     g._shownDensity = null;
+    g._legendHoverTex = null;
+    g._legendHoverPrevTex = null;
     g.densityCache = [];
     g.heatmap = null;
     g._cpu = null;
+    g._homeDecimated = null;
   }
 
   _destroyGlResources() {
@@ -5118,9 +9279,9 @@ export class ChartView {
     if (this.pickTex && !texSeen.has(this.pickTex)) gl.deleteTexture(this.pickTex);
     this.pickFbo = null;
     this.pickTex = null;
-    if (this.quad) gl.deleteBuffer(this.quad);
+    if (this.quad && !this._glHost) gl.deleteBuffer(this.quad);
     this.quad = null;
-    if (this.quadVao) gl.deleteVertexArray(this.quadVao);
+    if (this.quadVao && !this._glHost) gl.deleteVertexArray(this.quadVao);
     this.quadVao = null;
     for (const p of this._progCache ? this._progCache.values() : []) {
       if (p) gl.deleteProgram(p);

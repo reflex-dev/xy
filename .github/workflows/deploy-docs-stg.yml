@@ -4,18 +4,36 @@
 name: Deploy XY Docs to Stage and Prod
 
 on:
+  # This is reflex-release's post-release workflow (`post-release-workflow` in
+  # pyproject.toml): the release pipeline dispatches it on each published tag,
+  # once the upload, the tag and the GitHub release exist, so the docs site
+  # ships the version it documents without anyone remembering to start it. The
+  # three inputs are that dispatch contract — `tag` is the only one a human
+  # needs to fill in.
   workflow_dispatch:
     inputs:
-      version:
-        description: "Existing XY docs deploy tag (CalVer, for example 2026.26.1)"
+      tag:
+        description: "Existing XY release tag (semver, for example v0.1.0)"
         required: true
         type: string
+      package:
+        description: "Published package (release pipeline; xy is the only one)"
+        required: false
+        type: string
+        default: xy
+      version:
+        description: "Published version without the v prefix (release pipeline)"
+        required: false
+        type: string
+        default: ""
   push:
-    # CalVer deploy tags (2026.WW.N) — matches the flexgen/helm-charts release
-    # scheme and stays disjoint from the library's semver v* tags, which
-    # trigger release.yml (PyPI/Cargo) and must NOT deploy the docs site.
-    tags:
-      - "20[0-9][0-9].[0-9]*"
+    # A `v*` release tag pushed by hand, so re-tagging still deploys docs. The
+    # pipeline's own tag does not arrive this way — it is pushed with
+    # GITHUB_TOKEN, which deliberately fires no on-push workflow — which is what
+    # the post-release dispatch above is for. To deploy an arbitrary commit
+    # without a library release, use deploy-docs-site.yml (or deploy-docs-dev.yml,
+    # which tracks main on every push).
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -23,6 +41,7 @@ permissions:
 concurrency:
   group: deploy-xy-docs-stg
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare:
@@ -37,13 +56,26 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version || github.ref_name }}
+          VERSION: ${{ inputs.tag || github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
         run: |
-          if [[ ! "$VERSION" =~ ^20[0-9]{2}\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version must be CalVer like 2026.26.1"
+          # Loose shape check only: this runs before the repo is on disk, so all
+          # it has to establish is that the value can resolve to a ref and is a
+          # legal image tag. check_release_version.py below is the authority on
+          # what a release tag is. Deliberately PEP 440, not strict SemVer — a
+          # pre-release tags as `v0.2.0rc1`, no dash. Local versions are
+          # excluded because `+` is not a legal Docker tag character and this
+          # value becomes the image tag, and the trailing class cannot end in a
+          # separator. 128 chars is the ceiling the reusable build/helm
+          # workflows enforce.
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-]?[A-Za-z0-9]+)*$ ]]; then
+            echo "::error::version must be a release tag like v0.1.0 or v0.2.0rc1"
+            exit 1
+          fi
+          if (( ${#VERSION} > 128 )); then
+            echo "::error::version must be <=128 characters (Docker tag limit)"
             exit 1
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
@@ -57,6 +89,19 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # A semver-shaped tag is not necessarily a releasable one. Run the same
+      # gate publish.yml runs, from the tagged tree, so a tag the version
+      # derivation cannot read cannot deploy docs for a library version that can
+      # never be published.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.resolve.outputs.source_sha }}
+          persist-credentials: false
+      - name: Release version gate (tag shape)
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: python3 scripts/check_release_version.py --tag "$VERSION"
 
   build:
     name: Build Versioned Images
@@ -93,35 +138,55 @@ jobs:
     steps:
       - run: echo "Approved for production promotion"
 
-  release:
-    name: Create GitHub Release
+  # No GitHub Release job here: publish.yml owns the library release (it gates
+  # the tag shape, publishes the wheel matrix, and writes the release body from
+  # CHANGELOG.md). A second creator would stamp a library release with
+  # docs-deployment notes. The flip side of not owning it is that this workflow
+  # must confirm it happened before promoting prod.
+  verify-library-release:
+    name: Verify Library Release Published
     needs: [prepare, await-prod-approval]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
     steps:
-      - name: Create release if needed
+      # Normally already true: publish.yml uploads and creates the release
+      # *before* pushing the tag that brings us here. Poll anyway — a hand-pushed
+      # tag arrives with nothing published behind it, and PyPI's index can lag
+      # its own upload. Prod must never document a version users cannot
+      # `pip install`.
+      - name: Await GitHub Release and PyPI availability
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
-          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           REPO: ${{ github.repository }}
         run: |
-          if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
-            echo "::notice::Release $VERSION already exists"
-            exit 0
-          fi
-          NOTES=$(printf "Production deployment of XY docs.\n\n**Source SHA:** \`%s\`\n**Image tag:** \`%s\`" "$SOURCE_SHA" "$VERSION")
-          gh release create "$VERSION" \
-            --repo "$REPO" \
-            --title "Release $VERSION" \
-            --notes "$NOTES" \
-            --target "$SOURCE_SHA"
+          PYPI_VERSION="${VERSION#v}"
+          for attempt in $(seq 1 30); do
+            RELEASED=false
+            PUBLISHED=false
+            if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
+              RELEASED=true
+            fi
+            CODE=$(curl -fsS -o /dev/null -w '%{http_code}' \
+              "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" 2>/dev/null || true)
+            if [[ "$CODE" == "200" ]]; then
+              PUBLISHED=true
+            fi
+            if [[ "$RELEASED" == true && "$PUBLISHED" == true ]]; then
+              echo "::notice::${VERSION} is on GitHub Releases and PyPI"
+              exit 0
+            fi
+            echo "attempt ${attempt}/30 — release=${RELEASED} pypi=${PUBLISHED}; retrying in 60s"
+            sleep 60
+          done
+          echo "::error::${VERSION} did not publish (GitHub Release and/or PyPI missing) — refusing to promote prod"
+          exit 1
 
   helm-pr-prod:
     name: Update Production Helm Values
-    needs: [prepare, await-prod-approval, release]
+    needs: [prepare, await-prod-approval, verify-library-release]
     permissions:
       contents: read
     uses: ./.github/workflows/_helm-docs-pr.yml

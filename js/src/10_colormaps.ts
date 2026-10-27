@@ -3,8 +3,30 @@
 // interpolates a 256-texel LUT texture once per colormap.
 // ---------------------------------------------------------------------------
 
+function flagStops() {
+  // Matplotlib's flag colormap is an intentionally high-frequency
+  // red → white → blue → black cycle. Sample its three canonical channel
+  // functions at the client LUT's native 256 positions so the oscillations
+  // are not flattened by the compact-stop interpolation used by other maps.
+  const clip = (value) => Math.max(0, Math.min(1, value));
+  return Array.from({ length: 256 }, (_, index) => {
+    const x = index / 255;
+    return [
+      Math.trunc(255 * clip(0.75 * Math.sin((x * 31.5 + 0.25) * Math.PI) + 0.5)),
+      Math.trunc(255 * clip(Math.sin(x * 31.5 * Math.PI))),
+      Math.trunc(255 * clip(0.75 * Math.sin((x * 31.5 - 0.25) * Math.PI) + 0.5)),
+    ];
+  });
+}
+
 const COLORMAP_STOPS = {
   binary: [[255, 255, 255], [0, 0, 0]],
+  flag: flagStops(),
+  reds: [[255, 245, 240], [254, 229, 216], [253, 202, 181], [252, 171, 143], [252, 138, 106], [251, 105, 74], [241, 68, 50], [217, 37, 35], [188, 20, 26], [152, 12, 19], [103, 0, 13]],
+  bone: [[0, 0, 0], [22, 22, 30], [45, 45, 62], [66, 66, 93], [89, 92, 121], [112, 123, 144], [134, 154, 166], [157, 185, 188], [185, 210, 210], [221, 233, 233], [255, 255, 255]],
+  autumn: [[255, 0, 0], [255, 25, 0], [255, 51, 0], [255, 76, 0], [255, 102, 0], [255, 128, 0], [255, 153, 0], [255, 179, 0], [255, 204, 0], [255, 230, 0], [255, 255, 0]],
+  winter: [[0, 0, 255], [0, 25, 242], [0, 51, 230], [0, 76, 217], [0, 102, 204], [0, 128, 191], [0, 153, 178], [0, 179, 166], [0, 204, 153], [0, 230, 140], [0, 255, 128]],
+  bupu: [[247, 252, 253], [229, 239, 246], [204, 221, 236], [178, 202, 225], [154, 180, 214], [140, 149, 198], [140, 116, 181], [138, 81, 165], [133, 45, 144], [118, 12, 113], [77, 0, 75]],
   gray: [[0, 0, 0], [25, 25, 25], [51, 51, 51], [76, 76, 76], [102, 102, 102], [128, 128, 128], [153, 153, 153], [179, 179, 179], [204, 204, 204], [230, 230, 230], [255, 255, 255]],
   viridis: [[68, 1, 84], [72, 36, 117], [65, 68, 135], [53, 95, 141], [42, 120, 142], [33, 145, 140], [34, 168, 132], [68, 191, 112], [122, 209, 81], [189, 223, 38], [253, 231, 37]],
   plasma: [[13, 8, 135], [65, 4, 157], [106, 0, 168], [143, 13, 164], [177, 42, 144], [204, 71, 120], [225, 100, 98], [242, 132, 75], [252, 166, 54], [252, 206, 37], [240, 249, 33]],
@@ -23,14 +45,29 @@ const COLORMAP_STOPS = {
   piyg: [[142, 1, 82], [196, 26, 124], [222, 119, 174], [241, 181, 217], [253, 224, 239], [247, 247, 246], [230, 245, 208], [183, 224, 133], [127, 188, 65], [76, 145, 33], [39, 100, 25]],
   prgn: [[64, 0, 75], [117, 41, 130], [153, 112, 171], [193, 164, 206], [231, 212, 232], [246, 247, 246], [217, 240, 211], [165, 218, 159], [90, 174, 97], [26, 119, 54], [0, 68, 27]],
   rdylgn: [[165, 0, 38], [214, 47, 39], [244, 109, 67], [253, 173, 96], [254, 224, 139], [254, 255, 190], [217, 239, 139], [165, 216, 106], [102, 189, 99], [25, 151, 80], [0, 104, 55]],
+  rdylbu: [[165, 0, 38], [214, 47, 38], [244, 109, 67], [252, 172, 96], [254, 224, 144], [254, 254, 192], [224, 243, 247], [169, 216, 232], [116, 173, 209], [68, 115, 179], [49, 54, 149]],
+  ylgn: [[255, 255, 229], [248, 252, 194], [229, 244, 171], [200, 232, 154], [162, 216, 137], [119, 197, 120], [75, 176, 98], [46, 146, 76], [21, 120, 62], [0, 96, 51], [0, 69, 41]],
+  wistia: [[228, 255, 122], [238, 245, 84], [249, 236, 45], [255, 223, 21], [255, 206, 10], [255, 188, 0], [255, 177, 0], [255, 165, 0], [254, 153, 0], [253, 139, 0], [252, 127, 0]],
+  puor: [[127, 59, 8], [177, 87, 6], [224, 130, 20], [252, 182, 97], [254, 224, 182], [246, 246, 246], [216, 218, 235], [177, 169, 209], [128, 115, 172], [83, 38, 134], [45, 0, 75]],
   spectral: [[158, 1, 66], [212, 61, 79], [244, 109, 67], [253, 173, 96], [254, 224, 139], [255, 255, 190], [230, 245, 152], [170, 220, 164], [102, 194, 165], [51, 135, 188], [94, 79, 162]],
 };
 
+// A colormap on the wire is a built-in name, or explicit evenly spaced RGB
+// stops — the exact shape of the tables above. Python resolves every custom
+// ramp (CSS colors, `linear-gradient(...)`, positioned stops) to that form
+// once, so this client, the SVG writer, and the native rasterizer all build
+// the same LUT from one interpolation path.
 export function colormapStops(name) {
+  if (Array.isArray(name)) return name;
   const reversed = typeof name === "string" && name.endsWith("_r");
   const base = reversed ? name.slice(0, -2) : name;
   const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;
   return reversed ? [...stops].reverse() : stops;
+}
+
+// Cache/DOM-id key for a colormap: a name, or a stable digest of the stops.
+export function colormapKey(name) {
+  return Array.isArray(name) ? "custom:" + name.join(",") : String(name);
 }
 
 export function buildLutData(name) {

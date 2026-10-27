@@ -14,7 +14,7 @@ that stays smooth at millions of points: pan, zoom, and hover work by default,
 and long lines are decimated to the visible resolution and refined as you zoom.
 
 Jump to [multiple series](#plot-multiple-line-series),
-[smooth curves](#smooth-vs-straight-lines), or
+[smooth curves](#smooth-vs.-straight-lines), or
 [large and real-time data](#large-and-real-time-line-charts).
 
 ## Create a Line Chart

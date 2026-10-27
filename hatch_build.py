@@ -69,7 +69,13 @@ from typing import Any, Optional
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
-def _lib_filename() -> str:
+def _lib_filename(target: Optional[str] = None) -> str:
+    # Cargo emits an Emscripten cdylib as `.wasm`, but Pyodide's dynamic loader
+    # follows the Unix extension-module convention and ctypes looks for `.so`.
+    # Choose that wheel-internal destination from the *target*, not the build
+    # host (cibuildwheel supports both Linux and macOS hosts).
+    if target == "wasm32-unknown-emscripten":
+        return "libxy_core.so"
     if sys.platform == "win32":
         return "xy_core.dll"
     if sys.platform == "darwin":
@@ -159,7 +165,7 @@ class CustomBuildHook(BuildHookInterface):
         if self.target_name != "wheel":
             return
 
-        lib_name = _lib_filename()
+        lib_name = _lib_filename(_cargo_target())
         dest_dir = root / "python" / "xy" / "_native_lib"
         dest = dest_dir / lib_name
         require = os.environ.get("XY_REQUIRE_CARGO") == "1"

@@ -34,16 +34,16 @@ styles it.
 
 | Surface | Configure content or behavior | Style it |
 | --- | --- | --- |
-| Built-in legend | `legend(loc=..., ncols=..., title=...)` | `legend(class_name=..., style=...)`; `legend`, `legend_item`, and `legend_swatch` slots |
-| Built-in tooltip | `tooltip(fields=..., title=..., format=...)` | `tooltip(class_name=..., style=...)` or the `tooltip` slot |
-| Colorbar chrome | `colorbar(title=..., orientation=..., ticks=...)` on a supported continuous mark | `colorbar`, `colorbar_bar`, `colorbar_tick`, and `colorbar_title` slots |
-| X and Y axes | `x_axis(...)`, `y_axis(...)`, including named secondary axes | Validated axis `style`; `tick_label` and `axis_title` DOM slots |
+| Built-in legend | `legend(loc=..., ncols=..., title=...)` | `legend(class_name=..., style=...)`; `legend`, `legend_title`, `legend_item`, `legend_swatch`, and `legend_label` slots |
+| Built-in tooltip | `tooltip(fields=..., labels=..., title=..., format=...)` | `tooltip(class_name=..., style=...)`; `tooltip`, `tooltip_title`, `tooltip_row`, `tooltip_label`, and `tooltip_value` slots |
+| Colorbar chrome | `colorbar(title=..., orientation=..., ticks=...)` on a supported continuous mark | `colorbar`, `colorbar_bar`, `colorbar_tick`, `colorbar_title`, `colorbar_extension`, `colorbar_line`, and `colorbar_minor_tick` slots |
+| X and Y axes | `x_axis(...)`, `y_axis(...)`, including named secondary axes | Validated axis `style`; `axis_line`, `tick_mark`, `tick_label`, `axis_title`, and `axis_band` DOM slots |
 | Reference lines | `vline(x)` and `hline(y)` | Geometry through `color`, `width`, and `opacity`; label through `class_name` and `style` |
 | Reference bands | `x_band(...)`, `y_band(...)`, and `threshold_zone(...)` | Geometry through `color` and `opacity`; label through `class_name` and `style` |
-| Labels and callouts | `text`, `label`, `marker`, `arrow`, and `callout` | Shape props plus the `annotation_label` slot or per-annotation class/style |
+| Labels and callouts | `text`, `label`, `marker`, `arrow`, and `callout` | Shape props plus `annotation_layer` for the whole bitmap and `annotation_label` or per-annotation class/style for text |
 | Crosshair and selection | `interaction_config(crosshair=True, select=True, brush=True)` | Theme tokens or `crosshair_x`, `crosshair_y`, and `selection` slots |
-| Modebar | `modebar(show=...)` | `modebar` and `modebar_button` slots or component-local class/style |
-| Chart frame | Chart `class_name`, `class_names`, `style`, and `styles` | `root`, `title`, `chrome`, `canvas`, and `labels` slots |
+| Modebar | `modebar(show=...)` | `modebar`, `modebar_button`, and the granular `modebar_*` slots or component-local class/style |
+| Chart frame | Chart `class_name`, `class_names`, `style`, and `styles` | `root`, `title`, `chrome`, `canvas`, `labels`, and `annotation_layer` slots |
 | Reduction badges | Emitted automatically when XY reduces, samples, or rasterizes data | `badge` and `badge_item` slots plus badge theme tokens |
 | Facets | `facet_chart(..., gap=...)` and the shared child chart styles | Per-panel chart slots; standalone grid selectors are `.xy-facet-grid`, `.xy-facet-panel`, and `.xy-facet-title` |
 | Data marks | Mark factories such as `line`, `scatter`, and `bar` | The validated mark `style` subset, not DOM classes |
@@ -102,6 +102,7 @@ legend_tooltip_chart = xy.area_chart(
         fields=["month", "actual", "plan"],
         title="Month {month}",
         format={"actual": ",.0f", "plan": ",.0f"},
+        labels={"actual": "Actual", "plan": "Plan"},
         style={
             "background": "#18181ff0",
             "color": "#f9fafb",
@@ -140,6 +141,14 @@ legend_tooltip_chart = xy.area_chart(
     styles={
         "legend_item": {"gap": 6, "padding": "3px 5px"},
         "legend_swatch": {"border-radius": 3},
+        "tooltip_title": {"font-weight": 700, "margin-bottom": 4},
+        "tooltip_row": {
+            "display": "grid",
+            "grid-template-columns": "5rem 1fr",
+            "gap": 8,
+        },
+        "tooltip_label": {"color": "#a1a1aa"},
+        "tooltip_value": {"font-weight": 600, "text-align": "right"},
     },
     class_name=(
         "bg-[#ffffff] py-4 sm:py-5 [--demo-surface:#ffffff] [--demo-grid:#e5e7eb] "
@@ -491,7 +500,9 @@ def interaction_chrome_styling_preview():
 ~~~
 
 The component-local modebar props merge into the same `modebar` and
-`modebar_button` slots as chart-level `class_names` / `styles`. Open the
+`modebar_button` slots as chart-level `class_names` / `styles`. Granular
+`modebar_*` slots style the grip, groups, separators, icons, indicators,
+popovers, command labels, and history controls independently. Open the
 selection menu to choose box, lasso, X-range, or Y-range selection; Shift-drag
 remains a shortcut for box selection. The analysis panel turns the compact
 `on_select_end` summary into a selected count, dataset share, selection type,
@@ -500,15 +511,20 @@ filters, aggregate cards, or related views.
 
 ## Custom component replacements
 
-There are two different meanings of “custom”:
+There are three different meanings of “custom”:
 
 1. **Restyle built-in chrome.** Use the component and slot APIs demonstrated
    above. This works in browser and Reflex charts, standalone HTML, and
    Chromium export.
-2. **Replace chrome with a framework component.** The built-in
-   `reflex_xy.chart` adapter does not render components passed through
-   `legend(render=...)`, `tooltip(render=...)`, or `colorbar(render=...)`.
-   Standalone exports cannot include framework-owned components either.
+2. **Replace the tooltip with a Reflex component.** For a Chart source, the
+   built-in `reflex_xy.chart` adapter mounts `xy.tooltip(render=...)`
+   automatically; for a live figure token, pass `tooltip=` to
+   `reflex_xy.chart(...)`. Standalone exports cannot include the
+   framework-owned component.
+3. **Compose other framework chrome around the chart.** Legend and colorbar
+   replacements remain framework-owned siblings: `legend(render=...)` and
+   `colorbar(render=...)` stay opaque for adapters and are not mounted by the
+   built-in Reflex adapter.
 
 For a framework-owned legend in Reflex, compose it next to the chart and hide
 XY's built-in legend:

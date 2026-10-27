@@ -16,14 +16,24 @@ readout and refinement.
 | --- | --- | --- |
 | Direct | Small visible traces | One rendered point or segment per retained row |
 | M4-decimated | Long ordered lines and areas | A bounded sequence preserving per-bucket extrema |
-| Density + sample | Dense scatter overviews | A fixed-resolution count grid plus a deterministic point sample |
-| Refined view | A narrower pan/zoom window | A new viewport-specific aggregate or exact visible points when they fit |
+| Density | Dense scatter overviews | A count grid wearing the data's own mean point colors. It stands across pans and zooms — softening as you go deeper — rather than re-aggregating per viewport; in standalone (kernel-less) charts a deterministic point sample overlays it once the view's estimated count would fit the direct budget |
+| Refined view | A window near or below the direct budget | Exact visible points for a padded aligned window — nearby pans and zooms then render from the cached window with no further requests |
 
 The current defaults begin M4 line decimation above 10,000 rows and automatic
 scatter density above 200,000 points. Density grids default to 512×384 cells,
 and very large density traces can build a lazy multiresolution pyramid for
 viewport queries. These are pre-1.0 policy thresholds, not API guarantees;
 write code against the behavior and recorded `tier`, not a hard-coded count.
+
+Polar traces are an explicit exception to this ladder. They always use the
+direct tier because Cartesian M4 and density reductions do not preserve cyclic
+polar geometry. Polar `line`, `scatter`, and `area` traces have a hard
+200,000-point ceiling; building a larger point trace raises `ValueError`
+instead of silently drawing an unbounded payload or applying an unsuitable
+reduction. Heatmap and contour grids are not rejected merely because their
+cell count exceeds that point ceiling. Polar heatmaps inverse-sample at the
+requested browser/export surface, so output work is pixel-bounded even though
+source ingest and validation still depend on the source grid.
 
 ## Automatic versus explicit density
 
@@ -78,9 +88,8 @@ There are two different scaling regimes:
 2. The resulting wire payload, WebGL geometry, and static SVG/native-PNG scene
    are bounded by the chosen viewport representation.
 
-This is why a “cost scales with pixels, not points” slogan needs qualification:
-it describes the output side after reduction, not the complete data-to-pixels
-pipeline.
+The output side after reduction scales with pixels; the complete data-to-pixels
+pipeline still includes row-dependent ingest and reduction work.
 
 ## Inspect memory and tier decisions
 

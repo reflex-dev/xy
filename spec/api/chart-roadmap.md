@@ -1,11 +1,13 @@
 # Chart Type Roadmap
 
-This is the single chart-type roadmap for xy. It is intentionally
-**2D-first**: the library should become broad enough for Plotly-class analytics,
-finance, science, operations, and dashboard use cases before spending product
-energy on 3D/volume rendering. Nothing in this section implies immediate
-implementation; it is the coverage backlog we will pull from as the primitives
-land.
+This is the single chart-type roadmap for xy. The destination is every chart
+family: analytical and statistical charts, finance, science, operations,
+dashboards, geographic views, 3D, and volume rendering. Delivery is staged:
+the current implementation builds broad 2D coverage first because those shared
+primitives unlock the most use cases, then carries the same performance and
+customization goals into additional coordinate systems. Nothing in this
+section implies immediate implementation; it is the coverage backlog we will
+pull from as the primitives land.
 
 The roadmap prioritizes chart types by two signals:
 
@@ -14,10 +16,10 @@ The roadmap prioritizes chart types by two signals:
 2. **xy fit:** chart types where the engine can win on large data,
    binary transport, WebGL rendering, and screen-bounded aggregation.
 
-The near-term wedge is large data, but the long-term product goal is broader:
-xy should become a **Plotly-class general-purpose charting library** for
-analytics, science, finance, operations, and dashboards. Performance is the
-entry point, not the boundary of the product.
+The near-term wedge is large data, but the product goal is broader: xy should
+outperform every competing charting library across chart breadth, data scale,
+performance, and customization. Performance is the entry point, not the
+boundary of the product.
 
 The current implemented surface is **line**, **scatter**, **area**,
 **histogram**, **bar/column**, **heatmap**, **error bars/bands**,
@@ -29,6 +31,14 @@ points, color/size channels, GPU picking, selection, and Tier-2 density
 aggregation. Line and area cover direct and M4-decimated time series. Histogram
 and bar/column share the instanced rectangle renderer; heatmap ships a compact
 grid texture.
+
+Polar phases 6/7 now carry the allowlisted heatmap, contour, and error-bar
+schemas through the same coordinate system, including the heatmap
+fragment-stage inverse. Authored sectors use their own bounding-box layout;
+hole/r-origin, categorical θ, log/symlog radius, and
+`grid_shape="linear"` are shared by browser and static export. This is not
+generic segment or mesh support: polar rule/band annotations, LOD,
+facets/animation, and every mark outside `POLAR_MARK_KINDS` remain deferred.
 
 Beyond the mark set, four capability layers now ship on `main`:
 
@@ -50,7 +60,7 @@ Beyond the mark set, four capability layers now ship on `main`:
 - **Standalone LOD without a kernel:** `to_html` exports now re-bin the
   retained density sample in a bundled Web Worker on zoom (off the main
   thread), so a kernel-less page refines instead of stretching the overview.
-- **Reflex-first reactive API (`python/reflex-xy/`):** xy figures as
+- **Reflex-first reactive API (`python/reflex_xy/`):** xy figures as
   first-class Reflex components (PR #55). Chart data multiplexes onto the
   app's existing websocket as a second socket.io namespace (`/_xy`) with
   binary column attachments (§29 — no JSON numbers, no sidecar HTTP
@@ -83,7 +93,7 @@ These sources are used as popularity proxies, not as exact usage telemetry:
 | [Bokeh gallery](https://docs.bokeh.org/en/latest/docs/gallery.html) | line, scatter, bar, patches, image, heatmap, contour, candlestick, maps, network, linked brushing, streaming |
 | Internal design dossier, section 28 and 24 | bar/histogram, heatmap, box/violin, candlestick/OHLC as important compatibility targets |
 
-## 2D-First Priority Roadmap
+## Staged Chart Coverage Roadmap
 
 ### P0 - Already in place
 
@@ -110,7 +120,7 @@ not fall out of sight.
 | 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `xy.bar(...)` / `xy.column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
 | 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `xy.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
-| 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Implemented in `xy.pyplot` | Native pie/donut tessellation with Matplotlib-style containers and labels; richer nested/variable-radius composition remains future depth. |
+| 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Implemented | `xy.pie_chart(labels, values)` composes polar wedge bars (hole/pad/rounded corners) and owns its tooltip — a slice reads category, value, share; theta/rim never show. `xy.pyplot` keeps its Matplotlib-style pie. Nested/variable-radius remain future depth. |
 | 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `xy.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Native static export borrows canonical f64 spans and normalizes only sampled pixels in Rust, verified through 4.29B cells without a derived grid or RGBA expansion. Follow-ups: annotation and tiled huge-image browser transport. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Implemented core | Tukey quartiles, whiskers, median, deterministic outliers, numeric or categorical groups. |
 | 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `xy.candlestick(...)`/`xy.ohlc(...)` + `xy.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
@@ -119,10 +129,10 @@ not fall out of sight.
 | 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Implemented core | Bounded-resolution smoothed distribution bands through the rectangle renderer. |
 | 13 | Contour | contour, filled contour, isolines | Implemented core | Marching-squares isolines over regular grids, optionally layered on heatmap fill. |
 | 14 | Waterfall | waterfall, bridge chart | Planned | Business reporting and finance expectation; mostly categorical bars plus running baseline. |
-| 15 | Funnel | funnel, funnel area, conversion funnel | Planned | Product analytics and sales/ops dashboard expectation. |
+| 15 | Funnel | funnel, funnel area, conversion funnel | Implemented core | `xy.funnel_chart`/`xy.funnel` render per-stage quads through the `funnel` kind (protocol v13): declared-order categorical stages, explicit area/bar geometry, rect/taper neck, gaps and a drawn-width floor, conversion/drop-off arithmetic in labels, tooltips, events, and keyboard traversal. Follow-ups are multi-series comparison grouping and box/lasso selection. |
 | 16 | Treemap | treemap, squarified treemap | Planned | Common BI hierarchy chart; requires layout and label polish. |
 | 17 | Sunburst / icicle | sunburst, icicle, radial hierarchy | Planned | Plotly/Highcharts/ECharts compatibility for hierarchical data. |
-| 18 | Radar / polar | radar, spider, polar area, radial bar | Planned | Common in Chart.js/Highcharts; needs polar axes and interaction semantics. |
+| 18 | Radar / polar | radar, spider, polar area, radial bar, polar heatmap/contour | Implemented core | `xy.polar_chart` renders the allowlisted line/scatter/area/bar/column/heatmap/contour/errorbar schemas through the polar coordinate system (spec/design/polar-axes.md); `xy.radar_chart`, `xy.polar_bar_chart` and `xy.wind_rose` are the compositions. Sector layout, hole/r-origin, categorical θ, log/symlog radius, and polygonal grids ship. Follow-ups are rule/band geometry, polar LOD, facets/animation, and angular navigation/selection. |
 | 19 | Gauge / indicator | gauge, bullet, KPI indicator | Planned | Dashboard compatibility; mostly DOM/SVG/canvas chrome rather than large-data rendering. |
 | 20 | Small multiples | facet grid, repeat chart, trellis chart, pair grid | Implemented core | `xy.facet_chart(...)` builds per-panel screen-bounded Figures with optional shared domains. |
 | 21 | Scatter matrix / pair plots | SPLOM, pairplot, corner plot | Planned | High-value exploratory data analysis; should reuse scatter kernels across many panels. |
@@ -134,11 +144,11 @@ not fall out of sight.
 | 27 | Timeline/Gantt/event charts | event timeline, bar range, Gantt, milestone chart | Partially implemented in `xy.pyplot` | `eventplot(positions, orientation=, lineoffsets=, linelengths=, linewidths=, colors=, linestyles=)` renders event timelines through instanced segments; `broken_barh(xranges, yrange)` renders bar ranges as horizontal `bar` marks with a per-range base and categorical y support. Gantt/milestone composition and date-axis polish remain planned later. |
 | 28 | Calendar charts | calendar heatmap, contribution graph, daily cohort grid | Planned later | Product analytics and ops compatibility; grid + date-axis specialization. |
 | 29 | Parallel coordinate/category | parallel coordinates, parallel categories, alluvial-lite | Planned later | Present in Plotly/ECharts; useful for high-dimensional EDA. |
-| 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Planned later | Important flow chart, but requires layout and interaction work. |
+| 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Implemented core | `xy.sankey_chart(links)` — Python layout (`_sankey.py`: layering, barycentre crossing minimisation, endpoint stacking) over the new `ribbon` primitive (per-end colours, flow-axis gradient, protocol v11). Alluvial/dependency-wheel remain compositions to build on the same primitive. Deferred: GPU picking (CPU hover only), legend swatches, cycle auto-breaking. |
 | 31 | Network/tree/org | network graph, force graph, tree, dendrogram, org chart, arc diagram | Planned later | Valuable but layout-heavy; should follow core 2D marks. |
-| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented in `xy.pyplot` | Quiver, barbs, and bounded streamlines feed shared instanced segments; wind rose remains tied to future polar axes. |
+| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented across core and `xy.pyplot` | Quiver, barbs, and bounded streamlines feed shared instanced segments through `xy.pyplot`; `xy.wind_rose(...)` bins compass bearings and speed bands into stacked polar sectors in core. |
 | 33 | Irregular grid science | pcolormesh, tricontour, tripcolor, triangular mesh | Implemented in `xy.pyplot` | Curvilinear quads and explicit/native triangulations route through indexed meshes and marching-triangle kernels. |
-| 34 | Specialist coordinate systems | ternary, Smith chart, carpet plot, polar scatter/line/bar | Planned later | Plotly/science compatibility; axis systems are the main work. |
+| 34 | Specialist coordinate systems | ternary, Smith chart, carpet plot, polar marks | Partially implemented | Polar shipped as the first non-cartesian system (chart-level `coords`, spec/design/polar-axes.md), including the phase-6/7 grid inverse and axis-depth surface. Ternary/Smith/carpet remain planned and should reuse the same seam. |
 | 35 | Finance advanced | VWAP, moving averages, Bollinger bands, RSI, MACD, depth chart, order book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure | Prototyped (PR closed unmerged) | The closed `codex/finance-charting-surface` exploration branch has a `FinanceChart`/`FinanceLayer` system with volume bars, SMA, VWAP, Bollinger bands, RSI, and MACD as overlay/pane layers plus drawings. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 36 | Maps and geo | choropleth, tile choropleth, point map, bubble map, density map, route map, filled-area map | Deferred 2D domain | 2D, but requires projection/tile/geography stack; do after core chart breadth. |
 | 37 | Statistical evaluation | ROC, precision-recall, lift, calibration, Manhattan, volcano | Planned later | Mostly composed line/scatter variants with domain helpers. |
@@ -178,11 +188,11 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 | Rank | Chart | Why it matters | Caveat |
 |---:|---|---|---|
 | 13 | Composed / mixed charts | Overlay line, scatter, bars, bands, candlesticks, and secondary axes cleanly. | API and spec work comes before many chart families. |
-| 14 | Pie / donut | Very popular in basic chart libraries and user expectations. | Implemented through `xy.pyplot`; future work is composition and styling depth. |
+| 14 | Pie / donut | Very popular in basic chart libraries and user expectations. | Implemented: `xy.pie_chart` in the composition API + `xy.pyplot`. |
 | 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Prototyped (PR closed unmerged):** candlestick/OHLC marks with date axes, gaps, and hover format on the closed finance exploration branch. Remaining polish: range selectors. |
 | 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Prototyped (PR closed unmerged):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 17 | Waterfall | Common in business reporting and Plotly/Highcharts. | Mostly categorical bars plus running baseline. |
-| 18 | Funnel / funnel area | Common sales/product analytics chart. | Mostly categorical geometry plus labels. |
+| 18 | Funnel / funnel area | Common sales/product analytics chart. | Shipped — see "Funnel" in the coverage-backlog table above (`xy.funnel_chart`, protocol v13): categorical quad geometry plus build-time labels, as predicted. |
 | 19 | Calendar/cohort heatmap | Common product analytics and retention surface. | Grid plus date semantics. |
 | 20 | Gantt/timeline/event charts | Product/project/ops domain chart. | High UI polish and interaction expectations. |
 
@@ -192,7 +202,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 |---:|---|---|---|
 | 21 | Treemap | Common BI hierarchy chart. | Requires layout algorithm, labels, and color scale polish. |
 | 22 | Sunburst / icicle | Plotly/ECharts hierarchy compatibility. | Requires hierarchy layout and radial/rectangular variants. |
-| 23 | Sankey / alluvial / dependency wheel | Common flow visualization in BI and systems analysis. | Layout and interaction are the hard parts. |
+| 23 | Sankey / alluvial / dependency wheel | Common flow visualization in BI and systems analysis. | Core implemented: `xy.sankey_chart` + `ribbon`. Interaction depth (link picking, hover highlight) tracked in the ribbon contract's deferred list. |
 | 24 | Network / tree / org / dendrogram / arc | Graph and hierarchy compatibility. | Requires graph layout algorithms and selection semantics. |
 | 25 | Gauge / bullet / indicator | Dashboard/KPI compatibility. | Mostly chrome and layout, not large-array rendering. |
 | 26 | Table-adjacent views | Table, pivot-like summary, annotated table. | Basic `table` is implemented through `xy.pyplot` as tessellated cell geometry; pivot-like summary and annotated-table depth remain deferred. |
@@ -201,26 +211,27 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 
 | Rank | Chart family | Why it matters | Caveat |
 |---:|---|---|---|
-| 27 | Radar / polar / radial bar | Common in Chart.js/Highcharts and dashboards. | Needs polar axes and interaction semantics. |
+| 27 | Radar / polar / radial bar | Common in Chart.js/Highcharts and dashboards. | Implemented core: polar coordinate system + radar/polar-bar/wind-rose compositions, heatmap/contour/errorbar, sector layout, hole/r-origin, categorical θ, log/symlog radius, and polygonal grids. Rule/band annotations, polar LOD, facets/animation, and angular navigation/selection remain tracked in polar-axes.md §§8–9. |
 | 28 | Ternary / Smith / carpet | Plotly/scientific compatibility. | New coordinate systems, not new mark primitives. |
-| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | Quiver, barbs, and streamplot are implemented through `xy.pyplot`; wind rose awaits polar support. |
+| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | Quiver, barbs, and streamplot are implemented through `xy.pyplot`; `xy.wind_rose(...)` ships as a core helper over stacked polar bars. |
 | 30 | Pcolormesh / tricontour / tripcolor | Matplotlib-style irregular grid science. | Implemented through `xy.pyplot` with native quad/triangle geometry. |
 | 31 | Waffle / mosaic / Mekko / variwide | Business/category compatibility. | Mostly rectangle layout algorithms. |
 | 32 | Packed bubble / Venn / Euler | Compatibility and presentation charts. | Layout algorithms and label placement dominate. |
 | 33 | Pictorial bar / item chart / image markers / text marks | ECharts/Highcharts compatibility polish. | Symbol systems and asset handling. |
 
-### P6 - 2D domains to defer until core breadth is strong
+### P6 - Additional domains after core breadth is strong
 
 | Chart family | Reason to defer |
 |---|---|
 | Maps / choropleth / geo scatter / routes / density maps | 2D, but requires projection, tile, geography data, and viewport semantics; valuable as a later domain package. |
-| 3D scatter / surface / volume | Explicitly outside the 2D-first roadmap; different rendering and interaction model. |
+| 3D scatter / surface / mesh / volume | Requires dedicated camera, projection, lighting, depth, picking, and interaction primitives; part of the product destination after the shared 2D foundations are broad. |
 
 ### P7 - Long-term breadth target
 
 The long-term target is not only "fast large scatter." It is an expansive
-library with enough chart breadth to be used across industries the way Plotly is
-used today, while keeping xy' transport and rendering model underneath.
+library that leads across industries and chart families, including geographic,
+3D, and volume visualization, while keeping xy's transport and rendering model
+underneath.
 
 | Industry / use case | Chart coverage needed |
 |---|---|
@@ -292,9 +303,12 @@ and drill updates emit the same wire shape.
   step, O(visible tiles) per frame after a one-pass build (~1.33× cost).
 - *Progressive refinement* (§17) — bin a 1-in-k sample first so a coarse
   density appears <100 ms, refine over subsequent frames.
-- *Per-bin channel aggregation* (§5-F5) — mean/max color per density cell, so
-  a zoomed-out colored scatter keeps *some* channel signal instead of
-  `channels_dropped`.
+- *Per-bin channel aggregation* (§5-F5) — **color shipped.** Density cells
+  carry the alpha-weighted mean of their points' resolved colors with count as
+  the alpha channel (LOD doc §2) — continuous, categorical, and direct-RGBA
+  channels alike, at every tier including the pyramid — recorded as
+  `color_agg: "mean"` instead of `channels_dropped`. Non-color aggregates
+  (mean/max of a value channel read as data, size) remain open.
 
 ## Cross-Cutting: Styling & Theming
 
@@ -339,11 +353,16 @@ nothing themeable competes with a user class. The full slot list (including
 active state via `--chart-modebar-active`) is `xy.CHART_DOM_SLOTS`.
 
 For a fixed chart, the Reflex adapter also mirrors embedded class strings into
-generated JSX for Tailwind's compile-time scan. Runtime token/Var charts must
-put their complete names in ordinary host source or a safelist. For the
-standalone `to_html(...)` export — which has no host page to inherit Tailwind
-from — pass `custom_css="…"` to inject the stylesheet defining those utility
-classes.
+generated JSX for Tailwind's compile-time scan. Runtime token/Var charts pass
+their complete names through
+`reflex_xy.chart(..., tailwind_classes="...")`; that scan-only manifest is
+emitted verbatim (including quotes, backslashes, and Unicode), discarded by the
+wrapper, and never reaches the DOM. State-driven constructor-chrome changes
+(including `dom`, title, legend, colorbar, badge, modebar, and axis-band
+topology) rebuild the view so runtime classes and nodes do not remain stale;
+durable selection and every named-axis range are restored silently. For the standalone
+`to_html(...)` export — which has no host page to inherit Tailwind from — pass
+`custom_css="…"` to inject the stylesheet defining those utility classes.
 
 Explicitly **out of scope** (browser limit, not a backlog item): the plotted
 marks are WebGL2 canvas pixels — no CSS, Tailwind or otherwise, can style them.
@@ -369,21 +388,21 @@ interaction-latency comparison, not assumed.
 The first breadth milestone — **histogram, bar/column, area, heatmap** — and
 the first statistical block — **box, violin, ECDF, error bars/bands, hexbin,
 contour, steps/stairs/stems, and facets** — are done. The first alpha
-(`v0.0.1`) is launched with a live docs site and the reflex-xy adapter on
+(`v0.0.1`) is launched with a live docs site and the bundled Reflex integration on
 `main`; the next sequence is therefore stabilization and compatibility depth,
 not re-implementing shipped primitives.
 
 1. **Stabilize the launched `v0.0.1` alpha.** `v0.0.1` is released on PyPI;
    its Pyodide wheel is runtime-verified but is not yet publicly distributed
-   as a durable release asset (#97). The docs site is live, and the reflex-xy
+   as a durable release asset (#97). The docs site is live, and the Reflex
    adapter is on `main` — so release/distribution correctness and the
    post-launch bug backlog are the current gate, not shipping. The interaction
    correctness issues (box-zoom view collapse, double-click blanking a dense
-   Reflex scatter, reflex-xy static chart crash, FacetChart CSS leak) come
+   Reflex scatter, static integration chart crash, FacetChart CSS leak) come
    before any new chart family. The heatmap hover kernel crash is fixed
    (PR #106): the pick handler takes a dedicated grid-trace branch that returns
    row/col plus the cell value instead of indexing the edge-only x/y arrays.
-2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex-xy/`; see
+2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex_xy/`; see
    the capability-layer summary near the top of this doc). Linked facet
    interactions shipped in PR #105: `xy.facet_chart(...)` takes
    `link=True|"both"|"x"|"y"` for runtime-linked panel axes and
@@ -395,9 +414,10 @@ not re-implementing shipped primitives.
 3. **Statistical compatibility depth.** Add strip/swarm/boxen/rug,
    regression/diagnostic helpers, richer density hover/readout, and
    scatter-matrix/joint-plot composition on the shipped primitives.
-4. **Pie / donut in the composition API.** Implemented in `xy.pyplot` today;
-   promote to a core `xy.pie_chart(xy.pie(...))` surface with bounded arc
-   geometry and label placement.
+4. **Pie / donut depth.** `xy.pie_chart(labels, values)` ships in the
+   composition API over unequal-width polar bars, and `xy.pyplot` supplies the
+   Matplotlib-shaped pie helpers. Remaining depth is nested donuts and
+   variable-radius composition.
 5. **Re-land the finance surface.** Open a fresh PR from the closed exploration
    branch, rebased onto current composition/LOD primitives, then extend the
    `FinanceLayer` system with depth charts, Heikin-Ashi, and Renko.
@@ -411,7 +431,7 @@ Parallel, non-chart-type tracks:
   fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
   retains the slower indexed-palette path for smaller files;
   `engine=Engine.chromium` stays for an installed-browser CSS/WebGL screenshot.
-- **Reflex-first reactive API** — **shipped** (PR #55): the reflex-xy adapter
+- **Reflex-first reactive API** — **shipped** (PR #55): the bundled integration
   described in step 2 above, with websocket-multiplexed binary transport and
   computed-var figure binding.
 
@@ -430,21 +450,19 @@ xy.violin_chart(xy.violin(values, group=None, bandwidth="auto"))
 xy.chart(xy.errorbar(x, y, yerr=..., xerr=...))
 xy.chart(xy.hexbin(x, y, gridsize=50, color_scale="log"))
 xy.candlestick_chart(xy.candlestick(x, open, high, low, close))  # prototyped (closed finance PR)
-
-# next
-xy.pie_chart(xy.pie(values, labels=..., donut=0.0))
+xy.pie_chart(labels, values, hole=0.55)    # wedge bars + an owned slice tooltip
 ```
 
 New chart kinds land as composition marks plus a family container
-(`xy.box_chart(xy.box(...))`, `xy.pie_chart(xy.pie(...))`, …).
+(`xy.box_chart(xy.box(...))`, `xy.histogram_chart(xy.hist(...))`, …).
 
 ## Decision Summary
 
 The rectangle/polygon/grid-texture foundations, statistical breadth block,
-full mark styling, native PNG rasterizer, and the **Reflex-first reactive API**
-(reflex-xy adapter) are in place, and `v0.0.1` is launched with a live docs
-site. The next product track is **post-launch stabilization** (the open
-interaction/adapter bug backlog), followed by statistical compatibility depth
-and **pie/donut** in the composition API. Finance (candlestick plus
-indicators) remains prototyped on a closed exploration branch awaiting a fresh
-landing.
+full mark styling, native PNG rasterizer, core polar/pie/donut composition, and
+the **Reflex-first reactive API** (bundled `xy[reflex]` integration) are in place, and
+`v0.0.1` is launched with a live docs site. The next product track is
+**post-launch stabilization** (the open interaction/adapter bug backlog),
+followed by statistical compatibility depth and pie/donut depth (nesting and
+variable radius). Finance (candlestick plus indicators) remains prototyped on
+a closed exploration branch awaiting a fresh landing.

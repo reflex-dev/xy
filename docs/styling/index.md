@@ -105,7 +105,7 @@ section that owns it.
   scale chrome. [Open section →](/docs/xy/styling/customize/#color-scales-and-colorbars)
 - **Legend** — content, placement, swatches, and DOM styling.
   [Open section →](/docs/xy/styling/customize/#legend)
-- **Tooltip** — fields, formatting, placement, and container styling.
+- **Tooltip** — field labels, formatting, placement, and title/row/value styling.
   [Open section →](/docs/xy/styling/customize/#tooltip)
 - **Annotations** — rules, bands, arrows, markers, and callouts.
   [Open section →](/docs/xy/styling/customize/#annotations)
@@ -242,7 +242,7 @@ other canvas geometry through typed props or mark `style=`.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Tailwind classes are present but have no effect | The utility was not emitted by the host's Tailwind build, or the Tailwind plugin is missing. | Enable Reflex's `TailwindV4Plugin`, keep fixed-chart classes literal, and continue to [Customize Each Part](/docs/xy/styling/customize/). |
+| Tailwind classes are present but have no effect | The utility was not emitted by the host's Tailwind build, or the Tailwind plugin is missing. | Enable Reflex's `TailwindV4Plugin`; keep fixed-chart classes literal and pass live-chart utilities through `reflex_xy.chart(..., tailwind_classes=...)`. |
 | A custom font silently falls back | `font-family` names a face the browser has not loaded. | Register it in host CSS with `@font-face`, then apply the family to the chart root; see [Custom fonts and export limitations](/docs/xy/styling/themes-and-tokens/#custom-fonts-and-export-limitations). |
 | A class changes the legend but not a line or point | Marks are WebGL/canvas geometry, not DOM nodes. | Use the mark's typed paint props or supported `style=` declarations from [Customize Each Part](/docs/xy/styling/customize/). |
 | Standalone HTML looks different from the application | The exported document cannot inherit the host page's stylesheet or design-system variables. | Put essential tokens on the chart and pass author rules with `to_html(custom_css=...)`. |
@@ -259,10 +259,14 @@ For build, export, and adapter failures beyond styling, continue with the
 - **Styling Overview** (you are here) — identify the rendering surface and
   choose the right styling mechanism.
 - **Examples** — start from a polished, copyable chart or experiment with the
-  interactive palette playground. [Open Examples →](/docs/xy/styling/examples/)
+  interactive palette playground.
+  [Open the palette playground →](/docs/xy/styling/examples/#palette-playground)
 - **Customize Each Part** — change marks, axes, grid, color scales, legends,
   tooltips, annotations, and interaction chrome.
   [Open Customize Each Part →](/docs/xy/styling/customize/)
+- **Chrome Slots** — look up every stable DOM hook for titles, legends,
+  tooltips, axes, annotations, badges, and controls.
+  [Open Chrome Slots →](/docs/xy/styling/chrome-slots/)
 - **Themes and Export** — define reusable tokens, dark mode, fonts, and
   consistent HTML, SVG, or PNG output.
   [Open Themes and Export →](/docs/xy/styling/themes-and-tokens/)

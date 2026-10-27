@@ -16,6 +16,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 png = "0.18.1"
 
+# Whole-program optimization; `strip` keeps .dynsym, which ctypes binds
+# against. `panic` must stay unwinding — lib.rs catches panics at the C ABI.
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
+strip = true

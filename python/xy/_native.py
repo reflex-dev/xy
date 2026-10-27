@@ -17,14 +17,14 @@ import operator
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 39
+ABI_VERSION = 47
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -34,6 +34,8 @@ ABI_VERSION = 39
 # would be sliced as data.
 _USIZE_MAX = ctypes.c_size_t(-1).value
 _FACTORIZE_CAPACITY_EXCEEDED = _USIZE_MAX - 1
+# Canonical row ids ship as u32 (the index ceiling the kernels enforce).
+_U32_MAX = 2**32 - 1
 
 
 def _lib_filename() -> str:
@@ -116,6 +118,18 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
+    ]
+    lib.xy_transition_keys_fixed.restype = ctypes.c_int32
+    lib.xy_transition_keys_fixed.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_size_t),
     ]
     lib.xy_remap_u8.restype = ctypes.c_int32
     lib.xy_remap_u8.argtypes = [
@@ -401,6 +415,7 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # y_coords (rows f64s)
         ctypes.c_void_p,  # levels (n_levels f64s)
         ctypes.c_size_t,  # n_levels
+        ctypes.c_uint8,  # corner_mask
         ctypes.c_void_p,  # x0 output
         ctypes.c_void_p,  # x1 output
         ctypes.c_void_p,  # y0 output
@@ -451,6 +466,23 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_void_p,
         ctypes.c_void_p,
+    ]
+    lib.xy_bin_2d_mean_color.restype = ctypes.c_int32
+    lib.xy_bin_2d_mean_color.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # idx (or NULL)
+        ctypes.c_void_p,  # rgba (or NULL)
+        ctypes.c_void_p,  # lut (with idx)
+        ctypes.c_size_t,  # lut_len
+        ctypes.c_double,  # x0
+        ctypes.c_double,  # x1
+        ctypes.c_double,  # y0
+        ctypes.c_double,  # y1
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+        ctypes.c_void_p,  # out rgba8
     ]
     lib.xy_bin_2d_sample_range.restype = ctypes.c_size_t
     lib.xy_bin_2d_sample_range.argtypes = [
@@ -528,6 +560,31 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_void_p,
+    ]
+    lib.xy_range_indices_rows.restype = ctypes.c_size_t
+    lib.xy_range_indices_rows.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # candidate row ids
+        ctypes.c_size_t,  # candidate count
+        ctypes.c_double,  # lo_x
+        ctypes.c_double,  # hi_x
+        ctypes.c_double,  # lo_y
+        ctypes.c_double,  # hi_y
+        ctypes.c_void_p,  # output row IDs
+    ]
+    lib.xy_polygon_select.restype = ctypes.c_size_t
+    lib.xy_polygon_select.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # candidate row ids
+        ctypes.c_size_t,  # candidate count
+        ctypes.c_void_p,  # polygon x
+        ctypes.c_void_p,  # polygon y
+        ctypes.c_size_t,  # polygon vertices
+        ctypes.c_void_p,  # output row IDs
     ]
     lib.xy_sample_mask.restype = ctypes.c_int32
     lib.xy_sample_mask.argtypes = [
@@ -622,6 +679,34 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # max_upsample
         ctypes.c_void_p,
     ]
+    lib.xy_pyramid_build_color.restype = ctypes.c_uint64
+    lib.xy_pyramid_build_color.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # idx (or NULL)
+        ctypes.c_void_p,  # rgba (or NULL)
+        ctypes.c_void_p,  # lut (with idx)
+        ctypes.c_size_t,  # lut_len
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_uint32,
+    ]
+    lib.xy_pyramid_compose_color.restype = ctypes.c_int32
+    lib.xy_pyramid_compose_color.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,  # max_upsample
+        ctypes.c_void_p,  # out counts f32
+        ctypes.c_void_p,  # out rgba8
+    ]
     lib.xy_pyramid_free.restype = ctypes.c_int32
     lib.xy_pyramid_free.argtypes = [ctypes.c_uint64]
     lib.xy_local_log_density.restype = ctypes.c_int32
@@ -661,17 +746,6 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # external data arena
         ctypes.c_size_t,  # data_len
         ctypes.c_void_p,  # out (w*h*4 RGBA8)
-        ctypes.c_size_t,  # w
-        ctypes.c_size_t,  # h
-    ]
-    lib.xy_rasterize_png_data.restype = ctypes.c_size_t
-    lib.xy_rasterize_png_data.argtypes = [
-        ctypes.c_void_p,  # cmd
-        ctypes.c_size_t,  # cmd_len
-        ctypes.c_void_p,  # external data arena
-        ctypes.c_size_t,  # data_len
-        ctypes.c_void_p,  # out PNG bytes
-        ctypes.c_size_t,  # out_capacity
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
@@ -746,6 +820,38 @@ def _as_f64(arr: npt.NDArray[np.float64], label: str = "data") -> npt.NDArray[np
     if out.ndim != 1:
         raise ValueError(f"{label} must be 1-D, got shape {out.shape}")
     return out
+
+
+def _as_row_ids(rows: npt.NDArray[np.uint32], label: str = "rows") -> npt.NDArray[np.uint32]:
+    """Canonical row ids as contiguous u32, rejecting anything that would wrap.
+
+    `ascontiguousarray(..., dtype=np.uint32)` is an unchecked C cast: an id of
+    `2**32 + 3` becomes 3 and a negative id becomes a huge one. The kernels
+    bounds-check the ids they are *given*, so a wrapped id is indistinguishable
+    from a real one there — the call would answer with a row the caller never
+    asked for instead of returning the error sentinel. Range-check before the
+    cast so the out-of-range contract holds for the value the caller passed.
+
+    Integer dtypes only, and deliberately so: a float id has no row, and
+    deciding one by cast is both silent and platform-dependent. `3.9` would
+    become row 3 and `nan` would become row 0 on arm64, where the NaN cast
+    saturates, while the same `nan` traps as `INT64_MIN` on x86_64 — the guard
+    itself would disagree across the wheels we ship.
+    """
+    out = np.ascontiguousarray(rows)
+    if out.ndim != 1:
+        raise ValueError(f"{label} must be 1-D, got shape {out.shape}")
+    if out.dtype == np.uint32:
+        return out
+    if out.size == 0:
+        # `np.asarray([])` is float64; selecting no rows is not a dtype error.
+        return np.empty(0, dtype=np.uint32)
+    if not np.issubdtype(out.dtype, np.integer):
+        raise ValueError(f"{label} must be an integer array of row ids, got dtype {out.dtype}")
+    widened = out.astype(np.int64, copy=False)
+    if widened.min() < 0 or widened.max() > _U32_MAX:
+        raise ValueError(f"{label} must be canonical row ids in [0, 2**32)")
+    return np.ascontiguousarray(widened, dtype=np.uint32)
 
 
 def _ptr_f64(arr: npt.NDArray[np.float64]) -> int:
@@ -894,6 +1000,95 @@ def factorize_unicode1_u8_counts(
     if written == _USIZE_MAX or written > capacity:
         raise ValueError("native factorize_unicode1_u8_counts rejected the array")
     return codes, unique_indices[:written].copy(), counts[:written].copy()
+
+
+def transition_keys_fixed(
+    values: np.ndarray, label: str = "animation key"
+) -> Optional[npt.NDArray[np.uint32]]:
+    """Encode homogeneous fixed-width transition keys in one native row scan.
+
+    The returned ``(N, 2)`` array is Fortran-contiguous: its two ``u32``
+    columns are the caller-allocated lo/hi planes written by Rust, so an
+    unreordered result ships each plane without another full-size copy.
+    Reordering the rows (the line-like geometry sort, or a finite-row
+    selection) hands back C-order and restores the usual per-column copy at
+    ship time.
+
+    ``None`` asks the policy layer to use its scalar oracle for a value this
+    kernel declines (a non-finite float, an invalid Unicode scalar),
+    preserving its precise user-facing error. An invalid *argument* is a bug
+    here rather than a data property, and raises instead of degrading
+    silently into the reference path.
+    """
+    records = np.asarray(values)
+    if records.ndim != 1 or records.dtype.hasobject:
+        raise ValueError("transition key values must be a non-object 1-D array")
+
+    kind_name = records.dtype.kind
+    width = int(records.dtype.itemsize)
+    if kind_name == "U" and width > 0 and width % 4 == 0:
+        kind = 0
+    elif kind_name == "S" and width > 0:
+        kind = 1
+    elif kind_name == "b" and width == 1:
+        kind = 2
+    elif kind_name == "i" and width in (1, 2, 4, 8):
+        kind = 3
+    elif kind_name == "u" and width in (1, 2, 4, 8):
+        kind = 4
+    elif kind_name == "f" and width in (2, 4, 8):
+        # Python canonicalizes NumPy float16/32 scalars through ``.item()``;
+        # widening to f64 is exact and gives the native kernel the same value.
+        if width != 8:
+            records = records.astype(np.float64)
+            width = 8
+        kind = 5
+    else:
+        raise ValueError(
+            "transition key values must use Unicode, bytes, bool, integer, or float dtype"
+        )
+
+    records = np.ascontiguousarray(records)
+    n = len(records)
+    result = np.empty((n, 2), dtype=np.uint32, order="F")
+    if n == 0:
+        return result
+
+    native_order = "<" if sys.byteorder == "little" else ">"
+    swap_endian = records.dtype.byteorder not in ("=", "|", native_order)
+    error_first = ctypes.c_size_t(_USIZE_MAX)
+    error_index = ctypes.c_size_t(_USIZE_MAX)
+    status = int(
+        _lib.xy_transition_keys_fixed(
+            records.ctypes.data,
+            n,
+            width,
+            kind,
+            int(swap_endian),
+            result[:, 0].ctypes.data,
+            result[:, 1].ctypes.data,
+            ctypes.byref(error_first),
+            ctypes.byref(error_index),
+        )
+    )
+    if status == 0:
+        return result
+    if status == 1:
+        return None
+    if status == 2:
+        if error_first.value >= n or error_index.value >= n:
+            raise RuntimeError("native transition-key encoder returned invalid row indices")
+        raise ValueError(
+            f"{label} contains duplicate value at rows {error_first.value} and {error_index.value}"
+        )
+    if status == 3:
+        raise ValueError(f"{label} produced an identity digest collision")
+    if status == 4:
+        raise RuntimeError(
+            "native transition-key encoder rejected the "
+            f"{records.dtype.str!r} layout it was handed (kind {kind}, width {width})"
+        )
+    raise RuntimeError(f"native transition-key encoder returned unknown status {status}")
 
 
 def remap_u8(values: npt.NDArray[np.uint8], mapping: npt.NDArray[np.uint8]) -> None:
@@ -1359,7 +1554,7 @@ def welch_spectra(
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
 ]:
-    """Native Welch auto and optional complex cross spectra."""
+    """Native non-detrended Welch auto and optional complex cross spectra."""
     x_values = _as_f64(x, "x")
     y_values = None if y is None else _as_f64(y, "y")
     if y_values is not None and len(y_values) != len(x_values):
@@ -1391,7 +1586,7 @@ def spectrogram(
     noverlap: int = 128,
     sample_rate: float = 2.0,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-    """Native time-major Welch spectrogram."""
+    """Native non-detrended time-major Welch spectrogram."""
     values = _as_f64(data, "data")
     nfft = _bounded_positive_int(nfft, "nfft", max_value=65_536)
     noverlap = operator.index(noverlap)
@@ -1873,6 +2068,8 @@ def marching_squares(
     x_coords: npt.NDArray[np.float64],
     y_coords: npt.NDArray[np.float64],
     levels: npt.NDArray[np.float64],
+    *,
+    corner_mask: bool = False,
 ) -> tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
@@ -1940,6 +2137,7 @@ def marching_squares(
                 _ptr_f64(y_coords),
                 _ptr_f64(levels),
                 len(levels),
+                int(bool(corner_mask)),
                 *(_ptr_f64(output) for output in outputs),
                 len(outputs[0]),
             )
@@ -2042,6 +2240,85 @@ def bin_2d_f32(
         )
         if not ok:
             raise ValueError("invalid bin_2d_f32 arguments")
+    return out
+
+
+def _color_source_args(
+    n: int,
+    idx: "npt.NDArray[np.uint8] | None",
+    rgba: "npt.NDArray[np.uint8] | None",
+    lut: "npt.NDArray[np.uint8] | None",
+) -> tuple:
+    """Validate and marshal a mean-color source: exactly one of `idx`
+    (per-point LUT index + `lut` of 1..=256 RGBA8 rows) or `rgba` (per-point
+    straight-alpha RGBA8). Returns the four C arguments plus the arrays kept
+    alive through the call."""
+    if (idx is None) == (rgba is None):
+        raise ValueError("exactly one of idx or rgba must be provided")
+    if idx is not None:
+        idx = np.ascontiguousarray(idx, dtype=np.uint8)
+        if idx.shape != (n,):
+            raise ValueError(f"idx must be 1-D length {n}, got shape {idx.shape}")
+        if lut is None:
+            raise ValueError("idx colors need a lut")
+        lut = np.ascontiguousarray(lut, dtype=np.uint8)
+        if lut.ndim != 2 or lut.shape[1] != 4 or not 1 <= lut.shape[0] <= 256:
+            raise ValueError(f"lut must be (1..=256, 4) u8, got shape {lut.shape}")
+        return idx.ctypes.data, None, lut.ctypes.data, lut.shape[0], (idx, lut)
+    rgba = np.ascontiguousarray(rgba, dtype=np.uint8)
+    if rgba.shape not in {(n, 4), (n * 4,)}:
+        raise ValueError(f"rgba must be ({n}, 4) u8, got shape {rgba.shape}")
+    return None, rgba.ctypes.data, None, 0, (rgba,)
+
+
+def bin_2d_mean_color(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+    *,
+    idx: "npt.NDArray[np.uint8] | None" = None,
+    rgba: "npt.NDArray[np.uint8] | None" = None,
+    lut: "npt.NDArray[np.uint8] | None" = None,
+) -> npt.NDArray[np.uint8]:
+    """Mean-color companion grid to `bin_2d` (§5 Tier 2, LOD doc §2): (h, w, 4)
+    straight-alpha RGBA8, row 0 = bottom. Each occupied cell carries the
+    alpha-weighted mean of its points' resolved colors (averaged in linear
+    light) and the plain mean of their straight alpha; cell membership is
+    bit-identical to `bin_2d`."""
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    idx_ptr, rgba_ptr, lut_ptr, lut_len, _keepalive = _color_source_args(len(x), idx, rgba, lut)
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+    if len(x):
+        ok = _lib.xy_bin_2d_mean_color(
+            _ptr_f64(x),
+            _ptr_f64(y),
+            len(x),
+            idx_ptr,
+            rgba_ptr,
+            lut_ptr,
+            lut_len,
+            x0,
+            x1,
+            y0,
+            y1,
+            w,
+            h,
+            out.ctypes.data,
+        )
+        if not ok:
+            raise ValueError("invalid bin_2d_mean_color arguments")
     return out
 
 
@@ -2386,6 +2663,88 @@ def range_indices(
     return out if written == len(out) else out[:written].copy()
 
 
+def range_indices_rows(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    rows: npt.NDArray[np.uint32],
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+) -> npt.NDArray[np.uint32]:
+    """Those of `rows` whose canonical point is in the inclusive window.
+
+    The row-restricted form of `range_indices`, shaped like `polygon_select`.
+    A caller that already knows its candidate rows (zone-map pruning, a drill
+    window) reads them in place instead of gathering `x[rows]`/`y[rows]` into
+    two fresh f64 columns first.
+    """
+    lo_x, hi_x = _finite_ordered(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_ordered(lo_y, hi_y, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    rows = _as_row_ids(rows)
+    out = np.empty(len(rows), dtype=np.uint32)
+    if len(rows) == 0:
+        return out
+    written = _lib.xy_range_indices_rows(
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        rows.ctypes.data,
+        len(rows),
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
+        out.ctypes.data,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid range_indices_rows arguments")
+    return out if written == len(out) else out[:written].copy()
+
+
+def polygon_select(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    rows: npt.NDArray[np.uint32],
+    poly_x: npt.NDArray[np.float64],
+    poly_y: npt.NDArray[np.float64],
+) -> npt.NDArray[np.uint32]:
+    """Those of `rows` whose canonical point is inside the lasso polygon.
+
+    Even-odd ray casting, order preserved. Non-finite coordinates are never
+    inside, matching `range_indices`."""
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    poly_x = _as_f64(poly_x, "polygon x")
+    poly_y = _as_f64(poly_y, "polygon y")
+    if len(poly_x) != len(poly_y):
+        raise ValueError("polygon x and y must have equal length")
+    rows = _as_row_ids(rows)
+    out = np.empty(len(rows), dtype=np.uint32)
+    if len(rows) == 0:
+        return out
+    written = _lib.xy_polygon_select(
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        rows.ctypes.data,
+        len(rows),
+        _ptr_f64(poly_x),
+        _ptr_f64(poly_y),
+        len(poly_x),
+        out.ctypes.data,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid polygon_select arguments")
+    return out if written == len(out) else out[:written].copy()
+
+
 def sample_mask(
     ids: npt.NDArray[np.uint64],
     seed: int,
@@ -2614,6 +2973,52 @@ def pyramid_build(
     )
 
 
+def pyramid_build_color(
+    x: "npt.NDArray[np.float64]",
+    y: "npt.NDArray[np.float64]",
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    base_dim: int,
+    *,
+    idx: "npt.NDArray[np.uint8] | None" = None,
+    rgba: "npt.NDArray[np.uint8] | None" = None,
+    lut: "npt.NDArray[np.uint8] | None" = None,
+) -> int:
+    """Build a pyramid with mean-color planes (LOD doc §2/§4.1) so zoomed-out
+    density views of a channel-bearing trace keep the mean point color without
+    an O(N) rescan. Returns a handle, 0 on failure. Color source as in
+    `bin_2d_mean_color`. Colored pyramids refuse `pyramid_append` — callers
+    invalidate and lazily rebuild instead."""
+    base_dim = _pyramid_base_dim(base_dim)
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    if len(x) == 0:
+        return 0
+    idx_ptr, rgba_ptr, lut_ptr, lut_len, _keepalive = _color_source_args(len(x), idx, rgba, lut)
+    return int(
+        _lib.xy_pyramid_build_color(
+            x.ctypes.data,
+            y.ctypes.data,
+            len(x),
+            idx_ptr,
+            rgba_ptr,
+            lut_ptr,
+            lut_len,
+            x0,
+            x1,
+            y0,
+            y1,
+            base_dim,
+        )
+    )
+
+
 def pyramid_append(
     handle: int,
     x: "npt.NDArray[np.float64]",
@@ -2693,6 +3098,46 @@ def pyramid_compose(
     if level < 0:
         return None
     return out, int(level)
+
+
+def pyramid_compose_color(
+    handle: int,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+    w: int,
+    h: int,
+    max_upsample: int = 2,
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint8], int] | None:
+    """(counts f32 [h*w], mean-color rgba8 [h, w, 4], level) from a colored
+    pyramid, or None when the window outresolves it beyond ``max_upsample``
+    or the pyramid carries no color planes (caller falls back to an exact
+    re-bin, §28). Counts are bit-identical to `pyramid_compose` with the
+    same ``max_upsample``."""
+    handle = _pyramid_handle(handle)
+    lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    max_upsample = _positive_int(max_upsample, "max_upsample")
+    out = np.zeros(w * h, dtype=np.float32)
+    out_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    level = _lib.xy_pyramid_compose_color(
+        ctypes.c_uint64(handle),
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
+        w,
+        h,
+        max_upsample,
+        out.ctypes.data,
+        out_rgba.ctypes.data,
+    )
+    if level < 0:
+        return None
+    return out, out_rgba, int(level)
 
 
 def pyramid_free(handle: int) -> bool:
@@ -2788,32 +3233,6 @@ def rasterize_data(cmds: bytes, data: bytes, w: int, h: int) -> npt.NDArray[np.u
     return out
 
 
-def rasterize_png_data(cmds: bytes, data: bytes, w: int, h: int) -> bytes:
-    """Paint and encode a display list backed by a synchronous external arena."""
-    w = _positive_int(w, "raster width")
-    h = _positive_int(h, "raster height")
-    buf = np.frombuffer(cmds, dtype=np.uint8)
-    arena = np.frombuffer(data, dtype=np.uint8)
-    raw_len = operator.mul(operator.mul(w, h), 4)
-    capacity = raw_len + raw_len // 8 + 65_536
-    out = np.empty(capacity, dtype=np.uint8)
-    written = _lib.xy_rasterize_png_data(
-        _ptr_u8(buf) if buf.size else None,
-        buf.size,
-        _ptr_u8(arena) if arena.size else None,
-        arena.size,
-        _ptr_u8(out),
-        out.size,
-        w,
-        h,
-    )
-    if written == _USIZE_MAX or written > out.size:
-        raise ValueError(
-            "native raster-to-PNG encoder rejected the command buffer or external data"
-        )
-    return out[:written].tobytes()
-
-
 def _byte_span_arrays(spans):  # noqa: ANN001, ANN202 - private ctypes adapter
     arenas: list[npt.NDArray[np.uint8]] = []
     for span in spans:
@@ -2830,8 +3249,11 @@ def _byte_span_arrays(spans):  # noqa: ANN001, ANN202 - private ctypes adapter
     return arenas, pointers, lengths
 
 
-def rasterize_spans(cmds: bytes, spans, w: int, h: int) -> npt.NDArray[np.uint8]:  # noqa: ANN001
-    """Paint a display list borrowing multiple call-scoped byte arenas."""
+def rasterize_spans(cmds: Any, spans, w: int, h: int) -> npt.NDArray[np.uint8]:  # noqa: ANN001
+    """Paint a display list borrowing multiple call-scoped byte arenas.
+
+    `cmds` is any read-only-safe buffer (`bytes`, `bytearray`, `memoryview`):
+    it is borrowed through `np.frombuffer`, never copied."""
     w = _positive_int(w, "raster width")
     h = _positive_int(h, "raster height")
     buf = np.frombuffer(cmds, dtype=np.uint8)
@@ -2852,8 +3274,9 @@ def rasterize_spans(cmds: bytes, spans, w: int, h: int) -> npt.NDArray[np.uint8]
     return out
 
 
-def rasterize_png_spans(cmds: bytes, spans, w: int, h: int) -> bytes:  # noqa: ANN001
-    """Paint and encode a display list borrowing multiple byte arenas."""
+def rasterize_png_spans(cmds: Any, spans, w: int, h: int) -> bytes:  # noqa: ANN001
+    """Paint and encode a display list borrowing multiple byte arenas
+    (`cmds` is borrowed, as in `rasterize_spans`)."""
     w = _positive_int(w, "raster width")
     h = _positive_int(h, "raster height")
     buf = np.frombuffer(cmds, dtype=np.uint8)

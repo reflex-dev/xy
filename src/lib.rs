@@ -26,6 +26,7 @@ pub mod raster;
 mod simd;
 pub mod svg;
 pub mod tiles;
+mod transition;
 
 use kernels::ZoneMap;
 
@@ -82,12 +83,86 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 39;
+pub const ABI_VERSION: u32 = 47;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
 pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Encode homogeneous fixed-width NumPy records as stable animation identity
+/// keys. `kind` is 0 for UTF-32 Unicode, 1 for fixed bytes, 2 for bool, 3 for
+/// signed integers, 4 for unsigned integers, and 5 for f64. Integer widths are
+/// 1/2/4/8 bytes; Unicode width is a positive multiple of four. `swap_endian`
+/// must be zero or one.
+///
+/// Returns 0 on success, 1 for scalar data this kernel declines to tokenize
+/// (the caller falls back to its reference encoder), 2 for a duplicate token,
+/// 3 for a digest collision, and 4 for invalid arguments. Statuses 1, 2, and 3
+/// write `out_error_first`/`out_error_index`: the offending row for 1, and the
+/// prior/current pair for 2 and 3. Status 4 writes neither, and is a caller
+/// bug rather than a data property — keeping it distinct from 1 stops a
+/// layout-contract drift from degrading silently into the slow path.
+///
+/// # Safety
+/// For non-empty input, `data` addresses `len * width` readable bytes and each
+/// key output addresses `len` writable u32s. Error outputs address one writable
+/// usize each. Input and output spans must not overlap.
+#[no_mangle]
+pub unsafe extern "C" fn xy_transition_keys_fixed(
+    data: *const u8,
+    len: usize,
+    width: usize,
+    kind: u32,
+    swap_endian: i32,
+    out_lo: *mut u32,
+    out_hi: *mut u32,
+    out_error_first: *mut usize,
+    out_error_index: *mut usize,
+) -> i32 {
+    if !matches!(swap_endian, 0 | 1) {
+        return 4;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if out_error_first.is_null() || out_error_index.is_null() {
+        return 4;
+    }
+    let byte_len = match len.checked_mul(width) {
+        Some(value) if width > 0 => value,
+        _ => return 4,
+    };
+    if data.is_null() || out_lo.is_null() || out_hi.is_null() {
+        return 4;
+    }
+    let data = std::slice::from_raw_parts(data, byte_len);
+    let low = std::slice::from_raw_parts_mut(out_lo, len);
+    let high = std::slice::from_raw_parts_mut(out_hi, len);
+    ffi_guard(4, || {
+        match transition::encode_fixed_into(data, width, kind, swap_endian != 0, low, high) {
+            Ok(()) => 0,
+            Err(transition::TransitionKeyError::Invalid { index }) => match index {
+                Some(index) => {
+                    *out_error_first = index;
+                    *out_error_index = index;
+                    1
+                }
+                None => 4,
+            },
+            Err(transition::TransitionKeyError::Duplicate { first, index }) => {
+                *out_error_first = first;
+                *out_error_index = index;
+                2
+            }
+            Err(transition::TransitionKeyError::Collision { first, index }) => {
+                *out_error_first = first;
+                *out_error_index = index;
+                3
+            }
+        }
+    })
 }
 
 /// Serialize parallel f64 screen coordinates into SVG polyline path data.
@@ -1511,6 +1586,7 @@ pub unsafe extern "C" fn xy_marching_squares(
     y_coords: *const f64,
     levels: *const f64,
     n_levels: usize,
+    corner_mask: u8,
     out_x0: *mut f64,
     out_x1: *mut f64,
     out_y0: *mut f64,
@@ -1572,6 +1648,7 @@ pub unsafe extern "C" fn xy_marching_squares(
                 x_coords,
                 y_coords,
                 levels,
+                corner_mask != 0,
                 empty_x0,
                 empty_x1,
                 empty_y0,
@@ -1585,7 +1662,17 @@ pub unsafe extern "C" fn xy_marching_squares(
             let y1_out = std::slice::from_raw_parts_mut(out_y1, capacity);
             let level_out = std::slice::from_raw_parts_mut(out_levels, capacity);
             kernels::marching_squares_into(
-                z, rows, cols, x_coords, y_coords, levels, x0_out, x1_out, y0_out, y1_out,
+                z,
+                rows,
+                cols,
+                x_coords,
+                y_coords,
+                levels,
+                corner_mask != 0,
+                x0_out,
+                x1_out,
+                y0_out,
+                y1_out,
                 level_out,
             )
         }
@@ -1684,6 +1771,90 @@ pub unsafe extern "C" fn xy_bin_2d_f32(
     let out = std::slice::from_raw_parts_mut(out, grid_len);
     ffi_guard(0, || {
         kernels::bin_2d_f32(x, y, x0, x1, y0, y1, w, h, out);
+        1
+    })
+}
+
+/// Marshal the C-side color source for mean-color binning: exactly one of
+/// `idx` (one LUT index per point, with `lut`/`lut_len` as 1..=256 RGBA8
+/// entries) or `rgba` (straight-alpha RGBA8, 4 bytes per point) must be
+/// non-null. Returns `None` for any other shape.
+///
+/// # Safety
+/// Non-null pointers must address the documented lengths for `len` points.
+unsafe fn color_source_from_raw<'a>(
+    len: usize,
+    idx: *const u8,
+    rgba: *const u8,
+    lut: *const u8,
+    lut_len: usize,
+) -> Option<kernels::BinColorSource<'a>> {
+    match (idx.is_null(), rgba.is_null()) {
+        (false, true) => {
+            if lut.is_null() || lut_len == 0 || lut_len > 256 {
+                return None;
+            }
+            Some(kernels::BinColorSource::Indexed {
+                idx: std::slice::from_raw_parts(idx, len),
+                lut: std::slice::from_raw_parts(lut as *const [u8; 4], lut_len),
+            })
+        }
+        (true, false) => Some(kernels::BinColorSource::Rgba(std::slice::from_raw_parts(
+            rgba,
+            len * 4,
+        ))),
+        _ => None,
+    }
+}
+
+/// Mean-color companion grid to `xy_bin_2d` (§5 Tier 2, LOD doc §2): fill
+/// `out` (`w*h*4` straight-alpha RGBA8, row 0 = bottom) with each cell's
+/// alpha-weighted mean point color (linear-light average, sRGB bytes out)
+/// and mean point alpha. Cell membership is bit-identical to `xy_bin_2d`.
+/// Returns 1 on success, 0 on invalid arguments.
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; the color source pointers must
+/// satisfy `color_source_from_raw`; `out` must address `w*h*4` writable bytes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_bin_2d_mean_color(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    idx: *const u8,
+    rgba: *const u8,
+    lut: *const u8,
+    lut_len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: *mut u8,
+) -> i32 {
+    if w == 0 || h == 0 || !finite_gt(x0, x1) || !finite_gt(y0, y1) || out.is_null() {
+        return 0;
+    }
+    let Some(grid_len) = w.checked_mul(h).and_then(|n| n.checked_mul(4)) else {
+        return 0;
+    };
+    let out = std::slice::from_raw_parts_mut(out, grid_len);
+    if len == 0 {
+        out.fill(0);
+        return 1;
+    }
+    if x.is_null() || y.is_null() {
+        return 0;
+    }
+    let Some(colors) = color_source_from_raw(len, idx, rgba, lut, lut_len) else {
+        return 0;
+    };
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    ffi_guard(0, || {
+        kernels::bin_2d_mean_color(x, y, &colors, x0, x1, y0, y1, w, h, out);
         1
     })
 }
@@ -2713,6 +2884,106 @@ pub unsafe extern "C" fn xy_range_indices(
     })
 }
 
+/// Canonical row ids from `rows` that fall inside the rectangular window —
+/// the row-restricted twin of `xy_range_indices`, shaped like
+/// `xy_polygon_select`. Returns the count written; `out` must hold `n_rows`
+/// u32s. Row ids must be < `len`; an out-of-range id returns the error
+/// sentinel on every target, including panic-abort ones where the kernel's own
+/// indexing panic could not (see `kernels::range_scan_rows`).
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
+/// u32s, and `out` to `n_rows` writable u32s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_range_indices_rows(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    rows: *const u32,
+    n_rows: usize,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: *mut u32,
+) -> usize {
+    if !finite_ordered(lo_x, hi_x) || !finite_ordered(lo_y, hi_y) {
+        return usize::MAX;
+    }
+    // u32 index ceiling — see xy_m4_indices.
+    if len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    if n_rows == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || rows.is_null() || out.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let rows = std::slice::from_raw_parts(rows, n_rows);
+    let out = std::slice::from_raw_parts_mut(out, n_rows);
+    ffi_guard(usize::MAX, || {
+        kernels::range_indices_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out).unwrap_or(usize::MAX)
+    })
+}
+
+/// Canonical row ids from `rows` that fall inside the lasso polygon, by
+/// even-odd ray casting. Returns the count written; `out` must hold
+/// `n_rows` u32s. A polygon of fewer than 3 vertices selects nothing. Row ids
+/// must be < `len`; an out-of-range id returns the error sentinel on every
+/// target (see `kernels::range_scan_rows`).
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
+/// u32s, `poly_x`/`poly_y` to `n_poly` readable f64s, and `out` to `n_rows`
+/// writable u32s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_polygon_select(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    rows: *const u32,
+    n_rows: usize,
+    poly_x: *const f64,
+    poly_y: *const f64,
+    n_poly: usize,
+    out: *mut u32,
+) -> usize {
+    // u32 index ceiling — see xy_m4_indices.
+    if len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    if n_rows == 0 {
+        return 0;
+    }
+    // Fewer than three vertices encloses nothing. Answer before building any
+    // slice: `from_raw_parts` requires a non-null, aligned pointer even at
+    // length zero, so a caller passing null for an empty polygon must not
+    // reach the constructions below.
+    if n_poly < 3 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || rows.is_null() || out.is_null() {
+        return usize::MAX;
+    }
+    if poly_x.is_null() || poly_y.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let rows = std::slice::from_raw_parts(rows, n_rows);
+    let poly_x = std::slice::from_raw_parts(poly_x, n_poly);
+    let poly_y = std::slice::from_raw_parts(poly_y, n_poly);
+    let out = std::slice::from_raw_parts_mut(out, n_rows);
+    ffi_guard(usize::MAX, || {
+        kernels::polygon_select(x, y, rows, poly_x, poly_y, out).unwrap_or(usize::MAX)
+    })
+}
+
 /// Per-point local log density for a subset. Returns 1 on success, 0 on invalid
 /// grid/window arguments.
 ///
@@ -2775,6 +3046,46 @@ pub unsafe extern "C" fn xy_pyramid_build(
     let y = std::slice::from_raw_parts(y, len);
     ffi_guard(0, || {
         match tiles::build(x, y, x0, x1, y0, y1, base_dim as usize) {
+            Some(p) => tiles::reg_insert(p),
+            None => 0,
+        }
+    })
+}
+
+/// Build a pyramid with mean-color planes (LOD doc §2/§4.1) for a
+/// channel-bearing trace. Same handle registry and geometry as
+/// `xy_pyramid_build`; color source as in `xy_bin_2d_mean_color`. Returns the
+/// handle, or 0 on invalid arguments.
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; color source pointers must
+/// satisfy `color_source_from_raw`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_pyramid_build_color(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    idx: *const u8,
+    rgba: *const u8,
+    lut: *const u8,
+    lut_len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    base_dim: u32,
+) -> u64 {
+    if x.is_null() || y.is_null() || len == 0 {
+        return 0;
+    }
+    let Some(colors) = color_source_from_raw(len, idx, rgba, lut, lut_len) else {
+        return 0;
+    };
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    ffi_guard(0, || {
+        match tiles::build_color(x, y, &colors, x0, x1, y0, y1, base_dim as usize) {
             Some(p) => tiles::reg_insert(p),
             None => 0,
         }
@@ -2877,6 +3188,56 @@ pub unsafe extern "C" fn xy_pyramid_compose(
     })
 }
 
+/// `xy_pyramid_compose` plus the mean-color plane: fills `out` with the same
+/// f32 counts (bit-identical) and `out_rgba` (`w*h*4`, straight-alpha RGBA8)
+/// with the composed mean colors. Returns the level used (>= 0), -1 for bad
+/// arguments/stale handle, or -2 when the window outresolves the pyramid OR
+/// the pyramid carries no color planes — the caller re-bins exactly either way.
+///
+/// # Safety
+/// `out` must address `w*h` writable f32s and `out_rgba` `w*h*4` writable bytes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_pyramid_compose_color(
+    handle: u64,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    max_upsample: usize,
+    out: *mut f32,
+    out_rgba: *mut u8,
+) -> i32 {
+    if out.is_null()
+        || out_rgba.is_null()
+        || w == 0
+        || h == 0
+        || !finite_gt(lo_x, hi_x)
+        || !finite_gt(lo_y, hi_y)
+    {
+        return -1;
+    }
+    let Some(out_len) = w.checked_mul(h) else {
+        return -1;
+    };
+    // Zero forgives a caller that forgot the knob; the count-only entry point
+    // applies the same floor.
+    let max_upsample = max_upsample.max(1);
+    let out = std::slice::from_raw_parts_mut(out, out_len);
+    let out_rgba = std::slice::from_raw_parts_mut(out_rgba, out_len * 4);
+    ffi_guard(-1, || {
+        match tiles::reg_with(handle, |p| {
+            tiles::compose_color(p, lo_x, hi_x, lo_y, hi_y, w, h, max_upsample, out, out_rgba)
+        }) {
+            Some(Some(level)) => level as i32,
+            Some(None) => -2,
+            None => -1,
+        }
+    })
+}
+
 /// Release a pyramid. 1 if it existed, 0 for stale/unknown handles.
 /// # Safety
 /// No pointer arguments; safe for any handle value.
@@ -2901,6 +3262,123 @@ mod tests {
         std::panic::set_hook(hook);
         assert_eq!(got, usize::MAX);
         assert_eq!(ffi_guard(0i32, || 1i32), 1);
+    }
+
+    #[test]
+    fn transition_key_ffi_reports_duplicate_rows_and_invalid_data() {
+        let values = [7i16, -2, 7];
+        let mut low = [0u32; 3];
+        let mut high = [0u32; 3];
+        let mut first = usize::MAX;
+        let mut index = usize::MAX;
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    values.as_ptr().cast(),
+                    values.len(),
+                    std::mem::size_of::<i16>(),
+                    transition::KIND_SIGNED,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                2
+            );
+        }
+        assert_eq!((first, index), (0, 2));
+
+        let nonfinite = f64::INFINITY;
+        first = usize::MAX;
+        index = usize::MAX;
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    (&nonfinite as *const f64).cast(),
+                    1,
+                    std::mem::size_of::<f64>(),
+                    transition::KIND_FLOAT64,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                1
+            );
+        }
+        assert_eq!((first, index), (0, 0));
+    }
+
+    #[test]
+    fn transition_key_ffi_accepts_empty_null_spans_and_rejects_bad_pointers() {
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    std::ptr::null(),
+                    0,
+                    0,
+                    transition::KIND_BYTES,
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                0
+            );
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    std::ptr::null(),
+                    1,
+                    1,
+                    transition::KIND_BYTES,
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                4
+            );
+            // A layout the caller should never send is status 4, not the
+            // status-1 "declined this data" that means "use the oracle".
+            let row = [0u8; 3];
+            let mut low = [0u32];
+            let mut high = [0u32];
+            let mut first = usize::MAX;
+            let mut index = usize::MAX;
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    3,
+                    transition::KIND_UNICODE,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
+            );
+            assert_eq!((first, index), (usize::MAX, usize::MAX));
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    1,
+                    transition::KIND_BYTES,
+                    7,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
+            );
+        }
     }
 
     #[test]

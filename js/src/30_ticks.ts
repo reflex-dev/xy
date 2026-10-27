@@ -112,6 +112,55 @@ function calendarTicks(lo, hi, rough) {
   return { ticks: out, step: stepM * 30 * MS.d };
 }
 
+// Angular tick ladders. niceStep's [1, 2, 2.5, 5, 10] cannot reach 15, 30, 45
+// or 90, so feeding it degrees gives 0/50/100/150 — a grid nobody reads angles
+// on. Fixed ladders instead, like TIME_STEPS.
+// Mirrored by _DEGREE_STEPS/_RADIAN_STEPS in python/xy/_svg.py.
+const DEGREE_STEPS = [1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 180, 360];
+const RADIAN_STEPS = [1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 1, 2].map((f) => Math.PI * f);
+
+export function angularTicks(lo, hi, unit, target = 6) {
+  const a = Math.min(lo, hi);
+  const b = Math.max(lo, hi);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return { ticks: [], step: 1 };
+  if (a === b) return { ticks: [a], step: 1 };
+  const ladder = unit === "degrees" ? DEGREE_STEPS : RADIAN_STEPS;
+  const rough = (b - a) / Math.max(1, target);
+  const step = ladder.find((s) => s >= rough * (1 - 1e-12)) ?? ladder[ladder.length - 1];
+  const out = [];
+  for (let v = Math.ceil(a / step) * step; v <= b + step * 1e-9 && out.length < 200; v += step) {
+    out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  }
+  // A full turn lands a tick on both ends of the seam; they are one spoke, so
+  // the duplicate is dropped rather than overdrawn.
+  const turn = unit === "degrees" ? 360 : 2 * Math.PI;
+  if (out.length > 1 && Math.abs(out[out.length - 1] - out[0] - turn) < step * 1e-9) out.pop();
+  return { ticks: out, step };
+}
+
+// Mirrored by _fmt_angle in python/xy/_svg.py. `step` sets the degree
+// precision: the generated ladder is all integers, but authored fractional
+// tick_values (a 22.5-degree compass grid) mislabel under a hardcoded 1.
+export function fmtAngle(v, unit, step = 1) {
+  if (unit === "degrees") return `${fmtLinear(v, step || 1)}\u00b0`;
+  if (Math.abs(v) < 1e-12) return "0";
+  const frac = v / Math.PI;
+  for (const den of [1, 2, 3, 4, 6, 8, 12]) {
+    const scaled = frac * den;
+    const nearest = Math.round(scaled);
+    // 1e-6, not 1e-9: hover values arrive f32-decoded (§4/§16), so pi/2
+    // lands ~2e-8 off its f64 self and a 1e-9 gate showed "1.57" in the
+    // tooltip while the tick at the same spoke said "pi/2". No real tick sits
+    // within 1e-6 of a pi-fraction without being one.
+    if (nearest && Math.abs(scaled - nearest) < 1e-6) {
+      const num = Math.abs(nearest) === 1 ? "" : String(Math.abs(nearest));
+      const body = `${nearest < 0 ? "-" : ""}${num}\u03c0`;
+      return den === 1 ? body : `${body}/${den}`;
+    }
+  }
+  return fmtLinear(v, 0.01);
+}
+
 function fmtTime(ms, step) {
   const d = new Date(ms);
   const pad = (n, w = 2) => String(n).padStart(w, "0");
@@ -207,12 +256,52 @@ function fmtTimeSpec(ms, format) {
   });
 }
 
+// Decade ticks are multiplicative, so the linear formatter's step-derived
+// precision rounds every decade under 1.0 to a bare "0" — 0.001 and 0.01 read
+// as two identical, wrong labels. Label these from their own magnitude.
+// Mirrored by `_fmt_log` in python/xy/_svg.py.
+export function fmtLog(v) {
+  const av = Math.abs(v);
+  if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
+  const dec = av && av < 1 ? Math.max(0, Math.ceil(-Math.log10(av))) : 0;
+  return v.toFixed(Math.min(dec, 8));
+}
+
+// Whether a formatted label has lost the value it was meant to show. Tests the
+// numeric CORE, not the whole label: the grammar allows prefixes and suffixes,
+// so a `"$,.0f"` axis produces `"$0"` for a sub-unit decade. Testing the
+// affixed string gave `Number("$0") === NaN`, so this side shipped the
+// collapsed label while Python's `float("$0")` raised outright — two different
+// wrong answers from the layer that exists to keep them identical.
+// Mirrored by `_collapsed_to_zero` in python/xy/_svg.py.
+function collapsedToZero(formatted) {
+  if (formatted === null) return true;
+  const core = String(formatted).replace(/[^0-9eE+.\-]/g, "");
+  if (!core) return true;
+  const value = Number(core);
+  return Number.isFinite(value) && value === 0;
+}
+
 export function fmtAxis(axis, v, tickStep) {
+  // A categorical theta axis still carries theta_unit for its geometric
+  // transform. Category labels own the display text, so they must win over
+  // angular numeric formatting here.
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
+  // An authored `format` wins over the angular default. It used to lose: the
+  // angular branch ran first, so `theta_axis(format=".0f°")` shipped, was
+  // accepted, and was then overwritten by the built-in degree/radian text in
+  // every renderer. The default only applies when nothing was authored.
+  // Mirrored by the same branch in `_fmt_axis` (python/xy/_svg.py).
+  if (axis && axis.theta_unit) {
+    const authored = fmtNumberSpec(v, axis.format);
+    return authored || fmtAngle(v, axis.theta_unit, tickStep);
+  }
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);
-  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
-    return fmtLinear(v, tickStep);
+  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1) {
+    // A fixed-decimal spec collapses sub-unit decades; so does the linear
+    // fallback. Either way the magnitude-derived label is the useful one.
+    if (collapsedToZero(formatted)) return fmtLog(v);
   }
   return formatted || fmtLinear(v, tickStep);
 }

@@ -41,10 +41,7 @@ SKIP_PARTS = {
     "node_modules",
 }
 
-DECLARATION_DOCS = (
-    Path("README.md"),
-    Path("spec/process/production-readiness.md"),
-)
+DECLARATION_DOCS = (Path("spec/process/production-readiness.md"),)
 
 
 def iter_python_files(paths: Iterable[Path]) -> list[Path]:

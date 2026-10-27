@@ -15,12 +15,13 @@ raises `ValueError` (occasionally `TypeError`) naming `label`.
 from __future__ import annotations
 
 import itertools
+import re
 from functools import lru_cache
 from typing import Any, Optional
 
 import numpy as np
 
-_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "none", "off"})
+_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "preserve", "none", "off"})
 # Canonical anchors plus the matplotlib `ha` vocabulary the pyplot shim emits.
 _TICK_LABEL_ANCHORS = {
     "start": "start",
@@ -34,6 +35,13 @@ _LABEL_POSITIONS = frozenset(
     {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
 )
 _CURVES = frozenset({"linear", "smooth"})
+_COORDS = frozenset({"cartesian", "polar"})
+_THETA_UNITS = frozenset({"radians", "degrees"})
+_THETA_DIRECTIONS = frozenset({"counterclockwise", "clockwise"})
+_POLAR_GRID_SHAPES = frozenset({"circular", "linear"})
+# Compass letters for theta=0; resolved to radians by THETA_ZERO in _svg.py and
+# by the THETA_ZERO table in js/src/50_chartview.ts. Kept as letters on the wire so one table serves all renderers.
+_THETA_ZEROS = frozenset({"E", "N", "W", "S"})
 _FILL_SPACES = frozenset({"mark", "plot"})
 # CSS `<side-or-corner>` keywords -> wire direction. In mark space the gradient
 # line runs along each mark's value axis ("bottom" = the base, "top" = the
@@ -131,6 +139,63 @@ def optional_text(value: Any, label: str) -> Optional[str]:
     if value is None or isinstance(value, str):
         return value
     raise ValueError(f"{label} must be a string or None")
+
+
+#: Legend placements, in Matplotlib's vocabulary. `best` is resolved to one of
+#: the others at payload-build time (`xy._legendfit`).
+LEGEND_LOCATIONS: tuple[str, ...] = (
+    "best",
+    "upper right",
+    "upper left",
+    "lower left",
+    "lower right",
+    "upper center",
+    "lower center",
+    "center left",
+    "center right",
+    "center",
+)
+
+
+#: Unambiguous synonyms for the vertical band. Matplotlib says `upper`/`lower`;
+#: CSS, Plotly and XY's own docs say `top`/`bottom`. Both name the same edge, so
+#: both are accepted rather than made into a trap.
+_LEGEND_LOC_SYNONYMS: dict[str, str] = {"top": "upper", "bottom": "lower"}
+
+
+def legend_loc(value: Any, label: str) -> Optional[str]:
+    """A legend placement, or None for the default.
+
+    The writers resolve a location by substring and by token, so an
+    unrecognized string never failed — it silently landed somewhere.
+    `"northeast"` and `"best"` parked the legend dead center, on top of the
+    data. Close the vocabulary instead: refuse what is genuinely a guess.
+
+    The caller's **spelling is preserved** (lowercased, so `_legend_layout`'s
+    token match sees it). `top`/`bottom` are public core aliases for
+    `upper`/`lower` that `_svg._legend_layout` resolves to the same geometry;
+    rewriting them here would change a value the pyplot compatibility suite
+    pins as passthrough.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string or None")
+    normalized = " ".join(value.lower().split())
+    tokens = [token for token in re.split(r"[\s_-]+", normalized) if token]
+    # Aliases are folded for the CHECK only, never in what is returned.
+    canonical = " ".join(_LEGEND_LOC_SYNONYMS.get(token, token) for token in tokens)
+    recognized = (
+        canonical in LEGEND_LOCATIONS
+        # Matplotlib takes either word order for the two-word forms.
+        or (len(tokens) == 2 and " ".join(reversed(canonical.split())) in LEGEND_LOCATIONS)
+        # `right`/`left` alone are Matplotlib's codes 5/6 — the centered edges.
+        or canonical in ("right", "left")
+    )
+    if recognized:
+        return normalized
+    options = ", ".join(repr(name) for name in LEGEND_LOCATIONS)
+    raise ValueError(f"{label} {value!r} is not a legend location; expected one of: {options}")
 
 
 def axis_id(value: Any, label: str) -> str:
@@ -328,6 +393,68 @@ def curve(value: Any, label: str) -> str:
     return value
 
 
+def coords(value: Any, label: str) -> str:
+    """The chart's coordinate system: 'cartesian' or 'polar'."""
+    if not isinstance(value, str) or value not in _COORDS:
+        raise ValueError(f"{label} must be one of {sorted(_COORDS)}")
+    return value
+
+
+def theta_unit(value: Any, label: str) -> str:
+    """Angular unit for a polar theta axis: 'radians' or 'degrees'."""
+    if not isinstance(value, str) or value not in _THETA_UNITS:
+        raise ValueError(f"{label} must be one of {sorted(_THETA_UNITS)}")
+    return value
+
+
+def theta_direction(value: Any, label: str) -> str:
+    """Sweep direction of increasing theta."""
+    if not isinstance(value, str) or value not in _THETA_DIRECTIONS:
+        raise ValueError(f"{label} must be one of {sorted(_THETA_DIRECTIONS)}")
+    return value
+
+
+def theta_zero(value: Any, label: str) -> Any:
+    """Where theta=0 points: a compass letter, or an angle in radians.
+
+    The letters are the readable spelling of the four cardinal directions and
+    are kept verbatim on the wire so the client and both exporters resolve them
+    through one shared table rather than three float literals.
+    """
+    if isinstance(value, str):
+        if value not in _THETA_ZEROS:
+            raise ValueError(
+                f"{label} must be one of {sorted(_THETA_ZEROS)} or an angle in radians"
+            )
+        return value
+    return finite_scalar(value, label)
+
+
+def theta_sector(value: Any, label: str) -> tuple[float, float]:
+    """Increasing angular sector endpoints.
+
+    The maximum sweep depends on the theta axis's resolved unit, so the shared
+    Figure validation performs that final check once the axis is attached to a
+    polar chart.
+    """
+    return finite_increasing_pair(value, label)
+
+
+def polar_grid_shape(value: Any, label: str) -> str:
+    """Polar radial-grid geometry: circular arcs or straight polygons."""
+    if not isinstance(value, str) or value not in _POLAR_GRID_SHAPES:
+        raise ValueError(f"{label} must be one of {sorted(_POLAR_GRID_SHAPES)}")
+    return value
+
+
+def polar_hole(value: Any, label: str) -> float:
+    """Display-space inner-radius fraction, in the half-open interval [0, 1)."""
+    out = finite_scalar(value, label)
+    if out < 0 or out >= 1:
+        raise ValueError(f"{label} must be at least 0 and less than 1")
+    return out
+
+
 _POINT_SYMBOLS = frozenset(
     {
         "circle",
@@ -347,6 +474,8 @@ _POINT_SYMBOLS = frozenset(
         "thin_diamond",
         "plus_line",
         "x_line",
+        "horizontal_line",
+        "vertical_line",
     }
 )
 
@@ -425,7 +554,10 @@ def mark_fill(value: Any, label: str) -> Optional[dict[str, Any]]:
         return None
     space = "mark"
     if isinstance(value, dict):
-        unknown = sorted(set(value) - {"gradient", "space"})
+        # Sort the *rendered* keys: `value` is user input, so its keys need not
+        # be mutually comparable (`{1: ..., "a": ...}` made `sorted` raise a bare
+        # TypeError instead of reporting the unknown key).
+        unknown = sorted(str(key) for key in set(value) - {"gradient", "space"})
         if unknown:
             raise ValueError(f"{label} has unknown key(s) {unknown}; expected gradient, space")
         space = value.get("space", "mark")
@@ -487,6 +619,165 @@ def mark_fill(value: Any, label: str) -> Optional[dict[str, Any]]:
         "dir": direction,
         "stops": [[p, c] for p, c in zip(resolved, colors, strict=True)],
     }
+
+
+def resolvable_paint(css: str, label: str, subject: str) -> tuple[float, float, float, float]:
+    """Assert a validated CSS color has fixed channels, and return them.
+
+    The gate for every paint XY must resolve *itself* rather than hand to the
+    browser — colormap stops and palette entries. Both are indexed lookups
+    consumed by renderers with no DOM (SVG, native raster, the density plane),
+    so a `var()`/`oklch()`/`color-mix()` value cannot produce the same result
+    there as on screen. Refusing it with the reason beats every alternative:
+    a shared fallback collapses distinct entries onto one color, and a silent
+    per-renderer difference is what §28 exists to prevent."""
+    from . import kernels
+
+    status, rgba = kernels.css_check(kernels.CSS_COLOR, css)
+    if status != 1 or rgba is None:
+        raise ValueError(
+            f"{label} {css!r} cannot be resolved to fixed channels; {subject} must be "
+            "hex, rgb()/rgba(), hsl()/hsla(), or a named color (var()/oklch()/color-mix() "
+            "resolve only in a browser, and XY has to resolve this one itself for SVG, "
+            "native PNG, and aggregated density surfaces)"
+        )
+    return rgba
+
+
+def resolved_hex_paint(value: Any, label: str, subject: str) -> str:
+    """A CSS color normalized to `#rrggbb` / `#rrggbbaa`.
+
+    Resolving and then shipping the *original* string would be the worst of
+    both: the value is checked here, but every consumer still has to resolve it
+    again — and the browser client's only DOM-free path is `hexColor`, so a
+    `tomato` or `rgb(...)` entry would fall through to a `getComputedStyle`
+    probe. That probe returns "" on a root that is not yet in the document
+    (notebook webviews attach asynchronously), which yields black, and nothing
+    later rebuilds the cached LUT. Normalizing here means every renderer reads
+    the same bytes off the wire with no cascade involved."""
+    css = css_color(value, label)
+    red, green, blue, alpha = resolvable_paint(css, label, subject)
+    hex_rgb = "#{:02x}{:02x}{:02x}".format(*(int(round(c * 255)) for c in (red, green, blue)))
+    return hex_rgb if alpha >= 1.0 else f"{hex_rgb}{int(round(alpha * 255)):02x}"
+
+
+def _resolved_rgb(color: Any, label: str) -> tuple[int, int, int]:
+    """One colormap stop as 8-bit sRGB.
+
+    A colormap becomes a LUT in three renderers — the WebGL client, the SVG
+    writer, and the native rasterizer — and only the first of those has a DOM.
+    So a stop must parse to concrete channels *here* (hex, `rgb()`, `hsl()`,
+    named colors: the closed grammars in src/css.rs). Browser-resolved forms
+    (`var()`, `oklch()`, `color-mix()`) are legal everywhere XY takes a single
+    paint color, but they cannot produce the same ramp in a headless export, so
+    they are refused with the reason rather than silently baked to a fallback
+    (§28).
+
+    A colormap LUT is opaque RGB by construction — every builder writes alpha
+    255, and a mark's transparency comes from `opacity`/`fill-opacity`, which
+    the density compositor accounts for separately. A translucent stop is
+    therefore refused too: dropping its alpha would turn `["transparent",
+    "#0000ff"]` into an opaque BLACK→blue ramp, which is exactly the silent
+    misrender this function exists to prevent."""
+    css = css_color(color, label)
+    rgba = resolvable_paint(css, label, "colormap stops")
+    if len(rgba) > 3 and float(rgba[3]) < 1.0:
+        raise ValueError(
+            f"{label} {css!r} is translucent; colormap stops are opaque RGB (a LUT carries "
+            "no alpha). Set the mark's opacity/fill-opacity instead, or use the color the "
+            "stop should blend to."
+        )
+    red, green, blue = (int(round(channel * 255)) for channel in rgba[:3])
+    return red, green, blue
+
+
+def _colormap_stop_item(item: Any, index: int, label: str) -> tuple[Optional[float], Any]:
+    """One entry of a colormap sequence: a color, or a `(position, color)` pair."""
+    if isinstance(item, str) or not hasattr(item, "__iter__"):
+        return None, item
+    pair = list(item)
+    if len(pair) != 2:
+        raise ValueError(
+            f"{label}[{index}] must be a color or a (position, color) pair, got {item!r}"
+        )
+    position, color = pair
+    if isinstance(position, bool) or not isinstance(
+        position, (int, float, np.integer, np.floating)
+    ):
+        raise ValueError(f"{label}[{index}] position must be a number between 0 and 1")
+    pos = float(position)
+    if not np.isfinite(pos) or not 0.0 <= pos <= 1.0:
+        raise ValueError(f"{label}[{index}] position must be between 0 and 1, got {position!r}")
+    return pos, color
+
+
+# Positioned ramps resample onto the client's LUT width, so the shipped stops
+# reproduce the declared gradient exactly rather than approximately.
+_LUT_TEXELS = 256
+
+
+def _resample_stops(positions: list[float], rgb: list[tuple[int, int, int]]) -> list[list[int]]:
+    """Positioned stops -> `_LUT_TEXELS` evenly spaced stops.
+
+    The wire form for a colormap is always *evenly spaced* stops — the same
+    shape the built-in tables use — so every renderer keeps one interpolation
+    path. Sampling at the LUT's own texel count makes the round trip exact."""
+    grid = np.linspace(0.0, 1.0, _LUT_TEXELS)
+    pos = np.asarray(positions, dtype=np.float64)
+    channels = np.asarray(rgb, dtype=np.float64)
+    out = np.empty((_LUT_TEXELS, 3), dtype=np.int64)
+    for c in range(3):
+        out[:, c] = np.rint(np.interp(grid, pos, channels[:, c]))
+    return [[int(v) for v in row] for row in out]
+
+
+def colormap_stops(value: Any, label: str) -> list[list[int]]:
+    """A custom colormap as evenly spaced 8-bit RGB stops.
+
+    Accepts a `linear-gradient(...)` string or a sequence of 2–256 CSS colors,
+    optionally as `(position, color)` pairs. Uniformly spaced input ships as
+    given; positioned input resamples onto the LUT grid."""
+    if isinstance(value, str):
+        gradient = mark_fill(value, label)
+        assert gradient is not None
+        if gradient["dir"] != "down":
+            # A mark fill runs along a direction in space; a colormap maps a
+            # VALUE to a color and has no spatial axis, so a direction keyword
+            # here would be accepted and ignored. Refuse it instead (§28).
+            raise ValueError(
+                f"{label} gradient has a direction keyword, but a colormap maps values to "
+                "colors and has no direction; drop it, or reverse the stop order"
+            )
+        stops = gradient["stops"]
+        positions = [float(p) for p, _ in stops]
+        rgb = [_resolved_rgb(c, f"{label} stop {i + 1}") for i, (_, c) in enumerate(stops)]
+    else:
+        items = list(value)
+        if not 2 <= len(items) <= 256:
+            raise ValueError(f"{label} must have between 2 and 256 color stops, got {len(items)}")
+        raw = [_colormap_stop_item(item, i, label) for i, item in enumerate(items)]
+        rgb = [_resolved_rgb(c, f"{label}[{i}]") for i, (_, c) in enumerate(raw)]
+        declared = [p for p, _ in raw]
+        if all(p is None for p in declared):
+            return [list(c) for c in rgb]
+        count = len(declared)
+        anchors: dict[int, float] = {i: p for i, p in enumerate(declared) if p is not None}
+        anchors.setdefault(0, 0.0)
+        anchors.setdefault(count - 1, 1.0)
+        keys = sorted(anchors)
+        previous = 0.0
+        for i in keys:
+            previous = anchors[i] = max(anchors[i], previous)
+        positions = [0.0] * count
+        for i0, i1 in itertools.pairwise(keys):
+            v0, v1 = anchors[i0], anchors[i1]
+            for k in range(i0, i1):
+                positions[k] = v0 + (v1 - v0) * (k - i0) / (i1 - i0)
+        positions[count - 1] = anchors[count - 1]
+    uniform = np.linspace(positions[0], positions[-1], len(positions))
+    if positions[0] == 0.0 and positions[-1] == 1.0 and np.allclose(positions, uniform):
+        return [list(c) for c in rgb]
+    return _resample_stops(positions, rgb)
 
 
 def axis_label_position(value: Any, label: str) -> Optional[str | dict[str, str | int | float]]:

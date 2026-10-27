@@ -65,7 +65,7 @@ def test_free_form_axes_render_at_their_rects_in_html() -> None:
     assert [(int(x), int(y)) for x, y in placements] == [(18, 48), (370, 66)]
     # a fixed-size canvas replaces the side-by-side CSS grid
     assert "position: relative; width: 640px; height: 480px" in html
-    assert "display: grid" not in html
+    assert ".xy-grid { display: grid" not in html
 
 
 def test_add_axes_rects_stack_vertically_in_html() -> None:
@@ -92,8 +92,19 @@ def test_subplots_adjust_positions_grid_panels_in_every_exporter() -> None:
         ax.text(0.5, 0.5, str((2, 3, i)), fontsize=18, ha="center")
     html = fig._to_html()
     assert len(re.findall(r'style="position:absolute;left:', html)) == 6
-    assert _png_pixels(fig).shape[:2] == (960, 1280)  # the full 640x480 canvas at 2x
+    assert _png_pixels(fig).shape[:2] == (480, 640)  # the requested 640x480 canvas
     assert _svg(fig).count("<svg x=") == 6
+
+
+def test_pyplot_matshow_creates_an_array_aspect_figure() -> None:
+    plt.figure(figsize=(9, 3))
+
+    plt.matshow(np.diag(np.arange(15)))
+    fig = plt.gcf()
+
+    np.testing.assert_allclose(fig.get_size_inches(), [4.8, 4.8])
+    assert fig.axes[0].get_position().bounds == pytest.approx((0.15, 0.09, 0.775, 0.775))
+    assert _png_pixels(fig).shape[:2] == (480, 480)
 
 
 def test_shared_axes_hide_inner_tick_labels_only() -> None:
@@ -141,6 +152,9 @@ def test_annotate_draws_arrow_at_xytext() -> None:
     assert entry["args"][:2] == (10.0, 4.0)
     arrow = next(e for e in ax._entries if e["kind"] == "@arrow")
     sx0, sy0, ex0, ey0 = arrow["args"]
+    assert arrow["kwargs"]["style"]["head_size"] == 20.0
+    assert arrow["kwargs"]["style"]["shaft_width_start"] == pytest.approx(20.0 / 3.0)
+    assert arrow["kwargs"]["style"]["shaft_width_end"] == pytest.approx(20.0 / 3.0)
     # shrink=0.05 pulls both ends 5% toward each other along the segment
     np.testing.assert_allclose((sx0, sy0), (10 + 0.05 * (6.28 - 10), 4 + 0.05 * (1 - 4)))
     np.testing.assert_allclose((ex0, ey0), (6.28 - 0.05 * (6.28 - 10), 1 - 0.05 * (1 - 4)))
@@ -189,15 +203,29 @@ def test_log_axes_label_decades_and_grid_majors_only() -> None:
     assert "10⁰" in x_opts["tick_labels"] or "10¹" in x_opts["tick_labels"]
 
 
-def test_mathtext_subset_converts_and_unknown_tex_passes_through() -> None:
+def test_mathtext_subset_converts_and_unknown_tex_degrades_locally() -> None:
     assert mathtext_to_unicode(r"$\pi/2$") == "π/2"
     assert mathtext_to_unicode(r"$3\pi/2$") == "3π/2"
     assert mathtext_to_unicode("km$^2$") == "km²"
     assert mathtext_to_unicode("log$_{10}$(population)") == "log₁₀(population)"
     assert mathtext_to_unicode(r"$\mathdefault{10^{3}}$") == "10³"
     assert mathtext_to_unicode(r"$\frac{1}{2}\pi$") == "1/2π"
-    assert mathtext_to_unicode(r"$\unknowncmd{x}$") == r"$\unknowncmd{x}$"
-    assert mathtext_to_unicode(r"$x^q$") == r"$x^q$"  # no unicode superscript q
+    assert mathtext_to_unicode(r"$\unknowncmd{x}$") == "unknowncmdx"
+    assert mathtext_to_unicode(r"$x^q$") == "x^q"  # no unicode superscript q
+
+
+def test_mathtext_fraction_parser_balances_nested_script_braces() -> None:
+    assert (
+        mathtext_to_unicode(r"$\sigma(t) = \frac{1}{1 + e^{-t}}$") == "σ(t)=1/(1+e^(−t))"  # noqa: RUF001 - intentional math glyphs
+    )
+    assert mathtext_to_unicode(r"$\frac{\frac{1}{2}}{x_{10}}$") == "(1/2)/x₁₀"
+
+
+def test_mathtext_preserves_uppercase_subscript_and_local_fallbacks() -> None:
+    converted = mathtext_to_unicode(r"$N\,f_X(x)\,\delta x_0+\unknown{q}$")
+
+    assert converted == "N f_X(x) δx₀+unknownq"
+    assert "\\" not in converted
 
 
 def test_mathtext_reaches_labels_ticks_and_legend() -> None:
@@ -211,6 +239,22 @@ def test_mathtext_reaches_labels_ticks_and_legend() -> None:
     assert "km²" in svg
     assert ">π<" in svg and ">2π<" in svg
     assert "σ²" in svg
+
+
+def test_legend_mathtext_never_exposes_raw_backslash_commands() -> None:
+    fig, ax = plt.subplots()
+    ax.plot(
+        [0, 1],
+        [0, 1],
+        label=r"$N\,f_X(x)+\frac{1}{1 + e^{-t}}+\unsupported{q}$",
+    )
+    ax.legend()
+
+    svg = _svg(fig)
+
+    assert "N f_X(x)+1/(1+e^(−t))+unsupportedq" in svg  # noqa: RUF001
+    assert "\\unsupported" not in svg
+    assert "\\frac" not in svg
 
 
 def test_funcformatter_mathtext_tick_labels_render_unicode() -> None:
@@ -242,13 +286,18 @@ def test_ylabel_renders_rotated_in_png_left_margin() -> None:
     ax.plot([0, 1], [0, 1])
     ax.set_ylabel("amplitude of the signal")
     pixels = _png_pixels(fig)
+    plain_fig, plain_ax = plt.subplots()
+    plain_ax.plot([0, 1], [0, 1])
+    plain = _png_pixels(plain_fig)
     height, width = pixels.shape[:2]
     # Ink confined to a tall, narrow left-margin band — rotated text; the old
-    # horizontal top-left placement would put ink in the top band instead.
-    left_band = pixels[height // 4 : 3 * height // 4, : width // 24, :3]
-    assert (left_band < 200).any()
-    top_band = pixels[: height // 40, : width // 24, :3]
-    assert not (top_band < 200).any()
+    # horizontal top-left placement would change the top band instead. Compare
+    # against the same axes without the y-label so tick-label ink cannot satisfy
+    # the assertion by accident.
+    left_band = np.s_[height // 4 : 3 * height // 4, : width // 12, :3]
+    assert (pixels[left_band] != plain[left_band]).any()
+    top_band = np.s_[: height // 40, : width // 12, :3]
+    assert not (pixels[top_band] != plain[top_band]).any()
 
 
 def test_errorbar_color_and_ecolor_resolve_independently() -> None:

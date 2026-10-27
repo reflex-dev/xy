@@ -3,8 +3,8 @@
 The browser rows in ``bench_interaction.py`` measure client input-to-pixel
 latency; these rows isolate the Python/kernel work each gesture message
 resolves to (§17/§34): hover pick readout, zone-pruned and full-scan box
-select, lasso ray casting, and the cross-filter row-mask encoding the
-view-state layer ships (view-state.md §5.1). None of them existed as CodSpeed
+select, and the cross-filter row-mask encoding the view-state layer ships
+(view-state.md §5.1). None of them existed as CodSpeed
 rows before, so a selection regression could only surface as browser
 wall-clock noise; here it is attributed to the handler that caused it.
 
@@ -32,7 +32,6 @@ PX_WIDTH = 2048
 SELECT_N = 1_000_000
 PICK_N = 100_000
 CROSSFILTER_N = 100_000
-LASSO_VERTICES = 64
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -58,10 +57,6 @@ def warm_lazy_modules() -> None:
     fig.build_payload_split(PX_WIDTH)
     fig.pick(0, 0)
     channel.handle_message(fig, {"type": "select", "x0": 0.0, "x1": 3.0, "y0": 0.0, "y1": 1.0})
-    channel.handle_message(
-        fig,
-        {"type": "select_polygon", "points": [[0.0, -1.0], [3.0, -1.0], [1.5, 2.0]]},
-    )
     fig.selection_rows_message({0: np.array([0, 2], dtype=np.int64)})
 
 
@@ -137,19 +132,6 @@ def test_select_box_message_full_scan_1m(benchmark, uniform_figure):
     spec, buffers = reply
     # A 30x30 box over the 100x100 uniform domain holds ~9% of 1M points.
     assert 80_000 < spec["total"] < 100_000
-    assert len(buffers[0]) == 4 * spec["traces"][0]["count"]
-
-
-def test_select_lasso_message_1m(benchmark, uniform_figure):
-    """Lasso gesture unit: bbox prune, ray casting, wire mask reply."""
-    theta = np.linspace(0.0, 2.0 * np.pi, LASSO_VERTICES, endpoint=False)
-    polygon = [[50.0 + 20.0 * np.cos(t), 50.0 + 20.0 * np.sin(t)] for t in theta]
-    message = {"type": "select_polygon", "points": polygon, "seq": 4}
-    reply = benchmark(channel.handle_message, uniform_figure, message)
-    assert reply is not None
-    spec, buffers = reply
-    # A radius-20 disc covers ~12.6% of the 100x100 uniform domain.
-    assert 115_000 < spec["total"] < 137_000
     assert len(buffers[0]) == 4 * spec["traces"][0]["count"]
 
 

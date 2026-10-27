@@ -3,12 +3,14 @@ for every chart kind, `scale=`/dimension handling, indexed-vs-truecolor
 selection, the screen-bounded size guarantee, colormap fidelity, and parity of
 the shared layout with the SVG exporter."""
 
+# ruff: noqa: RUF001 — the glyph-coverage tests are ABOUT confusable non-ASCII.
 from __future__ import annotations
 
 import struct
 import zlib
 
 import numpy as np
+import pytest
 
 import xy
 from xy import _png, _raster
@@ -104,9 +106,9 @@ def _record_text(monkeypatch) -> list[tuple[float, float, int, float, str]]:
     recorded: list[tuple[float, float, int, float, str]] = []
     original_text = _raster._Cmd.text
 
-    def record_text(self, x, y, anchor, size, color, value):
+    def record_text(self, x, y, anchor, size, color, value, **kwargs):
         recorded.append((float(x), float(y), int(anchor), float(size), str(value)))
-        return original_text(self, x, y, anchor, size, color, value)
+        return original_text(self, x, y, anchor, size, color, value, **kwargs)
 
     monkeypatch.setattr(_raster._Cmd, "text", record_text)
     return recorded
@@ -144,6 +146,35 @@ def test_dimension_override_and_fluid() -> None:
     fig = Figure(width="100%", height="100%").line([0.0, 1.0], [0.0, 1.0])
     png = fig.to_png(width=500, height=300, scale=1)
     assert _ihdr(png)[:2] == (500, 300)
+
+
+def test_raster_best_legend_rescores_final_size_without_mutating_extras() -> None:
+    figure = xy.chart(
+        xy.bar([0.75], [1.0], base=[0.90], width=0.04, name="series"),
+        xy.x_axis(domain=(0.0, 1.0)),
+        xy.y_axis(domain=(0.0, 1.0)),
+        xy.legend(loc="best"),
+        width=640,
+        height=360,
+    ).figure()
+    extra = {
+        "loc": "upper right",
+        "auto_loc": "best",
+        "items": [{"name": "extra", "kind": "bar", "style": {}}],
+    }
+    figure.extra_legends = [extra]
+
+    spec, _blob, _borrowed = _raster._export_payload(figure, 280, None, None)
+
+    assert spec["legend"] == {
+        "loc": "upper left",
+        "ncols": 1,
+        "auto_loc": "best",
+    }
+    assert spec["extra_legends"][0]["loc"] == "upper left"
+    assert spec["extra_legends"][0]["auto_loc"] == "best"
+    assert extra["loc"] == "upper right"
+    assert figure.extra_legends[0] is extra
 
 
 def test_flat_chart_is_indexed_gradient_chart_is_truecolor() -> None:
@@ -230,6 +261,44 @@ def test_raster_honors_tick_label_anchor() -> None:
     # Anchoring shifts every x tick label left of its tick; the images must
     # differ only because the anchor reached the rasterizer.
     assert not np.array_equal(render(), render(tick_label_anchor="end"))
+
+
+@pytest.mark.parametrize(
+    ("side", "angle", "expected_anchor"),
+    [
+        ("bottom", -35, 2),
+        ("bottom", 35, 0),
+        ("top", 35, 2),
+        ("top", -35, 0),
+    ],
+)
+def test_raster_rotated_x_ticks_match_svg_default_anchor(
+    monkeypatch,
+    side: str,
+    angle: int,
+    expected_anchor: int,
+) -> None:
+    axis_id = "x" if side == "bottom" else "x2"
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], x_axis=axis_id),
+        xy.x_axis(
+            id=axis_id,
+            side=side,
+            tick_values=(0.0, 1.0),
+            tick_labels=("Long category alpha", "Long category beta"),
+            tick_label_strategy="preserve",
+            tick_label_angle=angle,
+        ),
+        width=480,
+        height=280,
+    )
+    spec, blob = chart.figure().build_payload()
+    recorded = _record_text(monkeypatch)
+
+    _raster.render_raster(spec, blob, scale=1)
+
+    anchors = {entry[2] & 0x03 for entry in recorded if entry[4].startswith("Long category")}
+    assert anchors == {expected_anchor}
 
 
 def test_raster_legend_text_honors_theme_text_color() -> None:
@@ -553,10 +622,83 @@ def test_native_named_axis_collision_and_title_placement_controls(monkeypatch) -
     assert title_anchor == 2 | _raster._TEXT_ROT_CW
 
 
+def test_native_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas(
+    monkeypatch,
+) -> None:
+    """A vertical colorbar's label must match Matplotlib: rotated 90° CCW,
+    centered alongside the bar and outboard of its ticks, fully on canvas.
+
+    It previously rendered horizontally above the bar at `plot.y - 5`, so the
+    glyph ascent overflowed the canvas top edge and the label was clipped.
+    """
+    from xy import _svg
+
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin"),
+        width=560,
+        height=320,
+    )
+    spec, blob = chart.figure().build_payload()
+    width, _height, _compact, plot = _svg.layout(spec)
+    recorded = _record_text(monkeypatch)
+    _raster.render_raster(spec, blob, scale=1)
+
+    label_x, label_y, anchor, size, _text = next(
+        entry for entry in recorded if entry[4] == "counts in bin"
+    )
+    # Rotated bottom-to-top (mpl rotation=90), centered along the reading axis.
+    assert anchor == 1 | _raster._TEXT_ROT_CCW
+    assert label_y == plot["y"] + plot["h"] / 2
+    # Beside the bar, past every tick label — not above the bar.
+    tick_x = max(entry[0] for entry in recorded if entry[4] in {"0", "1", "2", "3"})
+    assert label_x > tick_x
+    assert plot["y"] < label_y < plot["y"] + plot["h"]
+    # Inside the canvas across the rotated label's baseline: the glyph box
+    # spans [x - ascent, x + descent] (ascent ~0.78em, descent ~0.22em).
+    assert label_x + 0.22 * size < width
+
+
+def test_native_vertical_colorbar_label_leaves_the_canvas_edges_unpainted() -> None:
+    """The clipping symptom itself: no label ink may reach the canvas border."""
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin"),
+        width=560,
+        height=320,
+    )
+    pixels = _decode_rgba(chart.to_png())
+    ink = pixels[:, :, :3].astype(int).sum(axis=2) < 200
+    assert not ink[0].any() and not ink[-1].any()
+    assert not ink[:, 0].any() and not ink[:, -1].any()
+
+
+def test_native_horizontal_colorbar_label_stays_upright_below_the_bar(monkeypatch) -> None:
+    """The horizontal orientation reads left-to-right, so it must not rotate."""
+    from xy import _svg
+
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin", orientation="horizontal"),
+        width=560,
+        height=320,
+    )
+    spec, blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    recorded = _record_text(monkeypatch)
+    _raster.render_raster(spec, blob, scale=1)
+
+    label_x, label_y, anchor, _size, _text = next(
+        entry for entry in recorded if entry[4] == "counts in bin"
+    )
+    assert anchor & (_raster._TEXT_ROT_CCW | _raster._TEXT_ROT_CW) == 0
+    assert label_x == plot["x"] + plot["w"] / 2
+    assert label_y > plot["y"] + plot["h"]
+
+
 def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) -> None:
-    # The native glyph protocol only rotates in quarter-turns, so a diagonal
-    # tick_label_angle falls back to horizontal strategy="hide" — which must
-    # only downsample on a real collision, not unconditionally.
+    # Arbitrary tick angles use the native styled-text command and keep the
+    # same collision-selected label set as SVG/browser.
     tick_values = [0.0, 25.0, 50.0, 75.0, 100.0]
     tick_labels = ["t0", "t25", "t50", "t75", "t100"]
     chart = xy.chart(
@@ -571,11 +713,18 @@ def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) 
         height=300,
     )
     spec, blob = chart.figure().build_payload()
-    recorded = _record_text(monkeypatch)
+    angles: dict[str, float] = {}
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, value, **kwargs):
+        angles[str(value)] = float(kwargs.get("angle", 0.0))
+        return original_text(self, x, y, anchor, size, color, value, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
     _raster.render_raster(spec, blob, scale=1)
 
-    rendered = {entry[4] for entry in recorded}
-    assert set(tick_labels) <= rendered
+    assert set(tick_labels) <= angles.keys()
+    assert {angles[label] for label in tick_labels} == {45.0}
 
 
 def test_native_smooth_stroke_matches_reference_polyline() -> None:
@@ -728,6 +877,15 @@ def test_affine_static_scatter_full_render_matches_expanded(monkeypatch) -> None
             symbol="diamond",
             stroke="#111827",
             stroke_width=0.5,
+        ),
+        Figure(width=360, height=220).scatter(
+            x,
+            y,
+            color="transparent",
+            size=9,
+            symbol="diamond",
+            stroke="#666666",
+            stroke_width=1.0,
         ),
         Figure(width=360, height=220).scatter(x, y, color=color_values, colormap="plasma"),
         Figure(width=360, height=220).scatter(x, y, color=categories),
@@ -915,3 +1073,298 @@ def test_scatter_direct_edges_with_colormap_c_render_in_png() -> None:
         opacity=1.0,
     )
     assert _dark_pixel_count(fig.to_png(width=300, height=200)) > 200
+
+
+def _text_commands(monkeypatch, chart) -> dict[str, tuple[float, float]]:
+    """``{text: (x, y)}`` for every text op the raster display list emits."""
+    emitted: dict[str, tuple[float, float]] = {}
+    original = _raster._Cmd.text
+
+    def record(self, x, y, anchor, size, color, s):
+        emitted[str(s)] = (x, y)
+        return original(self, x, y, anchor, size, color, s)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record)
+    _raster.render_raster(*chart.figure().build_payload(), scale=1)
+    return emitted
+
+
+def _tick_geometry_chart(style=None) -> xy.Chart:
+    """A 3x3 tick grid with a pinned plot rect, so offsets are exact integers."""
+    return xy.chart(
+        xy.line([0.0, 1.0, 2.0], [0.0, 1.0, 0.5]),
+        xy.x_axis(domain=(0.0, 2.0), tick_values=[0.0, 1.0, 2.0], style=style),
+        xy.y_axis(domain=(0.0, 1.0), tick_values=[0.0, 0.5, 1.0], style=style),
+        width=400,
+        height=300,
+        padding=(40, 50, 40, 50),
+    )
+
+
+def test_unstyled_tick_labels_keep_their_historical_raster_placement(monkeypatch) -> None:
+    """The native display list must place unstyled tick labels where it always
+    has.
+
+    `tick_padding` derives the spine-to-label gap from tick geometry, but
+    core's default `tick_length` is 0, so deriving it unconditionally silently
+    pulls every unstyled chart's labels toward the spine — see
+    `_axis_tick_label_offset`. The 15 px bottom gap is one pixel tighter than
+    the SVG exporter's 16 and has always been; this seam does not reconcile it.
+    """
+    plot = _raster.layout(_tick_geometry_chart().figure().build_payload()[0])[3]
+    assert (plot["x"], plot["y"], plot["w"], plot["h"]) == (50.0, 40.0, 300.0, 220.0)
+
+    unstyled = _text_commands(monkeypatch, _tick_geometry_chart())
+    # x, bottom: baseline 15 px below the spine, centered on the tick.
+    assert unstyled["0"] == (50.0, 275.0)
+    assert unstyled["1"] == (200.0, 275.0)
+    assert unstyled["2"] == (350.0, 275.0)
+    # y, left: 8 px outside the spine, baseline nudged 4 px below the tick.
+    assert unstyled["0.0"] == (42.0, 264.0)
+    assert unstyled["0.5"] == (42.0, 154.0)
+    assert unstyled["1.0"] == (42.0, 44.0)
+
+    # Flat constants, as before `tick_padding`: the tick font must not move them.
+    big_font = _text_commands(monkeypatch, _tick_geometry_chart(style={"tick_size": 20}))
+    assert big_font["0"] == unstyled["0"]
+    assert big_font["1.0"] == unstyled["1.0"]
+
+
+def test_authored_tick_geometry_moves_raster_labels_off_the_spine(monkeypatch) -> None:
+    """Authored geometry takes matplotlib's rule in the raster path too, and
+    lands on the same coordinates the SVG exporter uses."""
+    styled = _text_commands(
+        monkeypatch, _tick_geometry_chart(style={"tick_length": 6, "tick_padding": 5})
+    )
+    # 6 px outward tick + 5 px pad = 11 px, then 0.8 * the 11 px font to the baseline.
+    assert styled["0"] == (50.0, 279.8)
+    # y: 11 px outside the spine, baseline centered on 0.35 * the font size.
+    assert styled["0.0"] == (39.0, 263.85)
+
+
+def mixed_anchor_legend_spec() -> tuple[dict, bytes]:
+    """A figure carrying one anchored and one bounded legend box."""
+    spec, blob = Figure().line([0.0, 1.0], [0.0, 1.0], name="a").build_payload()
+    spec["show_legend"] = False
+    spec["extra_legends"] = [
+        {
+            "title": "anchored",
+            "loc": "lower left",
+            "anchor": [0.0, 1.0],
+            "items": [{"name": "outside", "kind": "line", "style": {}}],
+        },
+        {
+            "title": "bounded",
+            "loc": "upper right",
+            "items": [{"name": "inside", "kind": "line", "style": {}}],
+        },
+    ]
+    return spec, blob
+
+
+def test_raster_scopes_the_legend_clip_exemption_per_legend(monkeypatch) -> None:
+    """An anchored legend is exempt from the plot-rect clip that bounds static
+    legends, but the exemption is that legend's alone (parity with `_svg.py`):
+    one anchored box must not lift the clip off its non-anchored siblings."""
+    spec, blob = mixed_anchor_legend_spec()
+    _width, _height, _compact, plot = _raster.layout(spec)
+    plot_rect = (plot["x"], plot["y"], plot["w"], plot["h"])
+
+    events: list[tuple[str, object]] = []
+    original_clip = _raster._Cmd.clip
+    original_legend = _raster._emit_legend
+
+    def record_clip(self, x, y, w, h):
+        events.append(("clip", (float(x), float(y), float(w), float(h))))
+        return original_clip(self, x, y, w, h)
+
+    def record_legend(cmd, named, legend_plot, options, *args, **kwargs):
+        # Signature-agnostic on purpose: this stub only records the emission
+        # order, so a new writer argument must not turn into a test failure.
+        events.append(("legend", options.get("title")))
+        return original_legend(cmd, named, legend_plot, options, *args, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "clip", record_clip)
+    monkeypatch.setattr(_raster, "_emit_legend", record_legend)
+    _raster.render_raster(spec, blob, scale=1)
+
+    # The clip is stateful in the command stream, so the rectangle in force for
+    # a legend is the last clip recorded before that legend's emission.
+    in_force: dict[str, tuple[float, ...]] = {}
+    current: tuple[float, ...] | None = None
+    for kind, value in events:
+        if kind == "clip":
+            assert isinstance(value, tuple)
+            current = value
+        else:
+            assert isinstance(value, str)
+            assert current is not None, "legend emitted before any clip was set"
+            in_force[value] = current
+
+    assert set(in_force) == {"anchored", "bounded"}
+    assert in_force["bounded"] == plot_rect
+    assert in_force["anchored"] != plot_rect  # the full-frame chrome clip
+
+
+def test_raster_uniform_anchor_legends_keep_their_whole_frame_clip_decision(
+    monkeypatch,
+) -> None:
+    """The per-legend scoping must not change the all-anchored or the
+    none-anchored figure: one keeps no plot-rect clip, the other keeps one."""
+    original_clip = _raster._Cmd.clip
+
+    def plot_clips(anchors: list[list[float] | None]) -> int:
+        spec, blob = mixed_anchor_legend_spec()
+        for extra, anchor in zip(spec["extra_legends"], anchors, strict=True):
+            if anchor is None:
+                extra.pop("anchor", None)
+            else:
+                extra["anchor"] = anchor
+        _width, _height, _compact, plot = _raster.layout(spec)
+        rect = (plot["x"], plot["y"], plot["w"], plot["h"])
+        seen: list[tuple[float, ...]] = []
+
+        def record_clip(self, x, y, w, h):
+            seen.append((float(x), float(y), float(w), float(h)))
+            return original_clip(self, x, y, w, h)
+
+        monkeypatch.setattr(_raster._Cmd, "clip", record_clip)
+        _raster.render_raster(spec, blob, scale=1)
+        monkeypatch.undo()
+        # The marks pass clips to the plot rect too; the legend pass is the
+        # only source of a second one.
+        return seen.count(rect) - 1
+
+    assert plot_clips([[0.0, 1.0], [0.0, 1.0]]) == 0
+    assert plot_clips([None, None]) == 1
+
+
+def test_the_raster_exporter_draws_annotation_labels_and_marker_glyphs() -> None:
+    """The PNG path had the same gap as SVG: rule/band/arrow/marker labels were
+    never emitted, and `xy.marker()` drew nothing at all."""
+    import xy._raster as raster
+
+    chart = xy.line_chart(
+        xy.line([1, 2, 3, 4], [1, 3, 2, 3.4], name="signal"),
+        xy.hline(y=2, text="target"),
+        xy.x_band(x0=2.6, x1=3.2, text="window"),
+        xy.marker(x=2, y=3, text="peak"),
+        width=680,
+        height=400,
+    )
+    spec, blob = chart.figure().build_payload()
+    calls: list[tuple] = []
+    original_text = raster._Cmd.text
+    original_point = raster._Cmd.point
+
+    def record_text(self, *args, **kwargs):
+        calls.append(("text", args[-1] if args else None))
+        return original_text(self, *args, **kwargs)
+
+    def record_point(self, *args, **kwargs):
+        calls.append(("point", None))
+        return original_point(self, *args, **kwargs)
+
+    raster._Cmd.text, raster._Cmd.point = record_text, record_point
+    try:
+        chart.to_png()
+    finally:
+        raster._Cmd.text, raster._Cmd.point = original_text, original_point
+
+    drawn = {value for kind, value in calls if kind == "text"}
+    assert {"target", "window", "peak"} <= drawn
+    assert any(kind == "point" for kind, _ in calls), "marker glyph never drawn"
+
+
+def test_the_raster_exporter_expands_categorical_legend_rows() -> None:
+    import xy._raster as raster
+
+    species = ["setosa"] * 4 + ["versicolor"] * 4 + ["virginica"] * 4
+    chart = xy.scatter_chart(
+        xy.scatter(list(range(12)), list(range(12)), color=species, name="iris"),
+        xy.legend(),
+        width=560,
+        height=380,
+    )
+    drawn: list[str] = []
+    original_text = raster._Cmd.text
+
+    def record_text(self, *args, **kwargs):
+        drawn.append(args[-1] if args else "")
+        return original_text(self, *args, **kwargs)
+
+    raster._Cmd.text = record_text
+    try:
+        chart.to_png()
+    finally:
+        raster._Cmd.text = original_text
+    assert {"setosa", "versicolor", "virginica"} <= set(drawn)
+
+
+# --- glyph coverage -----------------------------------------------------------
+
+
+def _title_png(title: str) -> bytes:
+    return xy.line_chart(xy.line([1, 2], [1, 2]), title=title, width=420, height=240).to_png()
+
+
+@pytest.mark.parametrize(
+    "char",
+    ["é", "ü", "ł", "Ø", "€", "£", "¥", "₹", "α", "²", "≤"],
+)
+def test_the_raster_atlas_draws_latin_and_currency(char: str) -> None:
+    """A character outside the atlas was dropped whole — no glyph, no advance.
+
+    `Zürich` exported as `Zrich` from `to_png()` while the same figure's SVG
+    rendered it correctly, and `format="€,.0f"` lost its symbol."""
+    assert _title_png(f"X{char}") != _title_png("X"), f"{char!r} left no marks on the canvas"
+
+
+@pytest.mark.parametrize("char", ["東", "🎉"])
+def test_characters_outside_the_atlas_box_instead_of_vanishing(char: str) -> None:
+    """CJK and emoji stay unbakeable, but the failure must be visible (§28)."""
+    assert _title_png(f"X{char}") != _title_png("X"), f"{char!r} vanished silently"
+    assert _title_png(f"X{char}") == _title_png("X\ufffd"), (
+        "an unbaked character should render as the replacement glyph"
+    )
+
+
+@pytest.mark.parametrize("space", ["\u00a0", "\u202f", "\u2009"])
+def test_unicode_spaces_render_as_spaces_not_boxes(space: str) -> None:
+    """Locale-aware number formatting emits NBSP and narrow NBSP as group
+    separators, so these reach the rasterizer through ordinary tick labels.
+    Whitespace is drawn by its advance, not its shape — a replacement box
+    would be plainly wrong where a space belongs."""
+    assert _title_png(f"X{space}Y") == _title_png("X Y")
+
+
+def test_zero_width_characters_still_draw_nothing() -> None:
+    # Spelled as an escape on purpose: a literal U+200B is invisible in the
+    # source, and an editor or a copy-paste that strips it would silently
+    # reduce this to `_title_png("X") == _title_png("X")`.
+    assert _title_png("X\u200b") == _title_png("X")
+
+
+def test_chunk_parts_join_to_the_canonical_chunk():
+    """Parts assembly must equal the naive `tag + data` construction.
+
+    PNG chunks are built as join-ready parts so the compressed IDAT — the whole
+    image — is copied once into the file instead of once per `+`. The CRC is
+    accumulated over the tag and then the data, which is exactly
+    `crc32(tag + data)` without materializing the concatenation.
+    """
+    import struct
+    import zlib
+
+    from xy import _png
+
+    for tag, data in (
+        (b"IHDR", b"\x00" * 13),
+        (b"IEND", b""),
+        (b"IDAT", bytes(range(256)) * 40),
+        (b"tRNS", b"\xff\x00\x7f"),
+    ):
+        body = tag + data
+        canonical = struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+        assert b"".join(_png._chunk_parts(tag, data)) == canonical
+        assert _png._chunk(tag, data) == canonical

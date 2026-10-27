@@ -6,9 +6,11 @@ description: Review migration notes and notable changes in the XY alpha series.
 # Changelog
 
 The canonical, complete history lives in the repository's
-[CHANGELOG.md](https://github.com/reflex-dev/xy/blob/main/CHANGELOG.md). It
-follows Keep a Changelog; semantic-versioning compatibility becomes the firm
-contract at 1.0. Before 1.0, a minor release can contain breaking changes.
+[CHANGELOG.md](https://github.com/reflex-dev/xy/blob/main/CHANGELOG.md), which is
+also published as the notes on each
+[GitHub release](https://github.com/reflex-dev/xy/releases).
+Semantic-versioning compatibility becomes the firm contract at 1.0. Before 1.0, a
+minor release can contain breaking changes.
 
 ## Current Unreleased Migration Notes
 
@@ -36,6 +38,20 @@ selection, the versioned binary frame transport, declarative statistical and
 density families, facets, live `Chart.append()`/`pick()`/`select_range()`,
 browser-free native PNG, pure SVG export, CSS-compiled mark styling, and the
 experimental `xy.pyplot` compatibility layer.
+
+The Unreleased polar expansion adds heatmap, contour, and error-bar marks;
+partial sectors, holes/data-space origins, categorical theta, log/symlog
+radius, and polygonal grids; and matching pyplot theta/r-origin controls.
+Protocol v12 prevents an older client from silently interpreting that geometry
+as the previous full-circle surface.
+
+Outlined radar charts now render reliably: `radar_chart(fill=False)` translates
+area stroke settings into the corresponding line props, including color, width,
+opacity, curve, and dash.
+
+Default tooltips now lead with a named series and speak polar coordinates on
+polar charts: θ values reuse authored tick labels or the axis unit, and radial
+values are labeled r instead of appearing as Cartesian x/y rows.
 
 Read [Chart methods](/docs/xy/api-reference/figure-methods/),
 [Customize Each Part](/docs/xy/styling/customize/#fill,-stroke,-opacity,-and-gradients), and

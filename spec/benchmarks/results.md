@@ -1,8 +1,9 @@
-# Scatter benchmark: xy vs Python charting libraries
+# Competitive benchmark program
 
-The same scatter (a correlated 2-D cloud) at growing point counts, across
-popular Python charting libraries, on four factors: **how many points each can
-render, how fast, how much memory, and the render payload size.**
+The recorded launch comparison uses the same scatter (a correlated 2-D cloud)
+at growing point counts across popular Python charting libraries, measuring
+four factors: **how many points each can render, how fast, how much memory, and
+the render payload size.**
 
 The cross-library harness lives in `benchmarks/bench_vs.py` and includes
 optional adapters for xy, matplotlib, seaborn, Plotly, Bokeh, Altair,
@@ -25,12 +26,32 @@ python benchmarks/bench_vs.py
 The xy-only arm also runs with no dependencies via
 `benchmarks/bench_scatter_native.py`.
 
+## Competitive product goal
+
+XY's product goal is to outperform every competing charting library across
+user-visible performance, chart breadth, and customization. The benchmark
+program is the evidence system for that goal, not a showcase for one favorable
+workload.
+
+Every major competitor should be represented wherever it leads or defines
+user expectations. Comparisons should cover small through massive datasets,
+exact and aggregated rendering, static and interactive output, cold and warm
+paths, interaction latency, memory, transport and export size, and multi-chart
+applications. Environments, raw machine-readable results, output contracts,
+and reproduction commands belong in the repository so every result can be
+inspected and rerun.
+
+Timing alone cannot prove chart breadth or design control. Those dimensions
+use the generated capability matrix, matched visual examples, renderer
+coverage, and compatibility corpora as evidence. When another library is
+better on a relevant workload or capability, record the loss as a product gap,
+add a reproducible comparison, and keep it visible until XY wins it.
+
 ## Benchmark categories and goals
 
-The performance story should be measured by mode, not with one blanket
-"fastest charting library" number. A small exact scatter, a 10M density view, a
-large line, and a 30-chart dashboard stress different parts of the system. These
-are the categories we track or plan to add to CI.
+Performance is tracked by mode and workload. A small exact scatter, a 10M
+density view, a large line, and a 30-chart dashboard stress different parts of
+the system. These are the categories we track or plan to add to CI.
 
 The stable category IDs live in `benchmarks/categories.py`. CI's benchmark JSON
 artifacts (`benchmark.json`, `line.json`, `install.json`, `install-fresh.json`,
@@ -56,7 +77,7 @@ commit so CI artifacts are quick to inspect from logs.
 | `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, `test_first_payload_density_large`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
 | `adaptive_scatter_drilldown` | Adaptive scatter drilldown | tracked | The large-data claim needs a credible path from overview to exact visible points. | visible-query latency, tier-switch latency, exact-point recovery, badge accuracy | `benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle` | Exact points when visible count is under budget; sampled/density with explicit counts otherwise. |
 | `huge_line_time_series` | Huge line / time series | tracked | Common observability and finance workload; Plotly-resampler sets the bar here. | decimation time, zoom re-decimation latency, TTFR, extrema preservation | `benchmarks/bench.py`, `bench_native.py`, `bench_interaction.py`, `test_decimate_view` | Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh. |
-| `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling | `benchmarks/bench_dashboard.py` | Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics. |
+| `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | payload prep, navigation readiness, per-chart setup/first draw, shader compiles/program links, startup long tasks, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling | `benchmarks/bench_dashboard.py` | Measure the 10-60 chart scaling curve and expose LRU context eviction without discarding partial-row metrics. |
 | `interaction_smoothness` | Interaction smoothness | tracked | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta | `benchmarks/bench_interaction.py`; `benchmarks/bench_transport.py` | Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles. |
 | `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `bench_transport.py`, `test_codspeed_transport.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
 | `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` vs Plotly/Seaborn; `benchmarks/bench_pyplot_vs_matplotlib.py`; `bench_interaction.py`; CodSpeed core-2D rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Matplotlib/Seaborn raster baselines where applicable. |
@@ -64,6 +85,7 @@ commit so CI artifacts are quick to inspect from logs.
 | `input_ingestion` | Input ingestion | tracked | Real applications provide converted, strided, datetime, list, pandas, and Arrow inputs rather than only contiguous f64 arrays. | ingest latency, copies, peak Python memory | `benchmarks/bench_workflows.py` ingestion rows | Keep zero-copy inputs cheap and make unavoidable conversions visible. |
 | `streaming_updates` | Streaming updates | tracked | Monitoring and notebook workflows append repeatedly; stable-domain batches should update indexes incrementally while domain growth may rebuild. | append latency, refresh bytes, incremental pyramid update, domain-growth rebuild | `benchmarks/bench_workflows.py` streaming rows; `benchmarks/bench_transport.py` append diagnostics | Keep stable-domain appends proportional to the batch and expose unavoidable rebuild stalls. |
 | `log_autorange` | Log autorange | tracked | Large positive/negative and non-finite series are common in monitoring and scientific charts, and log axes must avoid full-data rescans. | range latency, positive-domain correctness, peak Python memory | `benchmarks/bench_workflows.py` log autorange row; `tests/test_figure.py` | Compute correct positive log domains from zone statistics with cost proportional to chunks, not points. |
+| `polar_coordinate_system` | Polar coordinate system | tracked | Radar, wind rose, pie/donut and gauge views are a whole chart family, and a polar wedge is the most expensive mark in the engine — one annular sector per bar instead of one quad. | payload-prep time, wedge flattening cost, SVG/PNG export latency, inverse-raster latency | `benchmarks/test_codspeed_polar.py` | Keep polar payload prep bounded by composition size rather than observation count, and keep wedge subdivision proportional to each wedge's own angular span. |
 | `static_export` | Static export | tracked | HTML, SVG, and PNG have distinct serialization and browser costs. | export latency, output bytes, peak Python memory | `benchmarks/bench_workflows.py` export rows; `benchmarks/bench_pyplot_vs_matplotlib.py` matched PNG rows | Track each target independently without mixing browser and payload work. |
 
 The launch scatter baseline has no entry in `BENCHMARK_CATEGORIES`, so it
@@ -110,9 +132,15 @@ scope, not the kernels module alone. The suite asserts `xy.kernels.BACKEND ==
   payload preparation.
 - Zoom refresh with `test_m4_indices_zoom` and `test_decimate_view`.
 - Memory/payload accounting with `test_memory_report_density_medium`.
-- The native adaptive drilldown cycle with
-  `test_adaptive_drilldown_cycle`: a warmed large scatter viewport moves from
-  density overview, to exact visible points, and back out to density.
+- The native adaptive drilldown cycles: `test_adaptive_drilldown_cycle` (a
+  warmed large scatter viewport moves from density overview, to exact visible
+  points, and back out to density) and its channel-bearing twin
+  `test_adaptive_drilldown_cycle_mean_color`, which adds a mid-band exact
+  re-bin leg and guards the once-per-trace bin-color resolution (LOD doc §2):
+  re-resolving the color column per request multiplied per-reply cost by
+  ~10-100× on the 100M FastAPI drilldown demo (measured 1.3-7 s/reply against
+  0.02-0.45 s with the trace-cached resolution on a 4-core host, and
+  223 ms → 99 ms for the 2.1M benchmark cycle itself).
 - The `xy.pyplot` shim suite (`benchmarks/test_codspeed_pyplot.py`): paired
   raw-versus-shim rows for line, scatter, histogram, categorical bar, and
   styled-panel builds, plus matched PNG export
@@ -126,9 +154,8 @@ scope, not the kernels module alone. The suite asserts `xy.kernels.BACKEND ==
   100k stable-key encoding plus a plain-versus-keyed split-payload pair, so
   keyed-transition overhead stays attributed to the key columns.
 - The backend selection handlers (`benchmarks/test_codspeed_selection.py`):
-  hover pick readout, zone-pruned and full-scan box select, the lasso gesture
-  unit through `channel.handle_message`, and the cross-filter
-  rows-to-shipped-mask encoding.
+  hover pick readout, zone-pruned and full-scan box select, and the
+  cross-filter rows-to-shipped-mask encoding.
 
 That keeps CodSpeed focused on native range queries, pyramid composition,
 tier-switch payload generation, payload prep, zoom latency, and memory-report
@@ -150,7 +177,7 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_interaction.py \
   --sizes 1e4,1e5,1e6 --json interaction.json
 
 PYTHONPATH=python .venv/bin/python benchmarks/bench_dashboard.py \
-  --chart-counts 10,20,50 --json dashboard.json
+  --chart-counts 10,20,50,60 --json dashboard.json
 
 PYTHONPATH=python .venv/bin/python benchmarks/bench_workflows.py \
   --profile standard --json workflows.json
@@ -177,33 +204,18 @@ value so short probes cannot masquerade as the configured budget run. The report
 also declares `tooltip_sample_count`, and eligible rows must report that exact
 `tooltip_visible_samples` count so a tooltip that appears once and then flickers
 away fails verification.
-`bench_dashboard.py` attempts 10/20/50 mixed dashboards and reports payload prep,
-navigation readiness, JS heap, redraw-submission p95, per-chart context loss and
-restore events (governed releases labeled separately from browser evictions),
-initial/scrolled nonblank IDs, per-visit scroll recovery latency, and the
-largest stable loss-free
-count. Partial rows retain their timing and memory metrics. `bench_workflows.py` covers ingestion, streaming/incremental-pyramid
+`bench_dashboard.py` attempts 10/20/50/60 mixed dashboards in CI and reports payload
+prep, navigation readiness, per-chart setup/first-draw p50/p95/max, load/first-pick/final
+shader compile and program-link counts, advisory startup long tasks, JS heap,
+redraw-submission p95, per-chart context loss and restore events (governed releases
+labeled separately from browser evictions), initial/scrolled nonblank IDs,
+per-visit scroll recovery latency, and the largest stable loss-free count. A complete,
+loss-free 60-chart CI row additionally pins the mixed production inventory at 9
+unique shader compiles/60 links on load and 11/72 after first picks, with no further
+compile or link work during steady redraw. Partial rows retain their timing and memory metrics.
+`bench_workflows.py` covers ingestion, streaming/incremental-pyramid
 updates, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
 environment metadata and benchmark category IDs.
-
-## Copyable claim taxonomy
-
-Use these shapes when turning benchmark rows into README text, release notes, or
-posts. The goal is to make every public claim reproducible from a row in this
-document or from a verified JSON artifact.
-
-| Claim shape | Safe wording pattern | Required context |
-|---|---|---|
-| Payload/prep comparison | "In the native backend benchmark, histogram payload prep for 10k values / 200 bins was 17.3x faster than Plotly." | chart type, workload, backend, compared library, metric |
-| Browser first paint | "For the measured Chrome TTFR row, the 10k-value histogram first painted 5.0x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
-| Large scatter overview | "The 100M scatter overview uses density mode with a 258 KB wire payload; it is not drawing 100M exact markers." | mode, point count, payload, exact-vs-aggregate wording |
-| Line decimation | "The 10M line benchmark ships an M4-decimated ~60 KB payload while preserving the extrema oracle." | mode, point count, payload, correctness oracle |
-| Install/import footprint | "In the install-footprint benchmark, cold import was 6.4 ms for the measured distribution." | benchmark name, metric, measured distribution |
-
-Do not shorten those into broad slogans such as "xy is faster than
-Plotly" or "renders 10M points" without the row context. If a sentence does not
-name the chart type, workload, mode, backend, metric, and render target where
-they matter, it is not ready to publish.
 
 ## `xy.pyplot` versus Matplotlib/Agg
 
@@ -731,7 +743,14 @@ comparison—not a same-render-target speedup claim.
 
 > The kernel microbench numbers above predate the kernel-parallelization pass:
 > `bin_2d`, `histogram`, `m4`, `range_indices`, and `normalize` now fan out
-> across cores above 512k rows. Zone maps have no merge traffic and use an
+> across cores at per-cost-class gates: compute-bound scans (`m4`,
+> `histogram`) from 128k rows, general scans (`bin_2d`, `range_indices`,
+> `normalize`, min/max, sortedness) from 512k. Where each worker owns a
+> private accumulator those row counts are only a floor: `bin_2d` also caps
+> workers at points per cell and `histogram` at points per bin, so an
+> accumulator as large as the input stays serial. M4 caps workers at its
+> bucket count and finds split edges by binary search, avoiding repeated scans
+> through clustered x values. Zone maps have no merge traffic and use an
 > earlier, chunk-aware crossover: two complete 65,536-row chunks, with workers
 > capped by the number of chunks. All paths are bitwise-deterministic; see
 > `src/kernels.rs`.
@@ -1005,6 +1024,5 @@ falls over. This is the path xy exists to replace.
 - xy memory is Python-side `tracemalloc` peak; its GPU/native bytes are
   separate and itemized by `Figure.memory_report()` (§27). The payload column is
   the transport cost across the kernel→browser boundary.
-- Single CI machine, one run; treat as order-of-magnitude, not a spec. Re-run in
-  CI (`benchmark` job) or locally. No universal claims — every number is
-  mode-scoped (dossier §2/§31).
+- Single CI machine, one run; re-run in CI (`benchmark` job) or locally and
+  expand the committed baselines across hardware, workloads, and competitors.

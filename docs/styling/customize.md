@@ -95,7 +95,20 @@ def customize_mark_paint_preview():
 Use `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, and
 `opacity` only on mark families that support them. Lines use stroke properties;
 areas, points, bars, and columns also support fill properties. Bar-like marks
-add `border-radius`, while line-like marks add `stroke-dasharray`.
+add `border-radius`. `line`, `step`, `stairs`, and `ecdf` add
+`stroke-dasharray` and `stroke-linecap`; `area` adds `stroke-dasharray` only,
+because a cap is open-path geometry. `scatter` adds `marker-shape`.
+
+`stroke-linecap` (`butt`, `round`, `square`) carries its standard SVG meaning,
+and XY defaults it to `round` rather than to the CSS initial value — the native
+rasterizer has always drawn round caps and it is the reference for static
+export. `marker-shape` is the CSS spelling of `symbol=` and takes any of the 17
+built-in marker names.
+
+~~~python
+xy.line(x, y, style={"stroke-width": "6px", "stroke-linecap": "butt"})
+xy.scatter(x, y, size=12, style={"marker-shape": "diamond"})
+~~~
 
 ## Axes, grid, and ticks
 
@@ -330,12 +343,162 @@ tick colors with zero widths on both axes, `grid_opacity=0` on the x axis, and
 a subtle `grid_color` on the y axis. Keep extra top padding when a legend sits
 inside the plot.
 
+### Hide axis chrome with a switch
+
+Because hiding axis parts is subtraction, each axis takes plain switches
+instead of transparent colors: `show`, `line`, `ticks`, `grid`, and `text`
+(tick labels plus the axis title). `show` sets the other four, and each of them
+overrides `show`, so the reporting look above is two lines.
+
+| Want | Write |
+| --- | --- |
+| No axis chrome at all | `xy.x_axis(show=False)` |
+| Horizontal guides only | `xy.y_axis(show=False, grid=True)` |
+| Labels, but no baseline or ticks | `xy.x_axis(line=False, ticks=False)` |
+| Everything except the grid | `xy.x_axis(grid=False)` |
+
+~~~python
+chart = xy.area_chart(
+    xy.area(months, revenue, name="Revenue", color="#00b8db", curve="smooth"),
+    xy.x_axis(show=False),
+    xy.y_axis(show=False, grid=True, style={"grid_color": "#e5e7eb"}),
+)
+~~~
+
+An explicit `style=` property still wins, so you can switch a part off and then
+bring one property back — `xy.x_axis(show=False, style={"grid_color": "#eee",
+"grid_opacity": 1})` — without writing the other six.
+
 ## Color scales and colorbars
 
 Set a continuous mark's `colormap=` and `domain=` together when colors must
 have a stable meaning across charts. Add `xy.colorbar(...)` to explain that
 scale, then style its container, gradient, ticks, and title through the
-`colorbar`, `colorbar_bar`, `colorbar_tick`, and `colorbar_title` slots.
+`colorbar`, `colorbar_bar`, `colorbar_tick`, `colorbar_title`,
+`colorbar_extension`, `colorbar_line`, and `colorbar_minor_tick` slots.
+
+### Build a colormap from your own colors
+
+`colormap=` takes any of XY's twenty built-in names, and also a **custom ramp**
+built from the colors your design system already defines:
+
+| Form | Example |
+| --- | --- |
+| A list of CSS colors, evenly spaced | `colormap=["#0b1220", "#2563eb", "#22d3ee", "#fde68a"]` |
+| `(position, color)` pairs | `colormap=[(0.0, "#f8fafc"), (0.2, "#38bdf8"), (1.0, "#0f172a")]` |
+| A CSS gradient (2–8 stops) | `colormap="linear-gradient(#0b1220, #2563eb 30%, #fde68a)"` |
+
+A gradient takes up to 8 stops, the list forms up to 256. Colormap stops are
+opaque: use the mark's `opacity`/`fill-opacity` for transparency rather than a
+translucent stop, which XY refuses instead of silently flattening to black.
+
+~~~python
+chart = xy.hexbin_chart(
+    xy.hexbin(throughput, latency, gridsize=54, colormap=BRAND_RAMP),
+    xy.colorbar(title="Requests"),
+)
+~~~
+
+The ramp is resolved once, in Python, so the browser, `to_svg()`, and
+`to_png()` paint identical marks, and the colorbar follows it in every renderer.
+In the browser the legend row for a continuous encoding also becomes a gradient
+swatch of the ramp; the static legend draws a solid handle, as it always has.
+
+One rule follows from that: colormap stops must be colors XY can resolve
+without a browser — hex, `rgb()`, `hsl()`, or a named color. `var(--brand)`,
+`oklch(...)`, and `color-mix(...)` are fine on an individual `color=`, `stroke`,
+or `fill`, but not as a colormap stop or an `xy.theme(palette=...)` entry. Both
+are indexed color lookups used by static renderers that have no cascade to
+resolve browser-only colors. Resolve the token to a literal in Python and pass
+that.
+
+### Recolor categories with a chart palette
+
+A categorical `color=` channel and unnamed series both draw from the chart's
+palette. `xy.theme(palette=[...])` replaces it for the whole chart, so a set of
+brand swatches colors every series and every category at once:
+
+~~~python
+BRAND = ["#38bdf8", "#e879f9", "#fbbf24", "#34d399", "#a78bfa", "#fb7185"]
+
+chart = xy.scatter_chart(
+    xy.scatter(x, y, color=stage_labels, size=2.2, opacity=0.7),
+    xy.theme(palette=BRAND),
+)
+~~~
+
+Series take the palette in order — one slot per series, whatever its trace
+count, so a box plot (four traces) or a stem (two) advances the cycle by one
+like everything else. An explicit `color=` on a mark still wins, and takes no
+slot, so the next series that needs a color still gets the palette's first.
+A palette shorter than the number of series or categories repeats, and says so
+with a warning rather than quietly reusing a color.
+
+To pin specific categories to specific colors, pass a mapping instead of a
+list:
+
+~~~python
+chart = xy.scatter_chart(
+    xy.scatter(x, y, color=species),
+    xy.theme(palette={"setosa": "#4c72b0", "versicolor": "#dd8452"}),
+)
+~~~
+
+A list can only say "the first category is blue", so the same category changes
+color whenever the set of categories does — most visibly across facet panels,
+where a panel that happens to be missing one category silently recolors the
+rest. A mapping keys on the label, so a category keeps its color everywhere.
+Categories the mapping does not name take the next default color it has not
+already used, and say so with a warning.
+
+Palette entries follow the same rule as colormap stops: literal colors only —
+hex, `rgb()`, `hsl()`, or a named color. `var(--brand-500)` is fine on an
+individual `color=`, but not in a palette, because a palette is indexed and XY
+has to resolve each entry itself for density surfaces and for `to_svg()` /
+`to_png()`. Several `var()` entries would land on one fallback and merge
+distinct categories into a single color, so XY refuses them and says why.
+Resolve your token to a literal in Python and pass that. Named colors,
+`rgb()`, and `hsl()` are all fine — XY normalizes them to hex for you.
+
+~~~python demo exec toggle preview-code id=customize-palette-demo
+stages = ["Ingest", "Compact", "Query", "Replicate", "Snapshot", "Vacuum"]
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
+throughput = [
+    [42, 47, 45, 53, 58, 61, 66, 71],
+    [31, 34, 38, 36, 41, 45, 44, 49],
+    [58, 61, 66, 70, 68, 74, 79, 83],
+    [22, 25, 24, 29, 33, 31, 36, 39],
+    [15, 17, 21, 20, 24, 27, 26, 30],
+    [9, 11, 10, 14, 16, 15, 19, 22],
+]
+
+# --- chart ---
+import reflex_xy
+import xy
+
+palette_chart = xy.line_chart(
+    *[
+        xy.line(months, values, name=stage, width=2, curve="smooth")
+        for stage, values in zip(stages, throughput, strict=True)
+    ],
+    xy.theme(
+        palette=[
+            "#0ea5e9", "#d946ef", "#f59e0b", "#10b981", "#8b5cf6", "#f43f5e",
+        ],
+    ),
+    xy.x_axis(line=False, ticks=False),
+    xy.y_axis(show=False, grid=True, style={"grid_color": "#e2e8f0"}),
+    xy.legend(loc="upper left", ncols=3),
+    class_name="text-slate-600 dark:text-zinc-300",
+    width="100%",
+    height=320,
+    padding=(48, 20, 40, 44),
+)
+
+
+def customize_palette_preview():
+    return reflex_xy.chart(palette_chart, height="320px")
+~~~
 
 ~~~python demo exec toggle preview-code id=customize-colorbar-demo
 conversion = [
@@ -408,10 +571,10 @@ orientation, inferred scales, and custom-component boundaries.
 ## Legend
 
 Configure legend content and layout with `xy.legend(...)`. Style the component
-directly, or use the chart's `legend`, `legend_item`, and `legend_swatch` slots
-when one rule should cover several charts. Complete literal Tailwind utilities
-work through `class_name` / `class_names` when the host enables Reflex's
-`TailwindV4Plugin`.
+directly, or use the chart's `legend`, `legend_title`, `legend_item`,
+`legend_swatch`, and `legend_label` slots when one rule should cover several
+charts. Complete literal Tailwind utilities work through `class_name` /
+`class_names` when the host enables Reflex's `TailwindV4Plugin`.
 
 ~~~python demo exec toggle preview-code id=customize-legend-demo
 periods = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
@@ -507,8 +670,10 @@ beside it. Host-owned UI is not included in standalone XY exports.
 ## Tooltip
 
 Tooltip fields must already be resident in a rendered data channel. Use named
-data columns for readable titles and formats, then style the built-in tooltip
-directly or through the chart's `tooltip` slot.
+data columns for stable lookup, map them to readable display text with
+`labels=`, and format them with `format=`. Style the built-in container
+directly or target `tooltip_title`, `tooltip_row`, `tooltip_label`, and
+`tooltip_value` independently.
 
 ~~~python demo exec toggle preview-code id=customize-tooltip-demo
 data = {
@@ -538,6 +703,7 @@ def customize_tooltip_preview():
             fields=["revenue"],
             title="{period}",
             format={"revenue": "$,.0f"},
+            labels={"revenue": "Revenue"},
             style={
                 "background": "var(--tooltip-surface, #ffffff)",
                 "color": "var(--tooltip-text, #1d293d)",
@@ -570,12 +736,24 @@ def customize_tooltip_preview():
             plot_background="var(--custom-surface, #ffffff)",
             grid_color="var(--custom-grid, #e5e7eb)",
         ),
+        styles={
+            "tooltip_title": {"font-weight": 700, "margin-bottom": 4},
+            "tooltip_row": {
+                "display": "grid",
+                "grid-template-columns": "5rem 1fr",
+                "gap": 8,
+            },
+            "tooltip_label": {"color": "var(--tooltip-muted, #64748b)"},
+            "tooltip_value": {"font-weight": 700, "text-align": "right"},
+        },
         class_name=(
             "bg-[#ffffff] [--custom-surface:#ffffff] [--custom-grid:#e5e7eb] "
             "[--tooltip-surface:#ffffff] [--tooltip-text:#1d293d] "
+            "[--tooltip-muted:#64748b] "
             "[--tooltip-border:#e5e7eb] dark:bg-[#000000] "
             "dark:[--custom-surface:#000000] dark:[--custom-grid:#27272a] "
             "dark:[--tooltip-surface:#18181f] dark:[--tooltip-text:#f3f4f6] "
+            "dark:[--tooltip-muted:#a1a1aa] "
             "dark:[--tooltip-border:#3f3f46]"
         ),
         width="100%",
@@ -701,7 +879,9 @@ geometry; only their labels respond to DOM slot styles.
 Crosshairs, selections, and the modebar are configured independently from data
 marks. Interaction colors belong in `xy.theme(...)`; DOM pieces can also use
 the `crosshair_x`, `crosshair_y`, `selection`, `modebar`, and `modebar_button`
-slots.
+slots. The remaining `modebar_*` slots reach the draggable grip, control group,
+separators, icons, zoom value, indicators, selection icon, menus, menu content,
+and history controls independently.
 
 ~~~python demo exec toggle preview-code id=customize-interaction-demo
 x = [0, 1, 2, 3, 4, 5, 6, 7]

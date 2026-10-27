@@ -10,8 +10,12 @@ snapshots and releases over-budget panels instead; pointer entry revives
 them.
 
 PNG: each panel renders through the engine's native rasterizer to an RGBA
-array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
-the file. This module and `_mplfig.savefig` are the only places the shim
+array; NumPy composites them onto one canvas and the engine's PNG encoder
+writes the file. Absolutely placed panels are rendered on a transparent canvas
+and alpha-composited, because a panel is wider than its gridspec cell — its
+tick labels and title live outside the plot rect — and an opaque paste made
+each column erase the one to its left. This module and `_mplfig.savefig` are
+the only places the shim
 reaches past the public API (via `Chart.figure()` + the `_raster`/`_png`
 modules); everything else goes through `xy`' public surface.
 """
@@ -23,6 +27,230 @@ from typing import Any, Optional
 
 import numpy as np
 
+from .. import _textblock
+
+
+def _svg_text_lines(text: object, x: float, line_step: float) -> str:
+    lines = []
+    for index, line in enumerate(_textblock.split_lines(text)):
+        dy = f' dy="{line_step:g}"' if index else ""
+        lines.append(f'<tspan x="{x:g}"{dy}>{_html.escape(line)}</tspan>')
+    return "".join(lines)
+
+
+def _suptitle_baseline(
+    canvas_height: float,
+    title_band_height: float,
+    style: dict[str, Any],
+    block: Optional[_textblock.TextBlock],
+    size: float,
+) -> float:
+    """First baseline at the authored figure fraction, contained by its band."""
+    ascent = block.ascent if block is not None else 0.75 * size
+    descent = block.descent if block is not None else 0.25 * size
+    trailing = (block.line_count - 1) * block.line_step if block is not None else 0.0
+    desired = (1.0 - float(style.get("y", 0.98))) * canvas_height + ascent
+    # The reserved band owns the complete text block, not only its first
+    # baseline. Clamp both the leading ascent and final descender inside it.
+    maximum = max(ascent, title_band_height - trailing - descent - 2.0)
+    return min(max(ascent, desired), maximum)
+
+
+def _figure_label_baseline(
+    canvas_height: float,
+    label: dict[str, Any],
+    block: _textblock.TextBlock,
+) -> float:
+    desired = (1.0 - float(label.get("y", 0.5))) * canvas_height
+    trailing = (block.line_count - 1) * block.line_step
+    alignment = str(label.get("vertical_align", "center"))
+    if alignment == "top":
+        return desired + block.ascent
+    if alignment == "baseline":
+        return desired
+    if alignment == "bottom":
+        return desired - trailing - block.descent
+    return desired + (block.ascent - trailing - block.descent) / 2.0
+
+
+def _svg_figure_labels(labels: list[dict[str, Any]], width: float, height: float) -> str:
+    body = []
+    for label in labels:
+        size = float(label.get("size", 12.0))
+        block = _textblock.measure(label.get("text", ""), size)
+        x = width * float(label.get("x", 0.5))
+        y = _figure_label_baseline(height, label, block)
+        anchor = str(label.get("anchor", "middle"))
+        angle = -float(label.get("rotation", 0.0))
+        transform = f' transform="rotate({angle:g} {x:g} {y:g})"' if angle else ""
+        body.append(
+            f'<text x="{x:g}" y="{y:g}" text-anchor="{_html.escape(anchor)}"'
+            f'{transform} font-family="{_html.escape(str(label.get("family", "system-ui,sans-serif")))}"'
+            f' font-size="{size:g}" font-style="{_html.escape(str(label.get("font_style", "normal")))}"'
+            f' font-weight="{_html.escape(str(label.get("weight", "normal")))}"'
+            f' fill="{_html.escape(str(label.get("color", "#262626")))}"'
+            f' fill-opacity="{float(label.get("opacity", 1.0)):g}">'
+            f"{_svg_text_lines(label.get('text', ''), x, block.line_step)}</text>"
+        )
+    return "".join(body)
+
+
+def _html_figure_labels(labels: list[dict[str, Any]]) -> str:
+    body = []
+    for label in labels:
+        anchor = str(label.get("anchor", "middle"))
+        shift_x = {"start": "0%", "middle": "-50%", "end": "-100%"}.get(anchor, "-50%")
+        alignment = str(label.get("vertical_align", "center"))
+        shift_y = {
+            "top": "0%",
+            "baseline": "-100%",
+            "bottom": "-100%",
+            "center": "-50%",
+            "center_baseline": "-50%",
+        }.get(alignment, "-50%")
+        angle = -float(label.get("rotation", 0.0))
+        body.append(
+            "<div class='xy-figure-label' style='position:absolute;"
+            f"left:{float(label.get('x', 0.5)) * 100:g}%;"
+            f"top:{(1.0 - float(label.get('y', 0.5))) * 100:g}%;"
+            f"transform:translate({shift_x},{shift_y}) rotate({angle:g}deg);"
+            f"font-size:{float(label.get('size', 12.0)):g}px;"
+            f"font-family:{_html.escape(str(label.get('family', 'system-ui,sans-serif')))};"
+            f"font-style:{_html.escape(str(label.get('font_style', 'normal')))};"
+            f"font-weight:{_html.escape(str(label.get('weight', 'normal')))};"
+            f"color:{_html.escape(str(label.get('color', '#262626')))};"
+            f"opacity:{float(label.get('opacity', 1.0)):g}'>"
+            f"{_html.escape(str(label.get('text', '')))}</div>"
+        )
+    return "".join(body)
+
+
+def _html_figure_legend(legend: Optional[dict[str, Any]]) -> str:
+    if not legend or not legend.get("items"):
+        return ""
+    options = legend.get("style") or {}
+    rows = []
+    for item in legend["items"]:
+        item_style = item.get("style") or {}
+        color = _html.escape(str(item_style.get("color", "#4c78a8")))
+        kind = str(item.get("kind", "line"))
+        if kind in {"line", "segments", "step", "stairs", "errorbar"}:
+            swatch_style = (
+                "height:0;background:transparent;"
+                f"border-top:{float(item_style.get('width', 2.0)):g}px "
+                f"{'dashed' if item_style.get('dash') else 'solid'} {color}"
+            )
+        elif kind == "scatter":
+            swatch_style = f"width:9px;height:9px;border-radius:50%;background:{color}"
+        else:
+            swatch_style = f"height:9px;background:{color}"
+        rows.append(
+            "<div class='xy-figure-legend-row'>"
+            f"<span class='xy-figure-legend-swatch' style='{swatch_style}'></span>"
+            f"<span>{_html.escape(str(item.get('name', '')))}</span></div>"
+        )
+    ncols = max(1, int(legend.get("ncols", 1)))
+    loc = (
+        "upper right"
+        if legend.get("figure_loc") == "outside right upper"
+        else str(legend.get("loc", "upper right"))
+    )
+    transforms = []
+    if "left" in loc:
+        horizontal = "left:6px;"
+    elif "right" in loc:
+        horizontal = "right:6px;"
+    else:
+        horizontal = "left:50%;"
+        transforms.append("translateX(-50%)")
+    vertical = "top:6px;" if "upper" in loc else "bottom:6px;" if "lower" in loc else "top:50%;"
+    if "upper" not in loc and "lower" not in loc:
+        transforms.append("translateY(-50%)")
+    transform = f"transform:{' '.join(transforms)};" if transforms else ""
+    title = legend.get("title")
+    title_html = (
+        "<div class='xy-figure-legend-title' "
+        f"style='grid-column:1/{ncols + 1}'>{_html.escape(str(title))}</div>"
+        if title
+        else ""
+    )
+    return (
+        "<div class='xy-figure-legend' style='position:absolute;"
+        f"{horizontal}{vertical}{transform}"
+        f"grid-template-columns:repeat({ncols},max-content);"
+        f"font-size:{_html.escape(str(options.get('fontSize', '11px')))};"
+        f"color:{_html.escape(str(options.get('color', '#262626')))};"
+        f"background:{_html.escape(str(options.get('background', 'rgba(255,255,255,.92)')))};"
+        f"border-color:{_html.escape(str(options.get('borderColor', '#cccccc')))}'>"
+        f"{title_html}{''.join(rows)}</div>"
+    )
+
+
+def _composite_rgba(destination: np.ndarray, source: np.ndarray) -> None:
+    """Composite a straight-alpha RGBA tile over ``destination`` in place.
+
+    Matplotlib draws every axes onto one canvas, so a panel's chrome may hang
+    over a neighbour's without erasing it. Alpha compositing is the equivalent
+    for panel-per-render composition; an opaque paste is not.
+    """
+    source_alpha = source[:, :, 3]
+    opaque = source_alpha == 255
+    destination[opaque] = source[opaque]
+    partial = (source_alpha != 0) & ~opaque
+    if not np.any(partial):
+        return
+    src = source[partial].astype(np.float32)
+    dst = destination[partial].astype(np.float32)
+    src_alpha_f = src[:, 3:4] / 255.0
+    dst_alpha_f = dst[:, 3:4] / 255.0
+    out_alpha = src_alpha_f + dst_alpha_f * (1.0 - src_alpha_f)
+    out_rgb = np.divide(
+        src[:, :3] * src_alpha_f + dst[:, :3] * dst_alpha_f * (1.0 - src_alpha_f),
+        out_alpha,
+        out=np.zeros_like(src[:, :3]),
+        where=out_alpha != 0,
+    )
+    destination[partial, :3] = np.rint(out_rgb).astype(np.uint8)
+    destination[partial, 3] = np.rint(out_alpha[:, 0] * 255.0).astype(np.uint8)
+
+
+def _compose_canvas(
+    tiles: list[np.ndarray],
+    positions: list[tuple[float, float, float, float]],
+    canvas_size: tuple[int, int],
+    facecolor: str,
+    scale: float,
+) -> np.ndarray:
+    """Alpha-composite absolutely placed panel tiles onto one RGBA figure canvas.
+
+    `positions` are whole-panel [left, bottom, width, height] figure fractions,
+    bottom-origin like matplotlib; document order stacks later axes above
+    earlier ones, as matplotlib draws.
+    """
+    from xy import _raster
+
+    background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
+    canvas = np.empty(
+        (round(canvas_size[1] * scale), round(canvas_size[0] * scale), 4), dtype=np.uint8
+    )
+    canvas[...] = background
+    for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
+        x = round(left * canvas.shape[1])
+        y = round((1.0 - bottom - height) * canvas.shape[0])
+        dest_x0, dest_y0 = max(0, x), max(0, y)
+        src_x0, src_y0 = max(0, -x), max(0, -y)
+        dest_x1 = min(canvas.shape[1], x + tile.shape[1])
+        dest_y1 = min(canvas.shape[0], y + tile.shape[0])
+        if dest_x1 > dest_x0 and dest_y1 > dest_y0:
+            _composite_rgba(
+                canvas[dest_y0:dest_y1, dest_x0:dest_x1],
+                tile[
+                    src_y0 : src_y0 + dest_y1 - dest_y0,
+                    src_x0 : src_x0 + dest_x1 - dest_x0,
+                ],
+            )
+    return canvas
+
 
 def compose_html(
     charts: list[Any],
@@ -31,6 +259,8 @@ def compose_html(
     suptitle: Optional[str],
     suptitle_style: Optional[dict[str, Any]] = None,
     *,
+    figure_labels: Optional[list[dict[str, Any]]] = None,
+    figure_legend: Optional[dict[str, Any]] = None,
     positions: Optional[list[tuple[float, float, float, float]]] = None,
     canvas_size: Optional[tuple[int, int]] = None,
 ) -> str:
@@ -97,7 +327,12 @@ def compose_html(
             f".xy-grid {{ position: relative; width: {canvas_size[0]}px; "
             f"height: {canvas_size[1]}px; overflow: hidden; }}"
         )
-        grid = "\n".join(panels) + ("\n" + title_html if title_html else "")
+        decorations = (
+            title_html
+            + _html_figure_labels(figure_labels or [])
+            + _html_figure_legend(figure_legend)
+        )
+        grid = "\n".join(panels) + ("\n" + decorations if decorations else "")
         title_html = ""
     else:
         grid_css = (
@@ -113,9 +348,14 @@ def compose_html(
 <meta http-equiv="Content-Security-Policy" content="{export._STANDALONE_CSP}">
 <style>
   body {{ margin: 0; font-family: system-ui, sans-serif; background: #ffffff; }}
-  .xy-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
+  .xy-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; white-space: pre-line; line-height: 1.2; }}
   {grid_css}
   .xy-panel {{ position: relative; }}
+  .xy-figure-label {{ z-index: 4; white-space: pre-line; line-height: 1.2; pointer-events: none; }}
+  .xy-figure-legend {{ z-index: 4; display: grid; gap: 5px; padding: 5px 7px; border: 1px solid; border-radius: 4px; }}
+  .xy-figure-legend-row {{ display: flex; align-items: center; gap: 7px; white-space: nowrap; }}
+  .xy-figure-legend-title {{ font-weight: 600; }}
+  .xy-figure-legend-swatch {{ box-sizing: border-box; display: inline-block; width: 18px; height: 3px; }}
 </style>
 </head>
 <body>
@@ -143,6 +383,8 @@ def compose_svg(
     suptitle: Optional[str],
     suptitle_style: Optional[dict[str, Any]] = None,
     *,
+    figure_labels: Optional[list[dict[str, Any]]] = None,
+    figure_legend: Optional[dict[str, Any]] = None,
     positions: Optional[list[tuple[float, float, float, float]]] = None,
     canvas_size: Optional[tuple[int, int]] = None,
 ) -> str:
@@ -155,7 +397,7 @@ def compose_svg(
     from xy import _svg
 
     figures = [chart.figure() for chart in charts]
-    if not figures:
+    if not figures and canvas_size is None:
         raise ValueError("figure has no axes to save")
     if positions is not None and canvas_size is not None:
         title_h = 0
@@ -179,7 +421,9 @@ def compose_svg(
             )
             for row in range(nrows)
         ]
-        title_h = 28 if suptitle else 0
+        style = suptitle_style or {}
+        size = float(style.get("size", 16))
+        title_h = round(_textblock.measure(suptitle, size).height + 12) if suptitle else 0
         offsets = []
         for index in range(len(figures)):
             row, col = divmod(index, ncols)
@@ -200,17 +444,44 @@ def compose_svg(
     )
     width, height = total_size
     size = float(style.get("size", 16))
-    # y is a figure fraction measured from the bottom, like matplotlib.
-    baseline = min(height - 2.0, (1.0 - float(style.get("y", 0.98))) * height + 0.75 * size)
-    title = (
-        f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
-        f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">{_html.escape(suptitle)}</text>'
-        if suptitle
-        else ""
+    block = _textblock.measure(suptitle, size) if suptitle else None
+    # y is a figure fraction measured from the bottom, like matplotlib. Grid
+    # composition reserves ``title_h``; absolute composition overlays the full
+    # canvas and therefore uses that as the available title band.
+    baseline = _suptitle_baseline(
+        height,
+        float(title_h or height),
+        style,
+        block,
+        size,
     )
+    if suptitle:
+        assert block is not None
+        title = (
+            f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
+            f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">'
+            f"{_svg_text_lines(suptitle, width * float(style.get('x', 0.5)), block.line_step)}</text>"
+        )
+    else:
+        title = ""
+    labels = _svg_figure_labels(figure_labels or [], width, height)
+    legend = ""
+    if figure_legend and figure_legend.get("items"):
+        loc = (
+            "upper right"
+            if figure_legend.get("figure_loc") == "outside right upper"
+            else figure_legend.get("loc", "upper right")
+        )
+        options = {**figure_legend, "loc": loc}
+        legend = _svg._legend(
+            list(figure_legend["items"]),
+            {"x": 0.0, "y": 0.0, "w": float(width), "h": float(height)},
+            options,
+            "xy-figure-legend",
+        )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}">{title}{"".join(body)}</svg>'
+        f'viewBox="0 0 {width} {height}">{title}{"".join(body)}{labels}{legend}</svg>'
     )
 
 
@@ -222,6 +493,8 @@ def stitch_png(
     colorbar: Optional[dict[str, Any]] = None,
     *,
     suptitle_style: Optional[dict[str, Any]] = None,
+    figure_labels: Optional[list[dict[str, Any]]] = None,
+    figure_legend: Optional[dict[str, Any]] = None,
     positions: Optional[list[tuple[float, float, float, float]]] = None,
     canvas_size: Optional[tuple[int, int]] = None,
     facecolor: str = "white",
@@ -230,12 +503,20 @@ def stitch_png(
 ) -> bytes:
     from xy import _png, _raster  # sanctioned escape hatch (see module doc)
 
-    scale = 2.0
+    # pyplot charts are already built at ``figsize * dpi`` logical pixels.
+    # Rasterizing those pixels at the core exporter's 2x quality default made
+    # savefig silently double both output dimensions and every point-sized
+    # artist compared with Matplotlib.  The pyplot compatibility boundary is
+    # physical pixels, so keep its raster scale at one; callers that use the
+    # native Figure API directly retain that API's explicit 2x default.
+    scale = 1.0
     if (
         len(charts) == 1
         and positions is None
         and not suptitle
         and not colorbar
+        and not figure_labels
+        and not figure_legend
         and not bbox_tight
         and facecolor in ("white", "#ffffff")
     ):
@@ -253,34 +534,70 @@ def stitch_png(
             return rendered
         return _png.encode(rendered)
 
+    absolute = positions is not None and canvas_size is not None
     tiles: list[np.ndarray] = []
     for chart in charts:
         fig = chart.figure()
         spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
-        spec["canvas_background"] = facecolor
+        # Absolute panels include their own surrounding chrome and therefore
+        # overlap in the gutters.  Keep only that outer canvas transparent so
+        # a later panel cannot erase an earlier panel's right/bottom spine or
+        # terminal tick label.  The axes patch (--chart-bg) remains opaque.
+        spec["canvas_background"] = "none" if absolute else facecolor
         img = _raster.render_raster(spec, blob, scale, borrowed=borrowed)
         if isinstance(img, bytes):
             raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
         tiles.append(img)
     if not tiles:
-        raise ValueError("figure has no axes to save")
-
-    if positions is not None and canvas_size is not None:
+        if canvas_size is None:
+            raise ValueError("figure has no axes to save")
         background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
-        canvas = np.empty((canvas_size[1] * 2, canvas_size[0] * 2, 4), dtype=np.uint8)
+        canvas = np.empty((int(canvas_size[1]), int(canvas_size[0]), 4), dtype=np.uint8)
         canvas[...] = background
-        for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
-            x = round(left * canvas.shape[1])
-            y = round((1.0 - bottom - height) * canvas.shape[0])
-            dest_x0, dest_y0 = max(0, x), max(0, y)
-            src_x0, src_y0 = max(0, -x), max(0, -y)
-            dest_x1 = min(canvas.shape[1], x + tile.shape[1])
-            dest_y1 = min(canvas.shape[0], y + tile.shape[0])
-            if dest_x1 > dest_x0 and dest_y1 > dest_y0:
-                canvas[dest_y0:dest_y1, dest_x0:dest_x1] = tile[
-                    src_y0 : src_y0 + dest_y1 - dest_y0,
-                    src_x0 : src_x0 + dest_x1 - dest_x0,
-                ]
+        if suptitle:
+            _blend_raster_suptitle(
+                canvas,
+                suptitle,
+                suptitle_style,
+                scale=scale,
+                title_h=canvas.shape[0],
+                absolute=True,
+            )
+        _blend_raster_figure_decorations(
+            canvas,
+            figure_labels or [],
+            figure_legend,
+            scale=scale,
+        )
+        if bbox_tight:
+            delta = np.any(canvas != background, axis=2)
+            ys, xs = np.nonzero(delta)
+            if len(xs):
+                x0 = max(0, int(xs.min()) - pad_pixels)
+                x1 = min(canvas.shape[1], int(xs.max()) + pad_pixels + 1)
+                y0 = max(0, int(ys.min()) - pad_pixels)
+                y1 = min(canvas.shape[0], int(ys.max()) + pad_pixels + 1)
+                canvas = canvas[y0:y1, x0:x1]
+        return _png.encode(canvas)
+
+    if absolute:
+        assert positions is not None and canvas_size is not None
+        canvas = _compose_canvas(tiles, positions, canvas_size, facecolor, scale)
+        if suptitle:
+            _blend_raster_suptitle(
+                canvas,
+                suptitle,
+                suptitle_style,
+                scale=scale,
+                title_h=canvas.shape[0],
+                absolute=True,
+            )
+        _blend_raster_figure_decorations(
+            canvas,
+            figure_labels or [],
+            figure_legend,
+            scale=scale,
+        )
         return _png.encode(canvas)
 
     col_widths = [
@@ -294,7 +611,8 @@ def stitch_png(
         )
         for row in range(nrows)
     ]
-    title_h = 48 if suptitle else 0
+    suptitle_size = float((suptitle_style or {}).get("size", 14))
+    title_h = round(_textblock.measure(suptitle, suptitle_size).height + 16) if suptitle else 0
     colorbar_h = 52 if colorbar else 0
     background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
     canvas = np.empty((title_h + sum(row_heights) + colorbar_h, sum(col_widths), 4), dtype=np.uint8)
@@ -305,23 +623,13 @@ def stitch_png(
         x = sum(col_widths[:c])
         canvas[y : y + tile.shape[0], x : x + tile.shape[1]] = tile
     if suptitle:
-        from xy import kernels
-
-        cmd = _raster._Cmd(scale)
-        style = suptitle_style or {}
-        cmd.text(
-            canvas.shape[1] * float(style.get("x", 0.5)) / scale,
-            17,
-            1,
-            float(style.get("size", 14)),
-            _raster._parse_color(str(style.get("color", "#262626"))),
+        _blend_raster_suptitle(
+            canvas,
             suptitle,
+            suptitle_style,
+            scale=scale,
+            title_h=title_h,
         )
-        overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
-        alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0
-        canvas[:title_h, :, :3] = np.round(
-            overlay[:, :, :3] * alpha + canvas[:title_h, :, :3] * (1.0 - alpha)
-        ).astype(np.uint8)
     if colorbar:
         from xy._svg import _lut
 
@@ -330,6 +638,12 @@ def stitch_png(
         gradient = _lut(colorbar.get("colormap", "viridis"), np.linspace(0.0, 1.0, max(2, x1 - x0)))
         canvas[y0 : y0 + 16, x0:x1, :3] = gradient[None, :, :]
         canvas[y0 : y0 + 16, x0:x1, 3] = 255
+    _blend_raster_figure_decorations(
+        canvas,
+        figure_labels or [],
+        figure_legend,
+        scale=scale,
+    )
     if bbox_tight:
         # Crop the figure-colored margin, retaining a Matplotlib-like pad.  Do
         # this on the composed RGBA buffer so it works for subplot grids and
@@ -343,3 +657,102 @@ def stitch_png(
             y1 = min(canvas.shape[0], int(ys.max()) + pad_pixels + 1)
             canvas = canvas[y0:y1, x0:x1]
     return _png.encode(canvas)
+
+
+def _blend_raster_suptitle(
+    canvas: np.ndarray,
+    suptitle: str,
+    style: Optional[dict[str, Any]],
+    *,
+    scale: float,
+    title_h: int,
+    absolute: bool = False,
+) -> None:
+    """Draw a figure suptitle onto either grid or absolute-position PNGs."""
+    from xy import _raster, kernels
+
+    resolved = style or {}
+    cmd = _raster._Cmd(scale)
+    size = float(resolved.get("size", 14))
+    block = _textblock.measure(suptitle, size)
+    x = canvas.shape[1] * float(resolved.get("x", 0.5)) / scale
+    baseline = _suptitle_baseline(
+        canvas.shape[0] / scale,
+        (canvas.shape[0] if absolute else title_h) / scale,
+        resolved,
+        block,
+        size,
+    )
+    color = _raster._parse_color(str(resolved.get("color", "#262626")))
+    bold = str(resolved.get("weight", "normal")).lower() in {
+        "bold",
+        "semibold",
+        "demibold",
+        "heavy",
+        "black",
+    }
+    for index, line in enumerate(block.lines):
+        cmd.text(x, baseline + index * block.line_step, 1, size, color, line, bold=bold)
+    overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
+    _composite_rgba(canvas[:title_h], overlay)
+
+
+def _blend_raster_figure_decorations(
+    canvas: np.ndarray,
+    labels: list[dict[str, Any]],
+    legend: Optional[dict[str, Any]],
+    *,
+    scale: float,
+) -> None:
+    """Paint figure-fraction labels and the figure legend on one overlay."""
+    if not labels and not legend:
+        return
+    from xy import _raster, kernels
+
+    cmd = _raster._Cmd(scale)
+    logical_w = canvas.shape[1] / scale
+    logical_h = canvas.shape[0] / scale
+    for label in labels:
+        size = float(label.get("size", 12.0))
+        block = _textblock.measure(label.get("text", ""), size)
+        x = logical_w * float(label.get("x", 0.5))
+        baseline = _figure_label_baseline(logical_h, label, block)
+        anchor = {"start": 0, "middle": 1, "end": 2}.get(str(label.get("anchor", "middle")), 1)
+        color = _raster._parse_color(str(label.get("color", "#262626")))
+        opacity = min(1.0, max(0.0, float(label.get("opacity", 1.0))))
+        color = (*color[:3], round(color[3] * opacity))
+        italic = str(label.get("font_style", "normal")) in {"italic", "oblique"}
+        bold = str(label.get("weight", "normal")).lower() in {
+            "bold",
+            "semibold",
+            "demibold",
+            "heavy",
+            "black",
+        }
+        for index, line in enumerate(block.lines):
+            cmd.text(
+                x,
+                baseline + index * block.line_step,
+                anchor,
+                size,
+                color,
+                line,
+                angle=-float(label.get("rotation", 0.0)),
+                italic=italic,
+                bold=bold,
+            )
+    if legend and legend.get("items"):
+        loc = (
+            "upper right"
+            if legend.get("figure_loc") == "outside right upper"
+            else legend.get("loc", "upper right")
+        )
+        _raster._emit_legend(
+            cmd,
+            list(legend["items"]),
+            {"x": 0.0, "y": 0.0, "w": logical_w, "h": logical_h},
+            {**legend, "loc": loc},
+            "#262626",
+        )
+    overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], canvas.shape[0])
+    _composite_rgba(canvas, overlay)

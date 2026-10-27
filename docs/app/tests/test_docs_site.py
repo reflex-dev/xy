@@ -10,10 +10,10 @@ import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
-from urllib.parse import urlparse
+from types import SimpleNamespace
+from urllib.parse import unquote, urlparse
 
 import pytest
-import reflex_xy
 from reflex_base.components.memo import MemoComponent
 from reflex_docgen.markdown import (
     Block,
@@ -32,8 +32,11 @@ from reflex_docgen.markdown import (
     TextBlock,
     parse_document,
 )
+from reflex_site_shared.components.blocks.typography import list_comp
 from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
+from reflex_site_shared.docs.markdown import _file_modules
+from reflex_site_shared.docs.models import DocsPage
 from rxconfig import config
 from xy_docs.api_reference import (
     API_REFERENCE_HEADING,
@@ -64,22 +67,33 @@ from xy_docs.gallery import (
 )
 from xy_docs.markdown import (
     XyDocsMarkdownTransformer,
+    _page_virtual_filepath,
+    _split_demo_data,
     page_with_api_reference_toc,
     render_xy_markdown_page,
 )
-from xy_docs.navbar import XY_GITHUB_STARS, XY_REPOSITORY_URL, xy_docs_navbar
+from xy_docs.navbar import XY_REPOSITORY_URL, xy_docs_navbar
 from xy_docs.sidebar import (
-    INTEGRATION_LINK_ICONS,
+    CHART_FAMILY_SIDEBAR_SECTIONS,
+    CHART_GALLERY_SIDEBAR_LINK,
+    PIE_DOCS_ROUTE,
+    POLAR_DOCS_ROUTE,
+    POLAR_DOCS_ROUTES,
+    POLAR_SIDEBAR_SECTION,
+    RADAR_DOCS_ROUTE,
+    RADIAL_BAR_DOCS_ROUTE,
     SIDEBAR_SECTION_GROUPS,
+    WIND_ROSE_DOCS_ROUTE,
+    _section_items,
     xy_docs_sidebar,
     xy_docs_sidebar_comp,
 )
-from xy_docs.xy_docs import _DOCS_ROUTES, app
+from xy_docs.xy_docs import _CHART_STYLE, _DOCS_ROUTES, app
 
+import reflex_xy
 import xy
-from xy.components import _MARK_APPLIERS
+from xy.components import _MARK_APPLIERS, _POLAR_INERT_AXIS_KEYWORDS
 
-SITEMAP_NAMESPACE = {"sitemap": "https://www.sitemaps.org/schemas/sitemap/0.9"}
 DOCS_APP_ROOT = Path(__file__).resolve().parent.parent
 DOCS_ROOT = DOCS_APP_ROOT.parent
 EXPORTED_SITEMAP = DOCS_APP_ROOT / ".web" / "public" / "sitemap.xml"
@@ -135,6 +149,17 @@ def _walk_blocks(blocks: tuple[Block, ...]) -> Iterator[LinkSpan]:
                     yield from _walk_spans(cell.children)
 
 
+def _rendered_ids(component: object) -> Iterator[str]:
+    """Collect literal IDs from the rendered component tree."""
+    value = getattr(component, "id", None)
+    if not isinstance(value, str):
+        value = getattr(value, "_var_value", None)
+    if isinstance(value, str):
+        yield value
+    for child in getattr(component, "children", ()):
+        yield from _rendered_ids(child)
+
+
 def _normalize_xy_docs_path(url: str) -> str | None:
     """Return an app-relative route for a canonical XY docs URL.
 
@@ -164,7 +189,9 @@ def _sitemap_routes(sitemap_path: Path) -> set[str]:
     root = ET.parse(sitemap_path).getroot()
     return {
         route
-        for location in root.findall("sitemap:url/sitemap:loc", SITEMAP_NAMESPACE)
+        for location in root.findall(
+            "{http://www.sitemaps.org/schemas/sitemap/0.9}url/{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
+        )
         if location.text is not None
         if (route := _normalize_xy_docs_path(location.text.strip())) is not None
     }
@@ -254,7 +281,30 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
     styling_leaves = next(
         leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Styling"
     )
+    chart_gallery_leaves = next(
+        leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
+    )
     assert ("Animations", "/styling/animations/") in styling_leaves
+    assert ("Chrome Slots", "/styling/chrome-slots/") in styling_leaves
+    assert tuple(
+        leaf
+        for leaf in chart_gallery_leaves
+        if leaf[1]
+        in {
+            PIE_DOCS_ROUTE,
+            POLAR_DOCS_ROUTE,
+            RADAR_DOCS_ROUTE,
+            RADIAL_BAR_DOCS_ROUTE,
+            WIND_ROSE_DOCS_ROUTE,
+        }
+    ) == (
+        ("Polar", POLAR_DOCS_ROUTE),
+        ("Radar", RADAR_DOCS_ROUTE),
+        ("Radial Bar", RADIAL_BAR_DOCS_ROUTE),
+        ("Pie & Donut", PIE_DOCS_ROUTE),
+        ("Wind Rose", WIND_ROSE_DOCS_ROUTE),
+    )
+    assert "/styling/chrome-slots/" not in DOCS_REDIRECTS
     assert (
         max(len(tuple(part for part in route.split("/") if part)) for route in section_routes) <= 2
     )
@@ -271,15 +321,44 @@ def test_docs_app_configures_the_reflex_xy_adapter() -> None:
     assert any(isinstance(plugin, reflex_xy.XYPlugin) for plugin in config.plugins)
 
 
+def test_benchmark_demo_uses_the_shared_theme() -> None:
+    from xy_docs.demos import benchmark_charts
+
+    from xy._benchmark_theme import (
+        benchmark_chart_class,
+        benchmark_live_theme,
+    )
+
+    assert benchmark_chart_class() == benchmark_charts._CHART_CLASS
+
+    live_theme = benchmark_live_theme()
+    assert benchmark_charts._theme().style == {
+        "background": live_theme["background"],
+        "--chart-bg": live_theme["plot_background"],
+        "--chart-grid": live_theme["grid_color"],
+        "--chart-axis": live_theme["axis_color"],
+        "--chart-text": live_theme["text_color"],
+    }
+
+
+def test_docs_app_does_not_override_the_builtin_toolbar_palette() -> None:
+    assert not any(key.startswith("--chart-modebar-") for key in _CHART_STYLE)
+
+
 def test_tailwind_styling_docs_match_the_reflex_plugin_contract() -> None:
     """Keep the Reflex scan-path guidance aligned with the configured plugin."""
     content = (DOCS_ROOT / "styling/chrome-slots.md").read_text(encoding="utf-8")
 
-    assert any(plugin.__class__.__name__ == "TailwindV4Plugin" for plugin in config.plugins)
+    tailwind = next(
+        plugin for plugin in config.plugins if plugin.__class__.__name__ == "TailwindV4Plugin"
+    )
+    assert tailwind.config.get("darkMode") == "selector"
     assert "literal class strings in Tailwind's default scan" in content
     assert "original Python or Markdown file" in content
     assert "charts produced from a token or `Var`" in content
-    assert "safelist it in the host app" in content
+    assert "tailwind_classes=LIVE_CHART_CLASSES" in content
+    assert "never becomes a DOM attribute" in content
+    assert 'darkMode": "selector"' in content
 
 
 def test_styling_troubleshooting_covers_common_host_and_export_failures() -> None:
@@ -306,7 +385,7 @@ def test_component_styling_matrix_covers_public_chrome_boundaries() -> None:
     expected = {
         "legend_item",
         "legend_swatch",
-        "tooltip(fields=..., title=..., format=...)",
+        "tooltip(fields=..., labels=..., title=..., format=...)",
         "x_axis(...)",
         "y_axis(...)",
         "vline(x)",
@@ -323,8 +402,24 @@ def test_component_styling_matrix_covers_public_chrome_boundaries() -> None:
     assert not missing
     assert "button_class_name=" in content
     assert "button_style=" in content
-    assert "does not render components passed through" in content
-    assert "Standalone exports cannot include framework-owned components either." in content
+    assert "built-in `reflex_xy.chart` adapter mounts `xy.tooltip(render=...)`" in content
+    assert "Legend and colorbar replacements remain framework-owned siblings" in " ".join(
+        content.split()
+    )
+
+
+def test_tooltip_docs_cover_named_series_and_polar_coordinates() -> None:
+    """Keep the default tooltip readout aligned with the client renderer."""
+    content = " ".join((DOCS_ROOT / "components/tooltips.md").read_text(encoding="utf-8").split())
+
+    for requirement in (
+        "hovered series name",
+        "label the radial row `r`",
+        "drop the numeric angle",
+        "An authored spoke label",
+        'labels={"x": ...}',
+    ):
+        assert requirement in content
 
 
 def test_styling_docs_cover_every_public_dom_slot() -> None:
@@ -409,15 +504,25 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
 
     rendered_page = str(render_xy_markdown_page(page))
     demo_count = len(demos)
-    # Demos that split their hardcoded data into a Data tab (the `# --- chart ---`
-    # divider) render a third trigger/panel; the rest stay Preview/Code.
-    data_demos = sum("# --- chart ---" in block.content for block in demos)
+    # Only demos whose marked data section exceeds ten nonblank lines render a
+    # third trigger/panel; the rest keep their data in the Code tab.
+    data_demos = sum(_split_demo_data(block.content)[0] is not None for block in demos)
+    assert data_demos == 2
     assert rendered_page.count("XYChart") == demo_count + 6
     assert rendered_page.count('value:"preview"') == demo_count * 2
     assert rendered_page.count('value:"code"') == demo_count * 2
     assert rendered_page.count('value:"data"') == data_demos * 2
     assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
     assert rendered_page.count("xy-example-tab-list relative") == demo_count
+    assert rendered_page.count("Start Building Now!") == demo_count
+    secure_build_action = 'rel:"noopener noreferrer",target:"_blank",to:"https://build.reflex.dev/"'
+    assert rendered_page.count(secure_build_action) == demo_count
+    assert (
+        rendered_page.count("flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4")
+        == demo_count
+    )
+    assert rendered_page.count("w-full p-2 [&>div]:!m-0") == demo_count
+    assert rendered_page.count("min-h-[430px] w-full px-1 py-2 sm:px-2 sm:py-7") == data_demos
     assert "xy-chart-examples" in rendered_page
     assert "max-width: 88rem" in rendered_page
     assert "div:has(#toc-navigation)" in rendered_page
@@ -427,6 +532,23 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
     assert "var(--chart-" not in page.content
     assert "currentColor" not in page.content
     assert '"transparent"' not in page.content
+
+
+def test_demo_data_tabs_require_more_than_ten_nonblank_lines() -> None:
+    """Keep short literals with Code and reserve Data tabs for long datasets."""
+    short_data = "\n".join(f"row_{index} = {index}" for index in range(10))
+    long_data = "\n".join(f"row_{index} = {index}" for index in range(11))
+    chart_code = "chart = xy.line_chart(xy.line([0, 1], [0, 1]))"
+
+    short_tab, short_code = _split_demo_data(f"{short_data}\n\n# --- chart ---\n{chart_code}")
+    long_tab, long_code = _split_demo_data(f"{long_data}\n\n# --- chart ---\n{chart_code}")
+
+    assert short_tab is None
+    assert short_data in short_code
+    assert chart_code in short_code
+    assert "# --- chart ---" not in short_code
+    assert long_tab == long_data
+    assert long_code == chart_code
 
 
 def test_animation_replay_demos_reuse_example_chrome_and_controls() -> None:
@@ -456,14 +578,43 @@ def test_animation_replay_demos_reuse_example_chrome_and_controls() -> None:
 
 
 def test_palette_playground_drives_a_reactive_chart_grid() -> None:
-    """Keep the preset palettes wired to the state-backed XY figures."""
-    from xy_docs.playground import PLAYGROUND_PALETTES, ChartPlaygroundState, chart_playground
+    """Keep preset and custom colors wired to the state-backed XY figures."""
+    from xy_docs.playground import (
+        BERRY_PALETTE,
+        PLAYGROUND_PALETTES,
+        ChartPlaygroundState,
+        chart_playground,
+    )
 
     rendered_page = str(chart_playground())
+    state_source = inspect.getsource(ChartPlaygroundState)
+    state = ChartPlaygroundState(_reflex_internal_init=True)
 
     assert rendered_page.count("XYChart") == 6
-    assert 'type:"color"' not in rendered_page
+    assert rendered_page.count('type:"color"') == 3
     assert rendered_page.count("apply_palette") == len(PLAYGROUND_PALETTES) == 5
+    assert "reset_palette" in rendered_page
+    for role in ("Primary", "Secondary", "Accent"):
+        assert f"{role} chart color" in rendered_page
+        assert f"set_{role.lower()}_color" in rendered_page
+    assert state_source.count('self.preset = "Custom"') == 3
+    assert "self.primary, self.secondary, self.accent = BERRY_PALETTE" in state_source
+    assert state_source.count("xy.theme(palette=") == 6
+    assert "_HIDDEN_AXIS_STYLE" not in state_source
+    assert '"axis_color": "#00000000"' not in state_source
+    assert "xy.x_axis(tick_count=6, show=False)" in state_source
+    assert "xy.y_axis(domain=(0, 80), show=False, grid=True)" in state_source
+    for handler, value, role in (
+        (ChartPlaygroundState.set_primary_color, "#123456", "primary"),
+        (ChartPlaygroundState.set_secondary_color, "#abcdef", "secondary"),
+        (ChartPlaygroundState.set_accent_color, "#fedcba", "accent"),
+    ):
+        handler.fn(state, value)
+        assert state.preset == "Custom"
+        assert getattr(state, role) == value
+    ChartPlaygroundState.reset_palette.fn(state)
+    assert state.preset == "Berry"
+    assert (state.primary, state.secondary, state.accent) == BERRY_PALETTE
     assert "xy-palette-playground" in rendered_page
     assert "grid grid-cols-1 gap-5 xl:grid-cols-2" in rendered_page
     for label, palette in PLAYGROUND_PALETTES:
@@ -482,6 +633,19 @@ def test_palette_playground_drives_a_reactive_chart_grid() -> None:
     assert "display: none" in rendered_page
 
 
+def test_custom_color_docs_require_literal_palette_entries() -> None:
+    """Do not promise browser-only colors for renderer-neutral indexed palettes."""
+    content = (DOCS_ROOT / "styling/customize.md").read_text(encoding="utf-8")
+    colormap_rule = content[
+        content.index("One rule follows from that") : content.index(
+            "### Recolor categories with a chart palette"
+        )
+    ]
+
+    assert "not as a colormap stop or an `xy.theme(palette=...)` entry" in colormap_rule
+    assert "indexed color lookups used by static renderers" in colormap_rule
+
+
 def test_markdown_heading_links_are_route_local_after_client_navigation() -> None:
     """Do not let a previously visited docs route leak into heading self-links."""
     pages = {page.route: page for page in discover_docs(DOCS_CONFIG)}
@@ -490,6 +654,24 @@ def test_markdown_heading_links_are_route_local_after_client_navigation() -> Non
         rendered = str(render_xy_markdown_page(pages[route]))
         assert 'to:"#' in rendered
         assert "router_rx_state_" not in rendered
+
+
+def test_authored_in_page_links_resolve_to_rendered_ids() -> None:
+    """Check actual fragment targets, including punctuation kept in heading IDs."""
+    failures = []
+    for page in discover_docs(DOCS_CONFIG):
+        links = [
+            link
+            for link in _walk_blocks(parse_document(page.content).blocks)
+            if link.target.startswith("#")
+        ]
+        if not links:
+            continue
+        targets = set(_rendered_ids(render_xy_markdown_page(page)))
+        failures.extend(
+            (page.route, link.target) for link in links if unquote(link.target[1:]) not in targets
+        )
+    assert not failures, failures
 
 
 def test_colorbar_docs_match_the_declarative_and_custom_boundaries() -> None:
@@ -503,7 +685,15 @@ def test_colorbar_docs_match_the_declarative_and_custom_boundaries() -> None:
         "colorbar(show=False)",
     ):
         assert option in content
-    for slot in ("colorbar", "colorbar_bar", "colorbar_tick", "colorbar_title"):
+    for slot in (
+        "colorbar",
+        "colorbar_bar",
+        "colorbar_extension",
+        "colorbar_line",
+        "colorbar_tick",
+        "colorbar_minor_tick",
+        "colorbar_title",
+    ):
         assert f"`{slot}`" in content
     assert "The last compatible continuous mark wins" in content
     assert "does not currently mount custom chrome" in content
@@ -579,7 +769,7 @@ def test_what_is_xy_restores_the_sdf_hero_and_ends_with_a_short_pitch() -> None:
     content = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
 
     heading = content.index("# What is `xy`?")
-    styling = content.index("**Completely customizable.**")
+    styling = content.index("**Styled by your CSS, not ours.**")
     hero = content.index("~~~python demo-only exec")
     early_alpha = content.index("**Early alpha.**")
     start_here = content.index("## Start here")
@@ -598,7 +788,7 @@ def test_what_is_xy_restores_the_sdf_hero_and_ends_with_a_short_pitch() -> None:
     # call-to-action); embedded demo and shell fences don't count.
     why_prose = re.sub(r"~~~.*?~~~|```.*?```", "", why_copy, flags=re.DOTALL)
     assert len(why_prose.split()) < 260
-    assert "10-million-point launch benchmark" in why_copy
+    assert "recorded live interactive sweep" in why_copy
     assert "Compare by workflow, not by slogan" not in why_copy
 
 
@@ -678,8 +868,8 @@ def test_sdf_plot_grid_is_cached_and_uses_reflex_toolbar_tokens() -> None:
 
     rendered = str(xy_sdf_plot_grid(config))
     expected_tokens = {
-        "--chart-text": "var(--secondary-11)",
-        "--chart-focus": "var(--primary-9)",
+        "--chart-text": "var(--muted-foreground)",
+        "--chart-focus": "var(--ring)",
     }
 
     for name, value in expected_tokens.items():
@@ -858,8 +1048,8 @@ def test_every_core_concepts_python_example_renders_a_live_chart() -> None:
     assert not violations, "\n".join(violations)
 
 
-def test_single_chart_styling_demos_keep_only_the_parent_preview_card() -> None:
-    """Keep one neutral preview surface without a nested chart-owned card."""
+def test_single_chart_demos_use_one_tabbed_parent_card() -> None:
+    """Keep one tabbed preview surface without a nested chart-owned card."""
     gallery = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8")
     blocks = re.findall(r"~~~(python[^\n]*)\n(.*?)\n~~~", gallery, re.DOTALL)
     trend = next(body for _fence, body in blocks if "trend_mark_atlas_preview" in body)
@@ -881,15 +1071,20 @@ import reflex as rx
 def one_chart_preview():
     return rx.box("chart", width="100%")
 ~~~"""
-    rendered = str(
-        XyDocsMarkdownTransformer(
-            virtual_filepath="docs/styling/test.md",
-            filename="docs/styling/test.md",
-        ).transform(parse_document(content))
-    )
-    assert rendered.count("border-secondary-4") == 1
-    assert rendered.count("bg-white") == 1
-    assert rendered.count("dark:bg-black") == 1
+    for virtual_filepath in ("docs/styling/test.md", "docs/charts/test.md"):
+        rendered = str(
+            XyDocsMarkdownTransformer(
+                virtual_filepath=virtual_filepath,
+                filename=virtual_filepath,
+            ).transform(parse_document(content))
+        )
+        assert rendered.count("xy-example-tab-list relative") == 1
+        assert rendered.count("xy-example-tab cursor-pointer") == 2
+        assert rendered.count("doc-demo-tab-card relative w-full overflow-hidden") == 1
+        assert "flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4" in rendered
+        assert "w-full p-2 [&>div]:!m-0" in rendered
+        assert "min-h-[430px] w-full p-2" not in rendered
+        assert "sm:py-7" not in rendered
     assert "bg-secondary-2" not in rendered
 
 
@@ -921,14 +1116,14 @@ def test_styling_demos_pair_light_surfaces_with_readable_text() -> None:
     ("relative_path", "demo_name", "expected_live_blocks"),
     (("core-concepts/index.md", "composition_model_demo", 2),),
 )
-def test_beginner_examples_use_docdemos(
+def test_beginner_examples_use_tabbed_demos(
     relative_path: str,
     demo_name: str,
     expected_live_blocks: int,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Keep beginner code and its live result together in a DocDemo."""
+    """Keep beginner code and its live result together in XY's tab model."""
     source_path = DOCS_ROOT / relative_path
     content = source_path.read_text(encoding="utf-8")
     live_blocks = [
@@ -953,22 +1148,388 @@ def test_beginner_examples_use_docdemos(
 
     monkeypatch.chdir(tmp_path)
     rendered = str(
-        render_markdown(
-            content,
+        XyDocsMarkdownTransformer(
             virtual_filepath=f"tests/docdemo/{relative_path}",
             filename=source_path.as_posix(),
-        )
+        ).transform(parse_document(content))
     )
 
-    shell = 'className:"py-4 gap-4 flex flex-col w-full"'
-    preview = 'className:"flex flex-col p-6 rounded-xl overflow-x-auto border border-secondary-4 bg-secondary-2 items-center justify-center w-full"'
-    assert rendered.count(shell) == expected_live_blocks
-    assert rendered.count(preview) == expected_live_blocks
+    assert rendered.count("xy-example-tab-list relative") == expected_live_blocks
+    assert rendered.count("xy-example-tab cursor-pointer") == expected_live_blocks * 2
+    assert rendered.count('value:"preview"') == expected_live_blocks * 2
+    assert rendered.count('value:"code"') == expected_live_blocks * 2
+    assert 'value:"data"' not in rendered
     assert rendered.count("XYChart") == expected_live_blocks
-    assert rendered.index(shell) < rendered.index(preview)
     assert demo_name in rendered
     assert export_calls == []
     assert not (tmp_path / "scatter.html").exists()
+
+
+def test_composition_demos_keep_distinct_assets_after_cached_render(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep each demo bound to its own globals when the page module is reused."""
+    source_path = DOCS_ROOT / "core-concepts" / "index.md"
+    content = source_path.read_text(encoding="utf-8")
+    virtual_filepath = "tests/docdemo/core-concepts/cache-regression.md"
+    payload_pattern = re.compile(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"')
+
+    def render() -> str:
+        return str(
+            XyDocsMarkdownTransformer(
+                virtual_filepath=virtual_filepath,
+                filename=source_path.as_posix(),
+            ).transform(parse_document(content))
+        )
+
+    monkeypatch.chdir(tmp_path)
+    first_payloads = payload_pattern.findall(render())
+    second_payloads = payload_pattern.findall(render())
+
+    assert len(first_payloads) == 2
+    assert len(set(first_payloads)) == 2
+    assert second_payloads == first_payloads
+
+
+def test_repeated_identical_fence_keeps_the_page_namespace_accumulating(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A duplicated fence must not roll the page back to its first occurrence.
+
+    Snapshots are keyed by fence source *and* occurrence: two identical
+    fences are two positions in the page's fence sequence, and the second one
+    restoring the first one's namespace would discard everything the fences
+    between them defined — the shared renderer skips re-execution and lets
+    the namespace keep accumulating, and this seam must not change that.
+    """
+    duplicated = "shared = 1\n"
+    content = "\n".join(
+        (
+            "~~~python exec",
+            duplicated.rstrip("\n"),
+            "~~~",
+            "",
+            "~~~python exec",
+            "between = 2",
+            "~~~",
+            "",
+            "~~~python exec",
+            duplicated.rstrip("\n"),
+            "~~~",
+            "",
+            "~~~python exec",
+            "def result():",
+            "    return (shared, between)",
+            "~~~",
+        )
+    )
+    virtual_filepath = "tests/docdemo/repeated-fence/page.md"
+
+    def render() -> dict:
+        transformer = XyDocsMarkdownTransformer(
+            virtual_filepath=virtual_filepath,
+            filename=virtual_filepath,
+        )
+        transformer.transform(parse_document(content))
+        return transformer.env
+
+    monkeypatch.chdir(tmp_path)
+    first, second = render(), render()
+    # `between` survives the duplicate fence on the first render and on every
+    # later one; a KeyError here is the regression.
+    assert first["result"]() == (1, 2)
+    assert second["result"]() == (1, 2)
+
+
+def test_editing_a_page_drops_the_fence_snapshots_keyed_to_its_old_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A page edit must not let a fence restore a snapshot from another position.
+
+    Snapshot keys carry the fence's occurrence index, so removing or reordering
+    a duplicated fence renumbers every surviving copy. Without invalidation the
+    renumbered fence adopts the snapshot the *other* copy left behind — a
+    namespace captured before the bindings that now precede it — and the page
+    silently renders from stale data. The dev server re-renders in-process on
+    reload, so this is the live path, not a hypothetical one.
+    """
+    source_path = tmp_path / "editable.md"
+
+    def page_of(*fences: str) -> DocsPage:
+        content = "\n".join(f"~~~python exec\n{body}\n~~~\n" for body in fences)
+        source_path.write_text(content)
+        return DocsPage(
+            source_path=source_path,
+            relative_path=Path("editable.md"),
+            route="/docs/xy/editable",
+            title="Editable",
+            description=None,
+            metadata={},
+            content=content,
+        )
+
+    duplicated = "shared = 1"
+    monkeypatch.chdir(tmp_path)
+
+    # First layout: the duplicate sits at occurrence 1, after `between`, so
+    # occurrence 0's snapshot is the one captured before `between` existed.
+    render_xy_markdown_page(
+        page_of(duplicated, "between = 2", duplicated, "first = (shared, between)")
+    )
+    # The edit removes the leading copy, renumbering the survivor to occurrence
+    # 0 — and revises the trailing fence, as a real edit does, so it is a cache
+    # miss and runs against whatever namespace the restore left behind.
+    edited_page = page_of("between = 2", duplicated, "second = (shared, between)")
+    render_xy_markdown_page(edited_page)
+
+    module = _file_modules[_page_virtual_filepath(edited_page)]
+    assert module.__dict__["second"] == (1, 2)
+
+
+def test_exec_module_identity_is_stable_across_build_roots(tmp_path: Path) -> None:
+    """Keep frontend and backend State module names independent of checkout paths."""
+    relative_path = Path("tests/split-build-state.md")
+    content = """~~~python exec
+class SplitBuildSymbol:
+    pass
+~~~"""
+
+    def page_at(build_root: str) -> DocsPage:
+        return DocsPage(
+            source_path=tmp_path / build_root / "docs" / relative_path,
+            relative_path=relative_path,
+            route="/tests/split-build-state/",
+            title="Split build state",
+            description=None,
+            metadata={},
+            content=content,
+        )
+
+    frontend_page = page_at("home/runner/work/xy/xy")
+    backend_page = page_at("app")
+    assert _page_virtual_filepath(frontend_page) == _page_virtual_filepath(backend_page)
+    render_xy_markdown_page(frontend_page)
+
+    virtual_filepath = _page_virtual_filepath(frontend_page)
+    frontend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+    render_xy_markdown_page(backend_page)
+    backend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+
+    assert frontend_symbol is backend_symbol
+    assert frontend_symbol.__module__ == "_docgen_exec.xy_docs_tests_split_build_state_md"
+    assert str(tmp_path) not in frontend_symbol.__module__
+
+
+def _assigned_names(target: ast.expr) -> set[str]:
+    """Every top-level name an assignment target binds, unpacking included."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return {name for element in target.elts for name in _assigned_names(element)}
+    if isinstance(target, ast.Starred):
+        return _assigned_names(target.value)
+    return set()  # attribute/subscript targets rebind no module-level name
+
+
+#: Statements that run at module scope and can hold further bindings in their
+#: bodies. `FunctionDef`/`ClassDef` are deliberately absent: they bind their own
+#: name (handled below) but their bodies are a separate scope, so a name
+#: assigned inside one is not a module-level binding and cannot shadow a
+#: sibling fence's.
+_NESTED_SCOPE_FREE_BODIES = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.If,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    ast.Match,
+)
+
+
+def _module_bindings(node: ast.AST) -> set[str]:
+    """Module-level names one statement binds, recursing into nested bodies."""
+    bound: set[str] = set()
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            bound |= _assigned_names(target)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        bound |= _assigned_names(node.target)
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        bound.add(node.name)  # the body is another scope; the name is not
+        return bound
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        bound |= {(alias.asname or alias.name).split(".")[0] for alias in node.names}
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        bound |= _assigned_names(node.target)
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        for item in node.items:
+            if item.optional_vars is not None:
+                bound |= _assigned_names(item.optional_vars)
+    if isinstance(node, ast.Try):
+        bound |= {handler.name for handler in node.handlers if handler.name}
+    if isinstance(node, ast.Match):
+        for case in node.cases:
+            bound |= {
+                capture.name
+                for capture in ast.walk(case.pattern)
+                if isinstance(capture, (ast.MatchAs, ast.MatchStar)) and capture.name
+            }
+    if isinstance(node, _NESTED_SCOPE_FREE_BODIES):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.stmt):
+                bound |= _module_bindings(child)
+    # Walrus binds at the enclosing scope wherever the expression appears.
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.NamedExpr):
+            bound |= _assigned_names(inner.target)
+    return bound
+
+
+def _bound_names(body: str) -> set[str]:
+    """Every module-level name one fence binds.
+
+    Plain assignment is not the only way to shadow a name a sibling fence also
+    owns: annotated, augmented and unpacked assignment, `def`/`class`, imports,
+    `for`/`with`/`except`/`match` targets, and walrus all do it — and the
+    compound statements among them nest, so a binding can sit inside a
+    top-level `for` or `if` body. Missing any of those forms under-reports
+    rebound names and silently drops pages from the guarded test, which then
+    still passes while covering less.
+    """
+    return {name for node in ast.parse(body).body for name in _module_bindings(node)}
+
+
+def _names_rebound_across_exec_fences(content: str) -> set[str]:
+    """Top-level names that more than one exec fence of a page binds."""
+    seen: set[str] = set()
+    rebound: set[str] = set()
+    for fence, body in re.findall(r"~~~python([^\n]*)\n(.*?)\n~~~", content, re.DOTALL):
+        if "exec" not in fence:
+            continue
+        bound = _bound_names(body)
+        rebound |= bound & seen
+        seen |= bound
+    return rebound
+
+
+def test_rebound_name_detection_covers_every_binding_form() -> None:
+    """Pin the detector itself: the page filter above is only as complete as
+    the binding forms it recognizes."""
+    fence = "~~~python exec\n{body}\n~~~"
+    declared = (
+        "plain",
+        "annotated",
+        "augmented",
+        "unpacked",
+        "spread",
+        "fn",
+        "Cls",
+        "np",
+        "pi",
+        "looped",
+        "handle",
+        "caught",
+        "matched",
+        "walrus",
+        "nested",
+    )
+    page = "\n".join(
+        fence.format(body=body)
+        for body in (
+            "\n".join(f"{name} = 0" for name in declared),
+            "plain = 2",
+            "annotated: int = 2",
+            "augmented += 2",
+            "unpacked, other = (2, 3)",
+            "*spread, tail = [2, 3]",
+            "def fn():\n    return 2",
+            "class Cls:\n    pass",
+            "import numpy as np",
+            "from math import pi",
+            "for looped in range(2):\n    pass",
+            "with open(__file__) as handle:\n    pass",
+            "try:\n    pass\nexcept ValueError as caught:\n    pass",
+            "match [1]:\n    case [matched]:\n        pass",
+            "if (walrus := 2):\n    pass",
+            # A binding inside a top-level compound body is still module scope.
+            "for _ in range(1):\n    if True:\n        nested = 2",
+            # Neither rebinds a module-level name: attribute/subscript targets,
+            # and names assigned inside a function body (a separate scope).
+            "obj.attr = 2\nmapping['key'] = 2",
+            "def _unrelated():\n    plain = 3\n    return plain",
+        )
+    )
+    assert _names_rebound_across_exec_fences(page) == set(declared)
+
+
+def test_repeated_page_renders_rebuild_every_demo_from_its_own_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep cached fences bound to their own globals, not the page's last ones.
+
+    Pages are evaluated more than once per process — the frontend compile, then
+    the `reflex_xy` worker-startup pass over unevaluated pages — and demos that
+    reuse names such as `months` must not pick up a later demo's arrays on the
+    second pass. Content-addressed payload names make that visible: identical
+    demo data renders identical `.xyf` sources.
+    """
+    monkeypatch.chdir(tmp_path)
+    payload_pattern = re.compile(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"')
+    pages = [
+        page
+        for page in discover_docs(DOCS_CONFIG)
+        if _names_rebound_across_exec_fences(page.content)
+    ]
+
+    assert pages
+    for page in pages:
+        route = page.relative_path.as_posix()
+        virtual_filepath = f"tests/docdemo/repeated-render/{route}"
+        renders = [
+            str(
+                XyDocsMarkdownTransformer(
+                    virtual_filepath=virtual_filepath,
+                    filename=page.source_path.as_posix(),
+                ).transform(parse_document(page.content))
+            )
+            for _ in range(2)
+        ]
+
+        first, second = (payload_pattern.findall(rendered) for rendered in renders)
+        assert first, route
+        assert second == first, route
+
+
+def test_exact_readout_demo_is_backed_by_live_reflex_state() -> None:
+    """Keep the readout driven by chart events instead of compiled sample values."""
+    source_path = DOCS_ROOT / "core-concepts" / "interactions.md"
+    content = source_path.read_text(encoding="utf-8")
+    live_block = next(
+        block
+        for block in parse_document(content).blocks
+        if isinstance(block, CodeBlock)
+        and block.language == "python"
+        and "def exact_readout_demo" in block.content
+    )
+
+    for marker in (
+        "class ExactReadoutState(rx.State)",
+        "reflex_xy.inline(exact_readout_chart)",
+        "on_point_click=ExactReadoutState.pick_point",
+        "on_select_end=ExactReadoutState.select_points",
+        "ExactReadoutState.picked_row",
+        "ExactReadoutState.selected_x",
+        "ExactReadoutState.selected_y",
+    ):
+        assert marker in live_block.content
+    assert "chart.pick(" not in live_block.content
+    assert "chart.select_range(" not in live_block.content
 
 
 def test_first_chart_shows_clean_code_with_hidden_live_previews(
@@ -1022,7 +1583,7 @@ def test_first_chart_shows_clean_code_with_hidden_live_previews(
 
 
 def test_installation_uses_uv_first_package_manager_tabs() -> None:
-    """Present install commands as tabs with uv selected by default."""
+    """Present base and Matplotlib-extra installs with uv selected first."""
     source_path = DOCS_ROOT / "overview" / "installation.md"
     rendered = str(
         render_markdown(
@@ -1032,11 +1593,14 @@ def test_installation_uses_uv_first_package_manager_tabs() -> None:
         )
     )
 
-    assert 'defaultValue:"tab1"' in rendered
-    assert rendered.count('className:"pill-tab"') == 2
-    assert rendered.index('value:"tab1"},"uv"') < rendered.index('value:"tab2"},"pip"')
+    assert rendered.count('defaultValue:"tab1"') == 2
+    assert rendered.count('className:"pill-tab"') == 4
+    assert rendered.count('value:"tab1"},"uv"') == 2
+    assert rendered.count('value:"tab2"},"pip"') == 2
     assert 'code:"uv add xy"' in rendered
     assert 'code:"python -m pip install xy"' in rendered
+    assert 'code:"uv add \\"xy[matplotlib]\\""' in rendered
+    assert 'code:"python -m pip install \\"xy[matplotlib]\\""' in rendered
 
 
 def test_installation_distinguishes_supported_targets_from_pypi_artifacts() -> None:
@@ -1047,12 +1611,13 @@ def test_installation_distinguishes_supported_targets_from_pypi_artifacts() -> N
 
     assert all(value in windows_row for value in ("`x86_64`", "`x86`", "`arm64`"))
     assert "| Supported | Not included |" in windows_row
-    assert "Pyodide 0.29.4" in wasm_row
-    assert "`wasm32` | Supported | Not accepted by PyPI |" in wasm_row
+    assert "Pyodide 314" in wasm_row
+    assert "`wasm32` | Supported | Not in 0.0.1 (on PyPI since 0.0.3) |" in wasm_row
     assert "Windows is supported by XY's native core and release pipeline." in content
     assert "0.0.1 PyPI upload does not include Windows wheels" in content
-    assert "runtime-verified Pyodide wheel" in content
-    assert "`pyodide_2025_0_wasm32` platform" in content
+    assert "runtime-verified WebAssembly wheel" in content
+    assert "`pyemscripten_2026_0_wasm32` platform" in content
+    assert "%pip install xy" in content
 
 
 def test_chart_gallery_grid_renders_every_type_as_inline_svg(
@@ -1068,36 +1633,42 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     chart_section = next(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
-    assert len(chart_section) == 14
+    assert len(chart_section) == 21
     assert "XYChart" not in rendered
-    assert rendered.count("dangerouslySetInnerHTML") == 28
+    assert rendered.count("dangerouslySetInnerHTML") == 35
     assert rendered.count('id:"xy-chart-gallery"') == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)") == 1
     assert rendered.count("display: none") == 1
     assert rendered.count("max-width: 88rem") == 1
-    assert rendered.count("2xl:grid-cols-3") == 8
-    assert rendered.count("aspect-[320/232]") == 28
-    assert rendered.count("shadow-large") == 28
-    assert rendered.count("transition-bg") == 28
-    assert "--gallery-preview-surface: #fff" in rendered
-    assert "--gallery-preview-fill: #efeaff" in rendered
-    assert "--gallery-preview-soft: #dccfff" in rendered
-    assert "--gallery-preview-bar: #dccfff" in rendered
-    assert "--gallery-preview-stroke: #a790f0" in rendered
-    assert "--gallery-preview-strong: #8067d7" in rendered
+    assert rendered.count("2xl:grid-cols-3") == 9
+    assert rendered.count("aspect-[320/232]") == 35
+    assert rendered.count("shadow-small") == 35
+    assert rendered.count("transition-bg") == 35
+    assert "--gallery-preview-surface: var(--muted)" in rendered
+    assert "--gallery-preview-fill: var(--accent)" in rendered
+    assert "--gallery-preview-soft: var(--border)" in rendered
+    assert "--gallery-preview-bar: var(--subtle-foreground)" in rendered
+    assert "--gallery-preview-stroke: var(--muted-foreground)" in rendered
+    assert "--gallery-preview-strong: var(--foreground)" in rendered
     assert "--gallery-preview-muted" not in rendered
     assert "object-contain" not in rendered
     assert "object-center" not in rendered
     assert "xy-tailwind-bridge" not in rendered
-    assert rendered.count("size:14") == 28
+    assert rendered.count("size:14") == 35
     assert "size:6" not in rendered
     for chart_type in (
+        "Funnel",
         "Line",
         "Area",
         "Step",
         "Stairs",
         "Scatter",
+        "Polar",
+        "Radar",
+        "Radial Bar",
+        "Pie & Donut",
+        "Wind Rose",
         "Bar",
         "Column",
         "Histogram",
@@ -1111,6 +1682,7 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
         "Error Bar",
         "Stem",
         "Segments",
+        "Sankey",
         "Threshold",
         "Triangle Mesh",
         "Horizontal Line",
@@ -1155,7 +1727,7 @@ def test_chart_gallery_inline_svgs_share_the_component_preview_style() -> None:
         for item in group.items
     }
 
-    assert len(previews) == 28
+    assert len(previews) == 35
     for svg in previews.values():
         assert 'viewBox="0 0 320 232"' in svg
         assert '<rect x="52" y="62" width="216" height="108" rx="12"' in svg
@@ -1178,6 +1750,50 @@ def test_chart_gallery_inline_svgs_share_the_component_preview_style() -> None:
     ):
         assert scatter_tone in previews["Scatter"]
         assert rendered.count(f"#xy-chart-gallery .{scatter_tone} {{") == 1
+
+
+def test_polar_gallery_previews_share_a_safe_visual_frame() -> None:
+    """Keep every polar preview centered, equally scaled, and clear of its clip."""
+    polar_previews = {
+        title: _gallery_preview_svg(title)
+        for title in ("Polar", "Radar", "Radial Bar", "Pie & Donut", "Wind Rose")
+    }
+
+    for svg in polar_previews.values():
+        assert '<g class="preview-polar-art" data-preview-radius="48">' in svg
+
+    assert "M160 68L205.7 101.2L188.2 154.8" in polar_previews["Radar"]
+    assert 'r="55"' not in polar_previews["Radial Bar"]
+    assert "M164.8 61.2" not in polar_previews["Radial Bar"]
+    assert "M144.5 174" not in polar_previews["Radial Bar"]
+    assert (
+        '<g class="preview-radial-bars" data-bar-count="12" data-inner-radius="13">'
+        in polar_previews["Radial Bar"]
+    )
+    assert polar_previews["Radial Bar"].count("A13 13 0 0 0") == 12
+    assert "M160 116L" not in polar_previews["Radial Bar"]
+    assert "preview-fill-soft" not in polar_previews["Radial Bar"]
+
+    pie = polar_previews["Pie & Donut"]
+    assert '<g class="preview-donut-segments" data-segment-count="4" data-inner-radius="27">' in pie
+    assert pie.count('class="preview-fill-strong"') == 2
+    assert 'class="preview-fill-soft"' in pie
+    assert 'class="preview-fill"' in pie
+    assert "M146 112H174M151 122H169" in pie
+
+    wind_rose = polar_previews["Wind Rose"]
+    assert (
+        '<g class="preview-wind-bands" data-direction-count="8" data-band-count="3">' in wind_rose
+    )
+    assert wind_rose.count("M160 116L") == 8
+    assert "M160 68V164M112 116H208" in wind_rose
+    assert wind_rose.count("<path ") == 4
+    for band, fill_class in (
+        ("low", "preview-fill"),
+        ("medium", "preview-fill-soft"),
+        ("high", "preview-fill-strong"),
+    ):
+        assert f'class="{fill_class}" data-speed-band="{band}"' in wind_rose
 
 
 def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> None:
@@ -1223,6 +1839,11 @@ def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> No
     # mark's live demo.
     standalone_chart_marks = {
         "/charts/line-chart/": "xy.line(",
+        "/charts/polar-chart/": "xy.polar_chart(",
+        "/charts/radar-chart/": "xy.radar_chart(",
+        "/charts/radial-bar-chart/": "xy.polar_bar_chart(",
+        "/charts/pie-chart/": "xy.polar_bar_chart(",
+        "/charts/wind-rose/": "xy.wind_rose(",
         "/charts/bar-chart/": "xy.bar(",
         "/charts/histogram/": "xy.histogram(",
         "/charts/ecdf/": "xy.ecdf(",
@@ -1233,11 +1854,13 @@ def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> No
         "/charts/contour-plot/": "xy.contour(",
         "/charts/stem-plot/": "xy.stem(",
         "/charts/segments/": "xy.segments(",
+        "/charts/sankey/": "xy.sankey_chart(",
         "/components/triangle-mesh/": "xy.triangle_mesh(",
     }
     for route, mark in standalone_chart_marks.items():
         assert route in pages, route
         assert mark in pages[route].content, route
+    assert "xy.pie_chart(" in pages["/charts/pie-chart/"].content
 
     # Bar and column share one page: the bar page carries the column chart as a
     # subsidiary section.
@@ -1270,7 +1893,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
     titles = {item.title for group in _GALLERY_GROUPS for item in group.items}
     section_titles = [group.title for group in _GALLERY_GROUPS]
 
-    assert len(titles) == 28
+    assert len(titles) == 35
     assert section_titles[:3] == [
         "Line and Area",
         "Distributions",
@@ -1282,6 +1905,25 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
         ("Bar + Column", "/charts/bar-chart/"),
         ("Scatter", "/charts/scatter/"),
     ]
+    polar_group = _GALLERY_GROUPS[5]
+    assert polar_group.title == "Polar Charts"
+    assert polar_group.route == "/charts/polar-chart/"
+    assert [(item.title, item.route) for item in polar_group.items] == [
+        ("Polar", None),
+        ("Radar", "/charts/radar-chart/"),
+        ("Radial Bar", "/charts/radial-bar-chart/"),
+        ("Pie & Donut", "/charts/pie-chart/"),
+        ("Wind Rose", "/charts/wind-rose/"),
+    ]
+    specialized_group = _GALLERY_GROUPS[6]
+    assert specialized_group.title == "Specialized"
+    assert [(item.title, item.route) for item in specialized_group.items] == [
+        ("Stem", "/charts/stem-plot/"),
+        ("Segments", "/charts/segments/"),
+        ("Sankey", "/charts/sankey/"),
+        ("Funnel", "/charts/funnel-chart/"),
+        ("Triangle Mesh", "/components/triangle-mesh/"),
+    ]
     assert {"Step + Stairs", "Bar + Column"} <= titles
     assert {"Step", "Stairs", "Bar", "Column"}.isdisjoint(titles)
     assert {
@@ -1290,11 +1932,175 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
         "Hexbin",
         "Heatmap",
         "Contour",
+        "Polar",
+        "Radar",
+        "Radial Bar",
+        "Pie & Donut",
+        "Wind Rose",
         "Error Band",
         "Error Bar",
+        "Sankey",
         "Facet Chart",
         "Layered Marks",
     } <= titles
+
+
+def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
+    """Keep the public guide aligned with the runtime's polar-specific seams."""
+    polar = (DOCS_ROOT / "charts" / "polar-chart.md").read_text(encoding="utf-8")
+    radar = (DOCS_ROOT / "charts" / "radar-chart.md").read_text(encoding="utf-8")
+    radial_bar = (DOCS_ROOT / "charts" / "radial-bar-chart.md").read_text(encoding="utf-8")
+    pie = (DOCS_ROOT / "charts" / "pie-chart.md").read_text(encoding="utf-8")
+    wind_rose = (DOCS_ROOT / "charts" / "wind-rose.md").read_text(encoding="utf-8")
+    matplotlib = (DOCS_ROOT / "integrations" / "matplotlib.md").read_text(encoding="utf-8")
+    annotations = (DOCS_ROOT / "components" / "annotations.md").read_text(encoding="utf-8")
+    limitations = (DOCS_ROOT / "api-reference" / "limitations-and-alpha-status.md").read_text(
+        encoding="utf-8"
+    )
+
+    for fragment in (
+        "scales the radial maximum",
+        "keeps the radial minimum fixed",
+        # Zoom is off by default on polar (polar-axes.md §8), and the guide has
+        # to carry both halves of that: why, and the exact way back in. Reset
+        # follows the zoom capability, so the page must not promise it either.
+        "**Zoom is off by default.**",
+        "reset-axis policy is empty",
+        # Reset is not unconditionally absent: an authored `reset_axes` grants it
+        # with zoom still off, and `default_drag_action` is narrowed under polar.
+        "An explicit `reset_axes` also grants reset",
+        'accepts only `"auto"` and `"none"` here',
+        "xy.interaction_config(zoom=True)",
+        "def zoomable_polar_demo():",
+        "authored fractional degree",
+        "splits a line into visible runs",
+        "`line`, `scatter`, and `area` are limited to",
+        "Heatmap/contour grids are not rejected",
+        "`sector=(start, end)`",
+        '`grid_shape="linear"`',
+        "`hole` and `origin` are mutually exclusive",
+        "def polar_field_demo():",
+        "def polar_uncertainty_demo():",
+        'plt.subplots(subplot_kw={"projection": "polar"})',
+        'ax.set_thetagrids([0, 90, 180, 270], ["N", "E", "S", "W"])',
+        "it is not a direct `plt.subplots(polar=True)` argument",
+        "radial area against `r=0`",
+        "`set_thetamin()`/`set_thetamax()`",
+        "`set_rorigin()`/`get_rorigin()`",
+        "reactivating an existing",
+        "Explicit `padding=(top, right, bottom, left)`",
+    ):
+        assert fragment in polar or fragment in matplotlib
+
+    for fragment in (
+        "def radar_demo():",
+        "def radar_outline_demo():",
+        "fill=False",
+        "the outline inherits",
+        "`line_color` is omitted",
+        "Supply at least three categories",
+        "Column-name strings are not resolved",
+        'grid_shape="linear"',
+    ):
+        assert fragment in radar
+
+    for fragment in (
+        "same-length sequence",
+        "complete annulus",
+        "def radial_bar_demo():",
+        "def allocation_overview_demo():",
+        "def training_summary_demo():",
+        "def cache_tiers_demo():",
+        "RADIAL_DATA",
+        "ALLOCATION_DATA",
+        "TRAINING_METRICS",
+        "CACHE_TIERS",
+        "chart_examples_layout_marker",
+        "`corner_radius`",
+        "`stroke_width`",
+        "linear-gradient(to top",
+        "`padding=(top, right, bottom, left)`",
+        "sector=(-120.0, 120.0)",
+    ):
+        assert fragment in radial_bar
+    assert radial_bar.count("~~~python demo exec") == 4
+    assert radial_bar.index("## Basic Radial Bar Chart") < radial_bar.index(
+        "## Allocation Overview"
+    )
+    assert radial_bar.count("xy.modebar(show=False),") == 4
+    assert 'xy.legend(loc="right")' in radial_bar
+    assert '("Direct", 0, 6, "#5b3cc4")' in radial_bar
+
+    for fragment in (
+        "def basic_pie_demo():",
+        "def market_share_demo():",
+        "def progress_rings_demo():",
+        "def revenue_mix_demo():",
+        "def reliability_score_demo():",
+        "MARKET_SERIES",
+        "PROGRESS_STATS",
+        "REVENUE_SERIES",
+        "RELIABILITY_BANDS",
+        "xy.polar_bar_chart(",
+        "background-colored stroke",
+        "corner_radius=12",
+        "GAUGE_SPAN = 240.0",
+        "browser/static exports remain available",
+    ):
+        assert fragment in pie
+    assert pie.count("~~~python demo exec") == 5
+    assert pie.index("## Basic Pie Chart") < pie.index("## Market Share")
+    assert "PIE_DATA = [" in pie
+    assert 'PURPLE_SHADES = ["#6e56cf"' in pie
+    assert 'xy.legend(loc="left")' in pie
+    assert pie.count("xy.modebar(show=False),") == 5
+    assert "def donut_demo():" not in radial_bar
+
+    for fragment in (
+        "def wind_rose_demo():",
+        "`sectors=` controls",
+        "`speed_bins` is omitted",
+        "Directions are compass bearings in degrees",
+    ):
+        assert fragment in wind_rose
+
+    polar_guides = "\n".join((polar, radar, radial_bar, pie, wind_rose))
+    assert "projection surface is scaffolded but not wired end to end" not in polar_guides
+    assert "Downsample very large polar datasets" not in polar_guides
+    assert "is not yet routed through the polar constructor" not in matplotlib
+    assert "customization is not yet preserved" not in polar_guides
+    for stale_fragment in (
+        "it does not create or clip the chart",
+        "`set_thetamin()` and `set_thetamax()` also remain unsupported",
+        "Polar heatmaps, contours, error bars, histograms",
+        "General categorical θ axes, partial sectors",
+        "Partial-sector layouts are not implemented",
+        "validated log-r semantics",
+        "Each polar trace is limited to 200,000 points",
+        # Zoom, and the reset that follows it, are opt-in on polar (polar-axes.md
+        # §8). No polar guide may promise either as part of the default contract,
+        # and none may claim a non-wind-rose radius is merely layout — an ordinary
+        # `polar_chart` carrying measured radii is the documented opt-in case.
+        "Wheel and modebar zoom scale the radial maximum",
+        "radial wheel zoom, double-click reset",
+        "hover, radial-only zoom",
+        "its radius is layout rather than data",
+    ):
+        assert stale_fragment not in polar_guides
+        assert stale_fragment not in matplotlib
+
+    annotation_guides = "\n".join((polar, annotations, limitations))
+    for fragment in ("`text`", "`label`", "`marker`", "`arrow`", "`callout`"):
+        assert fragment in annotation_guides
+    assert "Polar rules and bands remain deferred" in annotation_guides
+    for stale_fragment in (
+        "not yet consistent across the browser",
+        "Polar point annotations are not yet consistent",
+        "Polar annotation projection is still renderer-specific",
+        "Do not rely on point annotations",
+        "The annotation exception above",
+    ):
+        assert stale_fragment not in annotation_guides
 
 
 def test_annotations_have_one_canonical_guide_and_a_legacy_redirect() -> None:
@@ -1378,18 +2184,17 @@ def test_inline_svg_gallery_validator_requires_every_styled_preview(tmp_path: Pa
     """Accept only the complete code-native gallery in the production route."""
     module_path = tmp_path / "route.jsx"
     preview = 'viewBox=\\"0 0 320 232\\"'
-    module_path.write_text(
-        preview * 28 + "gallery-preview-surface aspect-[320/232] shadow-large",
-        encoding="utf-8",
-    )
+    surface = "gallery-preview-surface aspect-[320/232] shadow-small"
+    expected = check_html_routes.INLINE_SVG_PREVIEW_COUNT
+    module_path.write_text(preview * expected + surface, encoding="utf-8")
 
     check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
-    module_path.write_text(
-        preview * 27 + "gallery-preview-surface aspect-[320/232] shadow-large",
-        encoding="utf-8",
-    )
-    with pytest.raises(RuntimeError, match="27 previews, expected 28"):
+    module_path.write_text(preview * (expected - 1) + surface, encoding="utf-8")
+    with pytest.raises(
+        RuntimeError,
+        match=rf"{expected - 1} previews, expected {expected}",
+    ):
         check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
 
@@ -1466,7 +2271,7 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
 
     assert "/core-concepts/axes-and-scales/" in instance
     assert re.findall(
-        r'jsx\(RadixThemesText,\{as:"p",className:"m-0 text-sm font-\[525\]"\},"([^"]+)"\)',
+        r'jsx\(RadixThemesText,\{as:"p",className:"m-0 text-sm font-\[475\]"\},"([^"]+)"\)',
         rendered,
     ) == [
         row_title
@@ -1484,30 +2289,52 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     ]
     expected_leaf_count = sum(
         len(leaves) + int(not any(route == landing_route for _title, route in leaves))
-        for title, landing_route, _icon, leaves in DOCS_SECTIONS
-        if title != "Integrations"
+        for title, landing_route, _icon, leaves in grouped_sections
+        if title != "Integrations" and leaves
     )
-    accordion_count = len(DOCS_SECTIONS) - 1
+    accordion_count = sum(
+        title != "Integrations" and bool(leaves)
+        for title, _landing_route, _icon, leaves in grouped_sections
+    )
+    direct_link_count = sum(
+        len(leaves) if title == "Integrations" else int(not leaves)
+        for title, _landing_route, _icon, leaves in grouped_sections
+    )
+
     assert rendered.count('jsx("details"') == accordion_count
     assert rendered.count('jsx("summary"') == accordion_count
     assert rendered.count("group/details") == accordion_count
     assert rendered.count("guideMarginClass") == expected_leaf_count
-    assert rendered.count(
-        "absolute left-0 top-1/2 -z-10 h-8 w-full -translate-y-1/2 rounded-lg bg-secondary-3"
-    ) == len(INTEGRATION_LINK_ICONS)
-    assert rendered.count(
-        "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] items-center "
-        "justify-start text-secondary-11 transition-colors "
-        "group-hover:text-primary-10 dark:group-hover:text-primary-9 "
-        "xl:max-w-[14rem]"
-    ) == len(INTEGRATION_LINK_ICONS)
-    assert rendered.count("group relative block h-8 w-full no-underline") == len(
-        INTEGRATION_LINK_ICONS
+    assert (
+        rendered.count(
+            "absolute left-0 top-1/2 -z-10 h-8 w-full -translate-y-1/2 rounded-lg bg-accent"
+        )
+        == direct_link_count
     )
-    assert sorted(section[0] for section in grouped_sections) == sorted(
-        section[0] for section in DOCS_SECTIONS
+    assert (
+        rendered.count(
+            "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] items-center "
+            "justify-start text-muted-foreground transition-colors "
+            "group-hover:text-primary-hover dark:group-hover:text-primary "
+            "xl:max-w-[14rem]"
+        )
+        == direct_link_count
     )
+    assert rendered.count("group relative block h-8 w-full no-underline") == direct_link_count
+    assert len(grouped_sections) == len(DOCS_SECTIONS) + 5
+    sidebar_section_titles = [section[0] for section in grouped_sections]
+    assert set(sidebar_section_titles) == {
+        *(section[0] for section in DOCS_SECTIONS if section[0] != "Chart Gallery"),
+        "Core Charts",
+        "Distributions",
+        "Density & Fields",
+        "Specialized",
+        "Polar Charts",
+    }
+    assert sidebar_section_titles.count("Overview") == 2
+    assert "Chart Gallery" not in sidebar_section_titles
     learning_sections = SIDEBAR_SECTION_GROUPS[0][2]
+    chart_sections = SIDEBAR_SECTION_GROUPS[1][2]
     other_sections = SIDEBAR_SECTION_GROUPS[2][2]
     assert [section[0] for section in learning_sections] == [
         "Overview",
@@ -1515,8 +2342,53 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         "Styling",
         "Advanced",
     ]
+    assert chart_sections == (
+        CHART_GALLERY_SIDEBAR_LINK,
+        *CHART_FAMILY_SIDEBAR_SECTIONS,
+        POLAR_SIDEBAR_SECTION,
+        DOCS_SECTIONS[4],
+    )
+    assert CHART_GALLERY_SIDEBAR_LINK == (
+        "Overview",
+        "/overview/gallery/",
+        "chart-column",
+        (),
+    )
+    assert [section[0] for section in CHART_FAMILY_SIDEBAR_SECTIONS] == [
+        "Core Charts",
+        "Distributions",
+        "Density & Fields",
+        "Specialized",
+    ]
+    expected_non_polar_routes = tuple(
+        route
+        for _title, route in DOCS_SECTIONS[3][3]
+        if route not in {polar_route for _polar_title, polar_route in POLAR_DOCS_ROUTES}
+    )
+    grouped_non_polar_routes = tuple(
+        route
+        for _title, _landing_route, _icon, leaves in CHART_FAMILY_SIDEBAR_SECTIONS
+        for _leaf_title, route in leaves
+    )
+    assert grouped_non_polar_routes == expected_non_polar_routes
+    assert len(grouped_non_polar_routes) == len(set(grouped_non_polar_routes))
+    assert POLAR_DOCS_ROUTES == (
+        ("Overview", POLAR_DOCS_ROUTE),
+        ("Radar", RADAR_DOCS_ROUTE),
+        ("Radial Bar", RADIAL_BAR_DOCS_ROUTE),
+        ("Pie & Donut", PIE_DOCS_ROUTE),
+        ("Wind Rose", WIND_ROSE_DOCS_ROUTE),
+    )
+    assert POLAR_SIDEBAR_SECTION == (
+        "Polar Charts",
+        POLAR_DOCS_ROUTE,
+        "radar",
+        POLAR_DOCS_ROUTES,
+    )
+    for _title, route in POLAR_DOCS_ROUTES:
+        assert f'href:"{route}"' in rendered
     assert "Advanced" not in {section[0] for section in other_sections}
-    for group_title in ("Learning", "Examples", "Other"):
+    for group_title in ("Learning", "Charts", "Other"):
         assert group_title in rendered
     for category, route in (
         ("Learn", "/"),
@@ -1539,43 +2411,167 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         "LucideNotebookTabs",
         "LucideChartNoAxesCombined",
     ):
-        assert icon in rendered
+        assert icon not in rendered
     assert "LucidePlug" not in rendered
-    assert rendered.count('"aria-current":((') == 3
+    assert rendered.count('"aria-current":((') == direct_link_count
     assert ">XY<" not in rendered
 
 
-def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
-    """Match the official navbar while retaining its mobile drawer trigger."""
+@pytest.mark.parametrize(
+    ("route", "expected_open_group"),
+    (
+        ("/charts/scatter/", "Core Charts"),
+        ("/charts/ecdf/", "Distributions"),
+        ("/charts/contour-plot/", "Density & Fields"),
+        ("/charts/segments/", "Specialized"),
+        ("/charts/radial-bar-chart/", "Polar Charts"),
+        ("/charts/pie-chart/", "Polar Charts"),
+        ("/overview/gallery/", None),
+    ),
+)
+def test_xy_sidebar_opens_only_the_current_chart_family(
+    route: str,
+    expected_open_group: str | None,
+) -> None:
+    """Open one exact chart family without expanding unrelated accordions."""
+    chart_families = (*CHART_FAMILY_SIDEBAR_SECTIONS, POLAR_SIDEBAR_SECTION)
+    open_groups = [
+        title
+        for title, landing_route, _icon, leaves in chart_families
+        if "open:true" in str(_section_items(title, landing_route, leaves, route)[0])
+    ]
+
+    assert open_groups == ([] if expected_open_group is None else [expected_open_group])
+    title, landing_route, _icon, leaves = CHART_GALLERY_SIDEBAR_LINK
+    gallery_link = str(_section_items(title, landing_route, leaves, route)[0])
+    assert 'jsx("details"' not in gallery_link
+    assert ('"aria-current":(true ? "page"' in gallery_link) == (
+        route == CHART_GALLERY_SIDEBAR_LINK[1]
+    )
+
+
+def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
+    """Keep the XY navbar focused while retaining its mobile drawer trigger."""
     component = xy_docs_navbar()
     assert isinstance(component, MemoComponent)
 
     rendered = str(xy_docs_navbar._definition.component)
 
-    assert 'href:"/"' in rendered
+    assert 'to:"/"' in rendered
     assert '"aria-label":"Reflex XY"' in rendered
     assert "M29 16H32V10H39V7H32V4H39V1H29V16" in rendered
+    assert 'to:"/"' in rendered
     assert 'href:"/docs/"' in rendered
-    assert 'href:"/docs/ai/overview/best-practices/"' in rendered
-    assert 'href:"/docs/getting-started/introduction/"' in rendered
-    assert 'href:"/docs/hosting/deploy-quick-start/"' in rendered
-    assert 'href:"/docs/xy/"' in rendered
-    assert 'variant:"ghost"},"XY"' in rendered
-    assert "Open sidebar" in rendered
+    assert 'to:"/integrations/reflex/"' in rendered
+    assert "Overview" in rendered
+    assert "Reflex Integration" in rendered
+    assert 'variant:"ghost"},"Build with AI"' not in rendered
+    assert 'variant:"ghost"},"Framework"' not in rendered
+    assert 'variant:"ghost"},"Cloud"' not in rendered
+    assert 'variant:"ghost"},"XY"' not in rendered
+    assert "Forum" not in rendered
+    assert "Discord Community" not in rendered
+    assert 'variant:"primary"' in rendered
+    assert "View XY on GitHub -" not in rendered
+    assert rendered.count("View XY on GitHub") == 4
+    assert 'target:"_blank"' in rendered
+    assert 'rel:"noopener noreferrer"' in rendered
+    from xy_docs.navbar import _mobile_navigation
+
+    assert str(_mobile_navigation()) in rendered
     assert "Menu01Icon" in rendered
     assert "Cancel01Icon" in rendered
     assert "Mobile documentation navigation" not in rendered
     assert "<details" not in rendered
     assert "<summary" not in rendered
     assert XY_REPOSITORY_URL in rendered
-    assert f"View XY on GitHub - {XY_GITHUB_STARS} stars" in rendered
-    assert 'target:"_blank"' in rendered
-    assert 'rel:"noopener noreferrer"' in rendered
-    assert "XY's initial launch is here" in rendered
-    assert "Get started" in rendered
+    assert "Build vs. Buy for Internal Software" in rendered
+    assert "xy is now in Reflex Build" not in rendered
+    assert '"data-shimmer-text":"Build vs. Buy for Internal Software"' in rendered
+    assert (
+        json.dumps("New: Build vs. Buy for Internal Software — Read more (opens in a new tab)")
+        in rendered
+    )
+    assert 'className:"docs-announcement-glass"' in rendered
+    assert '"data-announcement-dismiss":""' in rendered
+    assert 'href:"https://reflex.dev/blog/build-vs-buy-internal-software/"' in rendered
+    assert "https://reflex.dev/blog/xy-in-reflex-build/" not in rendered
+    assert "Dismiss announcement" in rendered
+    assert "hide_banner" in rendered
     assert "Reserve your spot" not in rendered
     assert "https://luma.com/a1ty77bt" not in rendered
     assert "Reflex Agent Toolkit is launching" not in rendered
+    assert "AlgoliaSearch" in rendered
+    assert "Inkeep" not in rendered
+
+
+def test_prerendered_route_paths_support_current_and_legacy_reflex_layouts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the production validator compatible across Reflex export layouts."""
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", tmp_path)
+
+    assert check_html_routes.route_html_paths("/charts/scatter/") == (
+        tmp_path / "charts/scatter.html",
+        tmp_path / "charts/scatter/index.html",
+    )
+    assert check_html_routes.route_html_paths("/") == (
+        tmp_path.with_suffix(".html"),
+        tmp_path / "index.html",
+    )
+    assert check_html_routes.fallback_html_paths() == (
+        tmp_path / "404.html",
+        tmp_path / "__spa-fallback.html",
+    )
+
+
+def test_prerendered_route_layout_is_selected_once_for_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Do not let a stale route from another layout mask missing output."""
+    current_root = tmp_path / "current"
+    current_root.mkdir()
+    (current_root / "404.html").touch()
+    (current_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", current_root)
+    assert check_html_routes.prerender_layout_index() == 0
+
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    (legacy_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", legacy_root)
+    assert check_html_routes.prerender_layout_index() == 1
+
+
+def test_current_prerender_layout_does_not_accept_a_stale_legacy_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fail when current output is missing even if its legacy peer remains."""
+    build_root = tmp_path / "build" / "docs" / "xy"
+    build_root.mkdir(parents=True)
+    (build_root / "404.html").touch()
+    stale_route = build_root / "charts" / "scatter" / "index.html"
+    stale_route.parent.mkdir(parents=True)
+    stale_route.write_text(check_html_routes.LLMS_DIRECTIVE, encoding="utf-8")
+
+    routes_root = tmp_path / "routes"
+    routes_root.mkdir()
+    (routes_root / "[charts].[scatter]._index.jsx").touch()
+
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", build_root)
+    monkeypatch.setattr(check_html_routes, "ROUTES_ROOT", routes_root)
+    monkeypatch.setattr(
+        check_html_routes,
+        "discover_docs",
+        lambda _config: [SimpleNamespace(route="/charts/scatter/", content="")],
+    )
+    monkeypatch.setattr(check_html_routes, "DOCS_REDIRECTS", {})
+
+    with pytest.raises(RuntimeError, match=r"charts/scatter\.html"):
+        check_html_routes.main()
 
 
 def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
@@ -1591,6 +2587,51 @@ def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
     assert "/overview/gallery/" in rendered
     assert "/charts/scatter/" in rendered
     assert "ArrowDown01Icon" in rendered
+
+
+@pytest.mark.parametrize("slug", ("installation", "first-chart", "gallery", "benchmarks"))
+def test_overview_breadcrumb_does_not_link_to_missing_parent(slug: str) -> None:
+    """Keep the overview label and leaf link without inventing a category route."""
+    route = f"/overview/{slug}/"
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == route)
+    parts = _breadcrumb_parts(page)
+    assert parts[0] == ("Overview", None)
+    assert parts[-1][1] == route
+
+    breadcrumb = xy_docs_breadcrumb(page, xy_docs_sidebar(page.route))
+
+    def descendants(component):
+        """Visit components regardless of nesting or sibling order."""
+        yield component
+        for child in component.children:
+            yield from descendants(child)
+
+    rows = [
+        node
+        for node in descendants(breadcrumb)
+        if node.custom_attrs.get("data-testid") == "xy-breadcrumbs"
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    links = [
+        node
+        for node in descendants(row)
+        if getattr(node, "href", None) is not None or getattr(node, "to", None) is not None
+    ]
+    assert '"Overview"' in str(row)
+    assert all('"Overview"' not in str(link) for link in links)
+    assert 'to:"/overview/"' not in str(row)
+    assert 'href:"/overview/"' not in str(row)
+    assert any(f'to:"{route}"' in str(link) for link in links)
+
+
+def test_every_breadcrumb_destination_is_a_discovered_page() -> None:
+    """Synthesized parents and explicit aliases must resolve to real docs pages."""
+    pages = discover_docs(DOCS_CONFIG)
+    routes = {page.route for page in pages}
+    for page in pages:
+        for _label, href in _breadcrumb_parts(page):
+            assert href is None or href in routes, (page.route, href)
 
 
 def test_xy_breadcrumb_shortens_the_modebar_page_label() -> None:
@@ -1782,7 +2823,8 @@ def test_component_guides_append_frontmatter_driven_api_tables() -> None:
     assert 'id:"api-reference"' in axes_rendered
     assert "Props" in axes_rendered
     assert "Description" in axes_rendered
-    assert "Preview" not in axes_rendered
+    assert "Preview" in axes_rendered[:api_reference_index]
+    assert "Preview" not in axes_rendered[api_reference_index:]
 
 
 def test_chart_gallery_pages_append_factory_api_tables() -> None:
@@ -1795,6 +2837,15 @@ def test_chart_gallery_pages_append_factory_api_tables() -> None:
             "xy.stairs_chart",
         ),
         "/charts/scatter/": ("xy.scatter_chart",),
+        "/charts/polar-chart/": (
+            "xy.polar_chart",
+            "xy.theta_axis",
+            "xy.r_axis",
+        ),
+        "/charts/radar-chart/": ("xy.radar_chart",),
+        "/charts/radial-bar-chart/": ("xy.polar_bar_chart",),
+        "/charts/pie-chart/": ("xy.pie_chart",),
+        "/charts/wind-rose/": ("xy.wind_rose",),
         "/charts/bar-chart/": ("xy.bar_chart", "xy.column_chart"),
         "/charts/histogram/": ("xy.histogram_chart",),
         "/charts/ecdf/": ("xy.ecdf_chart",),
@@ -1806,6 +2857,7 @@ def test_chart_gallery_pages_append_factory_api_tables() -> None:
         "/charts/uncertainty/": ("xy.error_band_chart", "xy.errorbar_chart"),
         "/charts/stem-plot/": ("xy.stem_chart",),
         "/charts/segments/": ("xy.segments_chart",),
+        "/charts/sankey/": ("xy.sankey_chart",),
         "/components/triangle-mesh/": ("xy.triangle_mesh_chart",),
         "/components/facets-and-layers/": ("xy.chart", "xy.facet_chart"),
     }
@@ -1825,7 +2877,9 @@ def test_chart_gallery_pages_append_factory_api_tables() -> None:
         "xy.scatter_chart"
     )
     assert "Props" in scatter_rendered
-    assert "Preview" not in scatter_rendered
+    scatter_api_index = scatter_rendered.index(API_REFERENCE_HEADING)
+    assert "Preview" in scatter_rendered[:scatter_api_index]
+    assert "Preview" not in scatter_rendered[scatter_api_index:]
 
     # The FAQ renders below the generated API section on both surfaces.
     scatter_faq_question = "How do I make a scatter plot in Python?"
@@ -1880,6 +2934,35 @@ def test_chart_factory_api_expands_forwarded_chart_props() -> None:
     assert "| `link_axes` |" in markdown
 
 
+def test_polar_axis_api_expands_forwarded_axis_props() -> None:
+    """Show the underlying x/y options instead of an opaque ``**kwargs`` row."""
+    theta_reference, radial_reference = component_api_references(("xy.theta_axis", "xy.r_axis"))
+    theta_names = tuple(parameter.name for parameter in theta_reference.parameters)
+    radial_names = tuple(parameter.name for parameter in radial_reference.parameters)
+    theta_refused = frozenset({*_POLAR_INERT_AXIS_KEYWORDS, "reverse"})
+    radial_refused = frozenset(_POLAR_INERT_AXIS_KEYWORDS)
+    x_axis_names = tuple(
+        name for name in inspect.signature(xy.x_axis).parameters if name not in theta_refused
+    )
+    y_axis_names = tuple(
+        name for name in inspect.signature(xy.y_axis).parameters if name not in radial_refused
+    )
+
+    assert theta_names[:5] == ("unit", "zero", "direction", "sector", "grid_shape")
+    assert theta_names[5:] == x_axis_names
+    assert radial_names[:2] == ("hole", "origin")
+    assert radial_names[2:] == y_axis_names
+    assert "**kwargs" not in {*theta_names, *radial_names}
+    # The polar axes refuse these outright, so the table must not offer them.
+    assert not theta_refused & set(theta_names)
+    assert not radial_refused & set(radial_names)
+    assert "reverse" in radial_names
+    assert theta_reference.parameters[theta_names.index("tick_values")].description
+    assert theta_reference.parameters[theta_names.index("sector")].description
+    assert radial_reference.parameters[radial_names.index("domain")].description
+    assert radial_reference.parameters[radial_names.index("hole")].description
+
+
 def test_other_api_owned_pages_append_focused_tables() -> None:
     """Document styling factories and the public Reflex adapter surface in place."""
     expected = {
@@ -1887,7 +2970,10 @@ def test_other_api_owned_pages_append_focused_tables() -> None:
         "/styling/themes-and-tokens/": ("xy.theme",),
         "/integrations/reflex/": (
             "reflex_xy.chart",
+            "reflex_xy.data",
             "reflex_xy.figure",
+            "reflex_xy.scatter_chart",
+            "reflex_xy.line_chart",
             "reflex_xy.inline",
             "reflex_xy.append",
         ),
@@ -1906,6 +2992,29 @@ def test_other_api_owned_pages_append_focused_tables() -> None:
         assert api_path in adapter_api
     assert "Props" in adapter_api
     assert "Preview" not in adapter_api
+
+
+def test_reflex_integration_renders_the_state_backed_data_example() -> None:
+    """Keep the primary @rxy.data example visible as a live chart demo."""
+    page = next(
+        page for page in discover_docs(DOCS_CONFIG) if page.route == "/integrations/reflex/"
+    )
+    live_blocks = [
+        block
+        for block in parse_document(page.content).blocks
+        if isinstance(block, CodeBlock) and {"demo", "exec"} <= set(block.flags)
+    ]
+
+    assert len(live_blocks) == 2
+    state_backed = next(block for block in live_blocks if "@rxy.data" in block.content)
+    assert "rxy.scatter_chart(" in state_backed.content
+    state_rendered = str(
+        XyDocsMarkdownTransformer(
+            virtual_filepath=_page_virtual_filepath(page),
+            filename=str(page.source_path),
+        ).code_block(state_backed)
+    )
+    assert "XYChart" in state_rendered
 
 
 @pytest.mark.parametrize(
@@ -1970,3 +3079,142 @@ def test_documented_factories_describe_every_parameter() -> None:
             "Chart",
             parameter.name,
         )
+
+
+def test_xy_navbar_uses_early_mobile_breakpoint_and_current_section() -> None:
+    """Keep section selection accessible and desktop links hidden below 1280px."""
+    from xy_docs.navbar import _menu_item, _navigation_menu
+
+    menu = _navigation_menu()
+    assert "hidden xl:flex" in str(menu.children[0].class_name)
+    assert "xl:hidden" in str(menu.children[1].children[-1].class_name)
+    link = _menu_item("Overview", "/docs/xy/").children[0]
+    assert '"aria-current"' in str(link)
+
+
+def test_xy_navbar_internal_links_preserve_client_navigation() -> None:
+    """Internal section changes keep the document and announcement mounted."""
+    from xy_docs.navbar import _menu_item
+
+    item = _menu_item("Reflex Integration", "/docs/xy/integrations/reflex/")
+    assert type(item.children[0]).__name__ == "ReactRouterLink"
+    assert str(item.children[0].to).strip('"') == "/integrations/reflex/"
+    assert "inset_0_-1px" not in str(item.class_name)
+
+
+def test_xy_code_blocks_use_shared_docs_syntax_theme() -> None:
+    """Normal and demo code use the same syntax palette as Reflex docs."""
+    from xy_docs.code import code_block
+
+    rendered = str(code_block("print('hello')", "python"))
+    assert "github-light-high-contrast" in rendered
+    assert "github-dark-high-contrast" in rendered
+
+
+@pytest.mark.parametrize(
+    ("namespace", "accepted"),
+    [
+        ("http://www.sitemaps.org/schemas/sitemap/0.9", True),
+        ("https://www.sitemaps.org/schemas/sitemap/0.9", False),
+        ("https://example.com/invalid", False),
+        ("", False),
+    ],
+)
+def test_sitemap_validator_requires_standard_namespace(
+    tmp_path: Path, namespace: str, accepted: bool
+) -> None:
+    """Only sitemap elements in the standard HTTP namespace supply locations."""
+    import runpy
+
+    sitemap_locations = runpy.run_path(str(DOCS_APP_ROOT / "scripts/check_sitemap.py"))[
+        "sitemap_locations"
+    ]
+
+    path = tmp_path / "sitemap.xml"
+    location = "https://reflex.dev/docs/xy/"
+    path.write_text(f'<urlset xmlns="{namespace}"><url><loc>{location}</loc></url></urlset>')
+    assert sitemap_locations(path) == ([location] if accepted else [])
+
+
+@pytest.mark.parametrize(
+    "path", ["/", "/index", "/overview/installation/", "/docs/xy/overview/installation/"]
+)
+def test_overview_navbar_marks_child_routes_current(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """Overview descendants retain the active section indicator."""
+    from types import SimpleNamespace
+
+    import reflex as rx
+    from xy_docs.navbar import _menu_item
+
+    monkeypatch.setattr(
+        rx, "State", SimpleNamespace(router=SimpleNamespace(page=SimpleNamespace(path=path)))
+    )
+    item = _menu_item("Overview", "/docs/xy/")
+    assert '"aria-current":(true ? "page" : null)' in str(item.children[0])
+    assert "inset_0_-1px" not in str(item.class_name)
+
+
+def _accessibility_nodes(component):
+    """Walk rendered components without relying on sibling positions."""
+    yield component
+    for child in component.children:
+        yield from _accessibility_nodes(child)
+
+
+def test_mobile_breadcrumb_trigger_is_a_named_native_button() -> None:
+    """The mobile drawer trigger is keyboard operable with a meaningful name."""
+    page = next(
+        page for page in discover_docs(DOCS_CONFIG) if page.route == "/overview/installation/"
+    )
+    nodes = list(_accessibility_nodes(xy_docs_breadcrumb(page, xy_docs_sidebar(page.route))))
+    triggers = [node for node in nodes if node.tag == "Drawer.Trigger"]
+    assert len(triggers) == 1
+    buttons = [node for node in _accessibility_nodes(triggers[0]) if node.tag == "button"]
+    assert len(buttons) == 1
+    assert "Open documentation navigation" in str(buttons[0])
+    assert "focus-visible:outline" in str(buttons[0])
+
+
+def test_footer_navigation_has_section_headings() -> None:
+    """Footer sections follow a page heading without skipping to level four."""
+    page = next(
+        page for page in discover_docs(DOCS_CONFIG) if page.route == "/overview/installation/"
+    )
+    nodes = list(_accessibility_nodes(xy_docs_footer(page)))
+    headings = [node for node in nodes if node.tag in {"h1", "h2", "h3", "h4", "h5", "h6"}]
+    assert len(headings) == 3
+    assert all(node.tag == "h2" for node in headings)
+
+
+def test_installation_options_render_as_subsections_with_commands() -> None:
+    """Optional integrations retain headings and code without malformed lists."""
+    source = DOCS_ROOT / "overview" / "installation.md"
+    component = render_markdown(
+        source.read_text(encoding="utf-8"),
+        virtual_filepath="overview/installation.md",
+        filename=source.as_posix(),
+    )
+    nodes = list(_accessibility_nodes(component))
+    blocks = parse_document(source.read_text(encoding="utf-8")).blocks
+    headings = [block for block in blocks if isinstance(block, HeadingBlock) and block.level == 3]
+    assert [heading.children[0].text for heading in headings] == [
+        "Matplotlib compatibility",
+        "Arrow input",
+        "Reflex integration",
+        "Optional browser export",
+    ]
+    item_tags = {"li", "RadixThemesListItem", list_comp(text="Example item").tag}
+    for node in nodes:
+        if node.tag in {"ul", "ol", "RadixThemesUnorderedList", "RadixThemesOrderedList"}:
+            assert all(child.tag in item_tags for child in node.children)
+    rendered = str(component)
+    for command in (
+        'uv add "xy[matplotlib]"',
+        'python -m pip install "xy[matplotlib]"',
+        "uv add pyarrow",
+        'uv add "xy[reflex]"',
+        'python -m pip install "xy[reflex]"',
+    ):
+        assert f"code:{json.dumps(command)}" in rendered

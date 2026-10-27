@@ -13,7 +13,7 @@ interactive contour plot from a NumPy grid: choose the number of levels, fill
 between them or keep clean lines, and pan, zoom, and hover work by default.
 
 Jump to [creating a contour plot](#create-a-contour-plot),
-[levels and fills](#levels-filled-and-line-contours), or
+[levels and fills](#levels,-filled,-and-line-contours), or
 [the options table](#contour-plot-options).
 
 ## Create a Contour Plot
@@ -156,6 +156,8 @@ table.
 
 ## Related Charts
 
+- [Polar charts](/docs/xy/charts/polar-chart/#map-a-polar-field) — project a
+  regular theta/r field and its contour isolines through a polar axis.
 - [Heatmaps](/docs/xy/charts/heatmap/) — color every grid cell instead of
   drawing bands.
 - [Hexbin plots](/docs/xy/charts/hexbin/) — build a density field from scattered
@@ -184,3 +186,30 @@ explicit list of values to place contours at exact levels.
 
 Set `dash_negative=True` so contours with negative values are dashed, making the
 sign of a signed field easy to read.
+
+### I use a MATLAB contour plot or matplotlib. What is the equivalent?
+
+Matplotlib users can often start by changing the import because `xy.pyplot`
+accepts the familiar `contour()` and `contourf()` calls, although unsupported
+options may still require changes. For MATLAB, translate the workflow to the
+equivalent Python/NumPy syntax shown here:
+
+~~~python
+import numpy as np
+import xy.pyplot as plt
+
+x = np.linspace(-3, 3, 100)
+y = np.linspace(-2.5, 2.5, 90)
+xx, yy = np.meshgrid(x, y)
+z = np.exp(-(xx**2 + yy**2))
+
+fig, ax = plt.subplots()
+ax.contourf(x, y, z, levels=12)
+ax.set_xlabel("x")
+ax.set_ylabel("y")
+plt.show()
+~~~
+
+The result is a fully interactive contour chart. See the
+[matplotlib compatibility guide](/docs/xy/integrations/matplotlib/) for the
+covered surface.

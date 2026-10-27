@@ -61,30 +61,30 @@
 
     <g fill="#6E56CF">
       <rect x="350" y="225" width="3" height="18" rx="1.5"/>
-      <rect x="350" y="345" width="13" height="18" rx="4"/>
-      <rect x="350" y="465" width="71" height="18" rx="4"/>
+      <rect x="350" y="345" width="14" height="18" rx="4"/>
+      <rect x="350" y="465" width="75" height="18" rx="4"/>
     </g>
     <g fill="#C4C6CF">
-      <rect x="350" y="277" width="690" height="18" rx="4"/>
-      <rect x="350" y="397" width="262" height="18" rx="4"/>
-      <rect x="350" y="517" width="591" height="18" rx="4"/>
+      <rect x="350" y="277" width="694" height="18" rx="4"/>
+      <rect x="350" y="397" width="243" height="18" rx="4"/>
+      <rect x="350" y="517" width="582" height="18" rx="4"/>
     </g>
     <g fill="#A8AAB3">
-      <rect x="350" y="251" width="200" height="18" rx="4"/>
-      <rect x="350" y="371" width="216" height="18" rx="4"/>
-      <rect x="350" y="491" width="265" height="18" rx="4"/>
+      <rect x="350" y="251" width="198" height="18" rx="4"/>
+      <rect x="350" y="371" width="215" height="18" rx="4"/>
+      <rect x="350" y="491" width="260" height="18" rx="4"/>
     </g>
 
     <g fill="#1C2024" font-size="14" font-weight="650">
-      <text x="366" y="239">0.0232 s</text>
-      <text x="562" y="265">2.7842 s</text>
-      <text x="1052" y="291">9.5834 s</text>
-      <text x="377" y="359">0.1797 s</text>
-      <text x="578" y="385">3.0029 s</text>
-      <text x="624" y="411">3.6434 s</text>
-      <text x="433" y="479">0.9920 s</text>
-      <text x="627" y="505">3.6735 s</text>
-      <text x="953" y="531">8.2152 s</text>
+      <text x="365" y="239">0.0184 s</text>
+      <text x="560" y="265">2.7432 s</text>
+      <text x="1056" y="291">9.6433 s</text>
+      <text x="376" y="359">0.1875 s</text>
+      <text x="577" y="385">2.9842 s</text>
+      <text x="605" y="411">3.3729 s</text>
+      <text x="437" y="479">1.0352 s</text>
+      <text x="622" y="505">3.6121 s</text>
+      <text x="944" y="531">8.0888 s</text>
     </g>
   </g>
 </svg>

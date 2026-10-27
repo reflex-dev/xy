@@ -25,7 +25,10 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.0.1"
+# ``__getattr__`` materializes this lazily at runtime.  The declaration keeps
+# the PEP 561 surface concrete for static consumers without paying the
+# ``importlib.metadata`` lookup during ``import xy``.
+__version__: str
 
 _EXPORTS = {
     "Annotation": ".components",
@@ -43,6 +46,8 @@ _EXPORTS = {
     "Interaction": ".components",
     "Legend": ".components",
     "Mark": ".components",
+    "MarkContext": ".plugins",
+    "MarkPlugin": ".plugins",
     "Modebar": ".components",
     "Selection": "._figure",
     "Spring": ".components",
@@ -75,24 +80,38 @@ _EXPORTS = {
     "hexbin": ".components",
     "hexbin_chart": ".components",
     "heatmap": ".components",
+    "mark": ".components",
     "heatmap_chart": ".components",
     "hline": ".components",
     "hist": ".components",
     "histogram": ".components",
     "histogram_chart": ".components",
     "interaction_config": ".components",
+    "funnel": ".components",
+    "funnel_chart": ".components",
     "label": ".components",
     "legend": ".components",
+    "register_mark": ".plugins",
+    "registered_marks": ".plugins",
+    "unregister_mark": ".plugins",
     "line": ".components",
     "line_chart": ".components",
+    "pie_chart": ".components",
+    "polar_bar_chart": ".components",
+    "polar_chart": ".components",
+    "radar_chart": ".components",
     "marker": ".components",
     "modebar": ".components",
+    "ribbon": ".components",
+    "sankey": ".components",
+    "sankey_chart": ".components",
     "scatter": ".components",
     "scatter_chart": ".components",
     "segments": ".components",
     "segments_chart": ".components",
     "step": ".components",
     "step_chart": ".components",
+    "structural_probe": ".components",
     "stairs": ".components",
     "stairs_chart": ".components",
     "stem": ".components",
@@ -108,6 +127,9 @@ _EXPORTS = {
     "vline": ".components",
     "x_band": ".components",
     "write_images": ".export",
+    "r_axis": ".components",
+    "theta_axis": ".components",
+    "wind_rose": ".components",
     "x_axis": ".components",
     "y_band": ".components",
     "y_axis": ".components",
@@ -131,6 +153,8 @@ __all__ = [
     "Interaction",
     "Legend",
     "Mark",
+    "MarkContext",
+    "MarkPlugin",
     "Modebar",
     "Selection",
     "Spring",
@@ -161,6 +185,8 @@ __all__ = [
     "errorbar_chart",
     "export_config",
     "facet_chart",
+    "funnel",
+    "funnel_chart",
     "heatmap",
     "heatmap_chart",
     "hexbin",
@@ -174,8 +200,19 @@ __all__ = [
     "legend",
     "line",
     "line_chart",
+    "mark",
     "marker",
     "modebar",
+    "pie_chart",
+    "polar_bar_chart",
+    "polar_chart",
+    "r_axis",
+    "radar_chart",
+    "register_mark",
+    "registered_marks",
+    "ribbon",
+    "sankey",
+    "sankey_chart",
     "scatter",
     "scatter_chart",
     "segments",
@@ -187,16 +224,20 @@ __all__ = [
     "stem_chart",
     "step",
     "step_chart",
+    "structural_probe",
     "text",
     "theme",
+    "theta_axis",
     "threshold",
     "threshold_zone",
     "tooltip",
     "triangle_mesh",
     "triangle_mesh_chart",
+    "unregister_mark",
     "violin",
     "violin_chart",
     "vline",
+    "wind_rose",
     "write_images",
     "x_axis",
     "x_band",
@@ -214,7 +255,34 @@ def _load_export(name: str) -> Any:
     return value
 
 
+def _load_version() -> str:
+    """Resolve the installed distribution's version.
+
+    The version is not written down in the source tree at all — it is derived
+    from the `v*` git tag at build time (pyproject's uv-dynamic-versioning
+    config) and baked into the wheel's METADATA, so package metadata is the
+    only place that can answer this at runtime.
+
+    Resolved lazily, like every other export: `importlib.metadata` costs tens
+    of milliseconds against a 200 ms `import xy` budget (§33), which is a poor
+    trade for a string most callers never read. A source tree that was never
+    installed has no metadata to read, and reports the same unreal `0.0.0` the
+    build-time fallback uses.
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _distribution_version
+
+    try:
+        return _distribution_version("xy")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
 def __getattr__(name: str) -> Any:
+    if name == "__version__":
+        value = _load_version()
+        globals()["__version__"] = value
+        return value
     return _load_export(name)
 
 
@@ -226,18 +294,22 @@ if TYPE_CHECKING:
     from ._figure import Selection
     from .columns import Column, ColumnStore, ZoneMaps
     from .components import (
+        Animation,
         Annotation,
         Axis,
         Chart,
         Colorbar,
         Component,
+        ExportConfig,
         FacetChart,
         Interaction,
         Legend,
         Mark,
         Modebar,
+        Spring,
         Theme,
         Tooltip,
+        animation,
         area,
         area_chart,
         arrow,
@@ -260,6 +332,8 @@ if TYPE_CHECKING:
         errorbar_chart,
         export_config,
         facet_chart,
+        funnel,
+        funnel_chart,
         heatmap,
         heatmap_chart,
         hexbin,
@@ -273,24 +347,41 @@ if TYPE_CHECKING:
         legend,
         line,
         line_chart,
+        mark,
         marker,
         modebar,
+        pie_chart,
+        polar_bar_chart,
+        polar_chart,
+        r_axis,
+        radar_chart,
+        ribbon,
+        sankey,
+        sankey_chart,
         scatter,
         scatter_chart,
+        segments,
+        segments_chart,
+        spring,
         stairs,
         stairs_chart,
         stem,
         stem_chart,
         step,
         step_chart,
+        structural_probe,
         text,
         theme,
+        theta_axis,
         threshold,
         threshold_zone,
         tooltip,
+        triangle_mesh,
+        triangle_mesh_chart,
         violin,
         violin_chart,
         vline,
+        wind_rose,
         x_axis,
         x_band,
         y_axis,
@@ -298,3 +389,10 @@ if TYPE_CHECKING:
     )
     from .dom import CHART_DOM_SLOTS
     from .export import Engine, write_images
+    from .plugins import (
+        MarkContext,
+        MarkPlugin,
+        register_mark,
+        registered_marks,
+        unregister_mark,
+    )

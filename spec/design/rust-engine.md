@@ -2,7 +2,7 @@
 
 **Status:** design. Decides what lives in Rust vs Python and how the FFI seam
 evolves without rewrites. Grounded in the shipped engine: single-dependency
-cdylib (`src/lib.rs`, ABI v36; `png` is the one crate, for static export),
+cdylib (`src/lib.rs`, ABI v44; `png` is the one crate, for static export),
 ctypes binding (`_native.py`), and
 dispatch in `kernels.py`. The native core is required — `kernels.py` raises a
 clear ImportError when it can't load, with no pure-Python fallback.
@@ -25,10 +25,11 @@ clear ImportError when it can't load, with no pure-Python fallback.
 
 | Concern | Today | Verdict |
 |---|---|---|
-| zone maps, encode_f32, m4, bin_2d, min_max, histogram_uniform, normalize_f32, range/validity indices, local_log_density | Rust (ABI v36) | correct — new equal-length x/y columns use a paired zone-map call with bit-identical per-column reductions; full-domain density first paint fuses binning with uniform or counted-u8 overlay sampling while retaining exact standalone outputs; mesh/rectangle validity scans consume only columns not already proven finite by zone metadata |
+| zone maps, encode_f32, m4, bin_2d, bin_2d_mean_color, min_max, histogram_uniform, normalize_f32, range/validity indices, polygon (lasso) selection, local_log_density | Rust (ABI v41) | correct — new equal-length x/y columns use a paired zone-map call with bit-identical per-column reductions; lasso ray casting (`xy_polygon_select`, §34) walks edges inside the point loop instead of one NumPy pass per edge, and buckets edges by y so a point tests only those spanning its row — the answer is the same crossing parity, without the per-edge full-length temporaries that made a 2048-vertex lasso cost ~370 ms over 160k candidates. Bucketing is declined below 16 vertices (the build outweighs the scans it saves) and for a non-finite polygon (slab bounds stop meaning anything); above 16 the slab count tracks the vertex count, capped at 256 and shed further so the CSR never exceeds 2²⁰ entries, which bounds both the allocation and its u32 cursors independently of what a caller passes; full-domain density first paint fuses binning with uniform or counted-u8 overlay sampling while retaining exact standalone outputs; mean-color binning (LOD doc §2) is an integer-only pipeline (checked-in sRGB⇄linear-u16 tables, alpha-weighted u64 sums) so grids are bitwise deterministic across thread counts and platforms; mesh/rectangle validity scans consume only columns not already proven finite by zone metadata |
 | fixed-width string/bytes/bool factorization | Rust (ABI v36) | correct — compact palettes use a bounded L1-resident codebook with full-record collision checks and emit exact counts; U1 uses a direct Unicode-scalar table with endian support; ≥512k rows probe a prefix then encode disjoint chunks in parallel, merging late labels by canonical first-row order before any retry; Python sees only unique labels and retains display-label ordering policy |
+| stable animation-key encoding for homogeneous fixed-width string/bytes/bool/integer/float columns | Rust (ABI v43) | correct — one borrowed row scan emits the two caller-owned u32 identity planes and reports the first duplicate pair; f16/f32 widen exactly to the f64 token contract and non-native arrays carry an explicit endian flag; Python validates shape/length, unwraps `to_numpy` columns and homogeneous object storage so a DataFrame key column routes at all, bounds padded temporaries for skewed string/bytes sequences, assembles exact public errors, and retains the reference encoder for mixed objects, trailing-NUL Python sequences, dates, and non-finite row diagnostics. Declined *data* (status 1) falls back; an out-of-contract *layout* (status 4) raises, so the two cannot be confused into a silent slow path |
 | static display-list raster, row-banded polyline/point/segment paint, batched fill+stroke triangle meshes, affine scatter projection plus typed color/size resolution, density/heatmap colormap and sampling | Rust (ABI v36) | correct — commands borrow f32/u8 payload or canonical spans synchronously; compact stratified sampling reuses factorization counts; batched/banded output is byte-identical |
-| signal processing: `xy_rfft`, `xy_welch_spectra`, `xy_spectrogram` | Rust (ABI v36) | correct — O(N) transforms over sample columns; window/segment policy stays in Python |
+| signal processing: `xy_rfft`, `xy_welch_spectra`, `xy_spectrogram` | Rust (ABI v36) | correct — O(N) transforms over sample columns; Hann windowing and segment traversal are native, with Matplotlib-compatible `detrend_none` defaults; explicit pyplot detrending modes fail loudly until the kernel can select them deliberately |
 | geometry/triangulation: `xy_delaunay_triangles`, `xy_polygon_triangles`, `xy_marching_squares`, `xy_marching_triangles`, `xy_streamlines`, `xy_vector_segments`, `xy_quad_mesh_triangles`, `xy_sector_triangles`, `xy_indexed_triangles`, `xy_triangle_edges` | Rust (ABI v36) | correct — output is screen-bounded index/vertex buffers; level choice and styling stay in Python |
 | statistics: `xy_correlation`, `xy_weighted_ecdf`, `xy_histogram2d`, `xy_stacked_bounds` | Rust (ABI v36) | correct — row-scan reductions; binning policy and labels stay in Python. Unweighted `xy_histogram2d` fans out with per-worker u64 grids (integer merge, thread-count invariant); the weighted case stays serial because f64 accumulation order must not vary with core count (§21) |
 | style/text helpers: `xy_css_check` (`css.rs`), `xy_svg_poly_path` (`svg.rs`) | Rust (ABI v36) | correct by a different rule — not O(rows) but O(points)/per-value on the export and validation paths, where per-item Python object churn dominates; error *messages* still assembled in Python |
@@ -42,7 +43,13 @@ binning (1D/2D/channel-aware) ✅/plan · decimation (M4 ✅, OHLC plan) ·
 range filtering (`xy_range_indices` ✅) · implicit uniform and compact-u8
 stratified sampling (`xy_sample_range_indices` / `xy_stratified_sample_range_u8` ✅) · grouping/category encoding
 (`xy_factorize_fixed` ✅ for contiguous fixed-width values; defensive Python
-label canonicalization for mixed objects) · histogram stats ✅ · quantiles (plan:
+label canonicalization for mixed objects. Routing is decided by a bounded
+4096-row probe on how *repetitive* the column is, never by how many categories
+it holds: the native pass exists to keep N records out of Python, so it is
+declined only for a near-unique id/key column, where Python must materialize
+essentially the whole label set regardless. Wide records cross over sooner —
+above 32 B they are declined once the probe is 95% distinct, at or below 32 B
+only when it is entirely distinct) · histogram stats ✅ · quantiles (plan:
 `xy_quantiles`, needed by box/violin) · box/violin stats (thin composition
 over quantiles — stats in Rust, assembly in Python) · multi-resolution tile
 generation (`tiles.rs` ✅, including stable-domain incremental updates) ·
@@ -82,12 +89,12 @@ src/                                          # 15,423 lines shipped, 8 modules
                         #       byte-identical to the serial path) and the fused
                         #       raster→PNG encode via `png`/fdeflate.
                         #   No unsafe; owns the crate's one third-party dep.
-  font.rs       (1039)  # generated by scripts/gen_font.py — do not hand-edit.
+  font.rs       (2503)  # generated by scripts/gen_font.py — do not hand-edit.
                         #   Baked DejaVu Sans grayscale coverage atlas for
-                        #   raster.rs: 205 glyph records (advance, w, h, left,
+                        #   raster.rs: 424 glyph records (advance, w, h, left,
                         #   top, coverage offset/len) at BASE_PX=16 plus the
                         #   row-major coverage bytes, and EXTRA_CODEPOINTS, the
-                        #   sorted table of the 110 non-ASCII codepoints. Data
+                        #   sorted table of the 329 non-ASCII codepoints. Data
                         #   only — no shaping, no FreeType, no unsafe. Coverage
                         #   limits are a product constraint, not a detail: §2.1.
   css.rs         (788)  # tiered CSS value/color validation behind `xy_css_check`.
@@ -101,8 +108,11 @@ src/                                          # 15,423 lines shipped, 8 modules
                         #   rest of SVG scene construction stays in Python.
   simd.rs        (448)  # AVX2 twins of eligible kernels, runtime-dispatched (§3.4).
                         #   The one module besides lib.rs allowed `unsafe`.
-  tiles.rs       (481)  # pyramid build/compose/incremental append. Owns tile memory;
-                        #   handles are opaque u64 ids passed over the ABI (§3.3).
+  tiles.rs      (1050)  # pyramid build/compose/incremental append, plus the
+                        #   mean-color planes for channel-bearing traces
+                        #   (build_color/compose_color, LOD doc §2/§4.1; colored
+                        #   pyramids refuse appends and rebuild lazily). Owns tile
+                        #   memory; handles are opaque u64 ids over the ABI (§3.3).
   stream.rs             # (plan) Rust-owned canonical append buffers.
   stats.rs              # (plan) quantiles/box/violin/factorize.
 ```
@@ -121,35 +131,61 @@ cannot reach crates.io, so required crates must be vendored or the sandbox
 loses local build/test; prefer feature-gated optional deps (e.g. SIMD
 argminmax, tsdownsample-class speed) with the lean build as default.
 
-### 2.1 Native text is a bounded subset, and misses are silent
+Release profile (`Cargo.toml`, 2026-07-27): `lto = "fat"`, `codegen-units =
+1`, `strip = true`. Fat LTO measured no runtime change over thin on the §12
+native scatter bench (run-to-run noise ±15% dominates) but cuts the cdylib
+~15% (1.51 → 1.29 MB); strip removes `.symtab`/debuginfo only — `.dynsym`,
+which ctypes binds against, survives. `panic` must stay `unwind`: the C-ABI
+backstop in `lib.rs` converts kernel panics into sentinel returns via
+`catch_unwind`, and `panic = "abort"` would turn them into aborts of the
+embedding CPython process (the wasm target alone builds with
+`-C panic=abort` in `build_release_artifacts.yml`, where unwinding is
+unsupported anyway).
+PGO is a known open lever, not adopted: it needs a per-target training
+workload and profdata plumbing in the release matrix; revisit when a
+benchmark shows a branch-bound kernel on the hot path.
+
+### 2.1 Native text is a bounded subset, and misses are visible
 
 Declining FreeType bought the single-cdylib property (§3.1) and paid for it in
-Unicode coverage. `font.rs` bakes exactly 205 glyphs: ASCII 32–126 (95) plus
-the 110 codepoints enumerated in `font::EXTRA_CODEPOINTS` — lowercase Greek
-(α–ω) and the eleven uppercase Greek letters that differ from Latin forms
-(Γ Δ Θ Λ Ξ Π Σ Υ Φ Ψ Ω), math operators (`∂ ∇ ∈ − ∓ √ ∝ ∞ ∫ ≈ ≠ ≤ ≥`), the
-left and right arrows only, super/subscript digits and a handful of subscript
-letters, typographic quotes, en/em dashes, and a few symbols (`° ± × · µ ²³¹ …`).
-Nothing else exists: no accented Latin at all, no Cyrillic, no CJK, no Arabic,
-no emoji.
+Unicode coverage. `font.rs` bakes exactly 424 glyphs: ASCII 32–126 (95) plus
+the 329 codepoints enumerated in `font::EXTRA_CODEPOINTS` — the Latin-1
+Supplement and Latin Extended-A letters (U+00C0–U+017F, which carry Western,
+Central, and Northern European orthographies), non-ASCII currency symbols,
+lowercase Greek (α–ω) and the eleven uppercase Greek letters that differ from
+Latin forms (Γ Δ Θ Λ Ξ Π Σ Υ Φ Ψ Ω), math operators
+(`∂ ∇ ∈ − ∓ √ ∝ ∞ ∫ ≈ ≠ ≤ ≥`), the left and right arrows only, super/subscript
+digits and a handful of subscript letters, typographic quotes, en/em dashes,
+and a few symbols (`° ± × · µ ²³¹ …`).
 
-The failure mode is worse than the coverage gap. `glyph_index`
-(`src/raster.rs:1175`) returns `None` for an uncovered codepoint, and the paint
-loop's `let … else { continue; }` (`src/raster.rs:1236-1238`) drops that
-character **before** the advance is applied — so the glyph is deleted, not
-substituted, and the following glyphs close up over the hole. There is no tofu
-box, no fallback glyph, no warning, and no error. `"Müller"` rasterizes as
-`"Mller"`; a fully non-Latin label rasterizes as nothing. The anchoring pass
-sums advances through the same `glyph_index` filter (`src/raster.rs:1200-1204`),
-so a centered or right-anchored label is positioned on its *shortened* width —
-the loss is self-consistent and therefore invisible in the output.
+Still absent: Cyrillic, CJK, Arabic, emoji, and the Latin blocks beyond
+Extended-A — so Vietnamese (Latin Extended Additional) and Romanian's `ș`/`ț`
+(Latin Extended-B) are **not** covered. Coverage is a bounded set of blocks,
+not a language guarantee.
 
-This violates §28 (no silent decisions) and is recorded as a known defect, not
-a design intent. The minimum honest fix is a substitution glyph with a real
-advance, so a coverage miss is *visible*; a warning surfaced at the Python
-export boundary (where messages belong, §4) is the complete fix. Until then the
-documented escape is `engine=xy.Engine.chromium`, and the user-facing statement
-of the same limitation lives in `spec/api/styling.md` §"Native text coverage" —
+The failure mode used to be worse than the coverage gap. `glyph_index` returned
+`None` for an uncovered codepoint and the paint loop's `let … else { continue; }`
+dropped that character **before** the advance was applied — the glyph was
+deleted, not substituted, and the following glyphs closed up over the hole. No
+tofu box, no fallback, no warning. `"Müller"` rasterized as `"Mller"`; a fully
+non-Latin label rasterized as nothing. The anchoring pass summed advances
+through the same filter, so a centered label was positioned on its *shortened*
+width — the loss was self-consistent and therefore invisible.
+
+That violated §28 (no silent decisions). `glyph_index` (`src/raster.rs`) now
+substitutes **U+FFFD** for any codepoint the atlas lacks, so the miss occupies
+space and is visible in the output; the anchoring pass sums the replacement
+glyph's real advance, so the label's width is honest. Two exceptions stay
+invisible on purpose: control and zero-width characters (U+200B–U+200F, U+FEFF)
+have nothing to show, and **whitespace maps to the ASCII space glyph** rather
+than to a box — locale-aware number formatting emits NBSP (U+00A0) and narrow
+NBSP (U+202F) as group separators, and those reach the rasterizer through
+ordinary tick labels, where a box would be plainly wrong.
+
+A warning surfaced at the Python export boundary (where messages belong, §4)
+remains the complete fix and is not yet implemented. The documented escape for
+real coverage is `engine=xy.Engine.chromium`, and the user-facing statement of
+the same limitation lives in `spec/api/styling.md` §"Native text coverage" —
 these two must be amended together. The bound applies to the native raster
 formats only; the SVG and PDF export paths have their own text contracts.
 
@@ -193,11 +229,20 @@ formats only; the SVG and PDF export paths have their own text contracts.
   (`0`, `usize::MAX`, `-1`/`-2`) rather than one documented negative error
   enum; unifying them is a work item for the next ABI bump.
 - **E5 — threading stays inside**: parallel kernels use `std::thread::scope`
-  inside the call; the ABI stays synchronous. General row scans cross over at
-  512k values and scale to at most 18 workers. Zone maps cross earlier, at two
-  complete 65,536-row chunks, because chunks are independent and require no
-  merge; worker count is also capped by actual chunks. CodSpeed stays serial
-  because its simulator sums thread instructions rather than wall time.
+  inside the call; the ABI stays synchronous. Fan-out gates are per cost
+  class, with named constants in `kernels.rs` recording the measured
+  crossover rationale: compute-bound scans (M4, uniform histogram,
+  ~2.5–3 ns/row) cross at 128k rows; general scans (min/max, sortedness,
+  range/validity, f32 encode/normalize) keep the 512k gate. Where each worker
+  owns a private accumulator the row gate is only a floor: `bin_2d` caps
+  workers at points per cell and `histogram_uniform` at points per bin, so an
+  accumulator as large as the input stays serial. M4 caps workers at its
+  bucket count because splits fall only on bucket edges; it finds those edges
+  by binary search so clustered x values do not add repeated linear scans.
+  Zone maps cross earlier, at two complete 65,536-row chunks, because chunks
+  are independent and require no merge; worker count is also capped by actual
+  chunks. All gates scale to at most 18 workers. CodSpeed stays serial because
+  its simulator sums thread instructions rather than wall time.
   Incremental build = handle + `xy_pyramid_append`, which mutates a live
   pyramid in place under the registry lock. A polling entry point
   (`xy_pyramid_poll`) for genuinely async builds is not built; if one is ever
@@ -213,18 +258,35 @@ Arrays-in/arrays-out stops working when Rust must own long-lived state
 uint64_t xy_pyramid_build(const double* x, const double* y, size_t len,
                           double x0, double x1, double y0, double y1,
                           uint32_t base_dim);
-/* append: 1 applied; 0 on stale/busy handle, bad args, or a point outside
-   the pyramid's original domain (never partially mutates) */
+/* build with mean-color planes (LOD doc §2). The color source is exactly
+   one of idx (per-point LUT index, with lut as 1..=256 RGBA8 rows) or
+   rgba (per-point straight-alpha RGBA8); the other pointer is NULL */
+uint64_t xy_pyramid_build_color(const double* x, const double* y, size_t len,
+                                const uint8_t* idx, const uint8_t* rgba,
+                                const uint8_t* lut, size_t lut_len,
+                                double x0, double x1, double y0, double y1,
+                                uint32_t base_dim);
+/* append: 1 applied; 0 on stale/busy handle, bad args, a point outside
+   the pyramid's original domain, or a colored pyramid (its colors are
+   unknown to this entry point — caller invalidates and rebuilds lazily).
+   Never partially mutates. */
 int32_t xy_pyramid_append(uint64_t handle, const double* x,
                           const double* y, size_t len);
 /* count over a window: 1 ok, 0 on stale handle/bad args */
 int32_t xy_pyramid_count(uint64_t handle, double lo_x, double hi_x,
                          double lo_y, double hi_y, double* out_count);
 /* compose window into a w×h grid: level used (>=0), -1 stale/bad args,
-   -2 window outresolves the pyramid (caller re-bins exactly and discloses) */
+   -2 window outresolves the pyramid past max_upsample (caller re-bins
+   exactly and discloses) */
 int32_t xy_pyramid_compose(uint64_t handle, double lo_x, double hi_x,
-                           double lo_y, double hi_y,
-                           size_t w, size_t h, float* out);
+                           double lo_y, double hi_y, size_t w, size_t h,
+                           size_t max_upsample, float* out);
+/* compose plus the mean-color plane: counts bit-identical to
+   xy_pyramid_compose; -2 also for a pyramid built without color planes */
+int32_t xy_pyramid_compose_color(uint64_t handle, double lo_x, double hi_x,
+                                 double lo_y, double hi_y, size_t w, size_t h,
+                                 size_t max_upsample,
+                                 float* out, uint8_t* out_rgba);
 /* free: 1 if it existed, 0 for stale/unknown */
 int32_t xy_pyramid_free(uint64_t handle);
 ```
@@ -285,11 +347,17 @@ trace's pyramid for lazy rebuild, exits any drill, and returns an `append`
 message carrying a complete fresh payload in the split layout — screen-bounded
 by construction (§29), so the wire never needs deltas, and shipped exactly
 once per tick (wire-protocol §4: the widget host rides the spec/buffers trait
-update; the socket host pushes a `msg`). The client rebuilds only the traces
-named in `affected`, applies the follow policy (refit when at home, slide
-when pinned to the live right edge, hold when inspecting history), and
-refines tiered traces to its current window through the normal
-stale-while-revalidate request path (§17).
+update; the socket host pushes a `msg`). Encode offsets stay sticky across
+appends (`Column.suggest_offset` retains the last shipped offset while every
+value remains within one span of it), making consecutive payloads retain
+byte-identical prefixes. The client updates only the traces named in
+`affected`: a direct scatter/line with unchanged encoding extends existing
+GPU buffers with tail-only `bufferSubData` uploads into capacity-doubling data
+stores; anything else rebuilds. It applies the follow policy (refit when at
+home, slide when pinned to the live right edge, hold when inspecting history),
+then refines tiered traces through the normal stale-while-revalidate path
+(§17), coalesced to at most one round-trip per 300 ms burst; at home,
+re-decimation is skipped when recorded `decimation_px` covers the plot.
 
 **Still future (`stream.rs`):** Rust-owned chunked append buffers with
 zone maps computed on seal, and — the important one — appends marking

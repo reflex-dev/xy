@@ -15,16 +15,38 @@ import csv
 import hashlib
 import re
 import sys
-import tomllib
 import zipfile
 from dataclasses import dataclass
 from email.parser import Parser
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parents[1]
+try:
+    from artifact_metadata import dependency_metadata_errors
+    from js_exports import missing_esm_exports
+except ModuleNotFoundError:  # imported by tests from the repository root
+    from scripts.artifact_metadata import dependency_metadata_errors
+    from scripts.js_exports import missing_esm_exports
+
+# Mirrors verify_sdist's root-directory shape: a release version (`0.0.2`) plus
+# whatever PEP 440 suffix a between-tags build appends (`0.0.3.dev4+g63c0697`).
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[A-Za-z0-9_.+!]*)?$")
 
 REQUIRED_FILES = {
+    "reflex_xy/__init__.py",
+    "reflex_xy/app.py",
+    "reflex_xy/assets/XYChart.jsx",
+    "reflex_xy/assets/__init__.py",
+    "reflex_xy/component.py",
+    "reflex_xy/events.py",
+    "reflex_xy/namespace.py",
+    "reflex_xy/payload_asset.py",
+    "reflex_xy/py.typed",
+    "reflex_xy/registry.py",
+    "reflex_xy/selections.py",
+    "reflex_xy/state_bridge.py",
+    "reflex_xy/tokens.py",
+    "reflex_xy/vars.py",
     "xy/__init__.py",
     "xy/_native.py",
     "xy/_framing.py",
@@ -35,7 +57,35 @@ REQUIRED_FILES = {
     "xy/config.py",
     "xy/export.py",
     "xy/_figure.py",
+    "xy/backends/__init__.py",
+    "xy/backends/backend_xy.py",
+    "xy/backends/backend_xy_host.py",
+    "xy/backends/backend_xy_widget.js",
+    "xy/backends/backend_xy_widget.py",
+    "xy/backends/display_list.py",
+    "xy/backends/raster.py",
     "xy/marks.py",
+    "xy/pyplot/__init__.py",
+    "xy/pyplot/_artists.py",
+    "xy/pyplot/_axes.py",
+    "xy/pyplot/_axisgrid.py",
+    "xy/pyplot/_colors.py",
+    "xy/pyplot/_compat_inventory.py",
+    "xy/pyplot/_figure_tree.py",
+    "xy/pyplot/_fmt.py",
+    "xy/pyplot/_grid.py",
+    "xy/pyplot/_markers.py",
+    "xy/pyplot/_mathtext.py",
+    "xy/pyplot/_mode.py",
+    "xy/pyplot/_mplfig.py",
+    "xy/pyplot/_plot_types.py",
+    "xy/pyplot/_rc.py",
+    "xy/pyplot/_state.py",
+    "xy/pyplot/_ticker.py",
+    "xy/pyplot/_transforms.py",
+    "xy/pyplot/_translate.py",
+    "xy/pyplot/dates.py",
+    "xy/pyplot/typing.py",
     "xy/interaction.py",
     "xy/kernels.py",
     "xy/lod.py",
@@ -64,6 +114,15 @@ def _dist_info_name(names: set[str], filename: str) -> str:
     return matches[0]
 
 
+def _require_dist_info_version(names: set[str], expected_version: str) -> None:
+    """The `.dist-info` directory must be named for the same version as the file."""
+    directory = _dist_info_name(names, "METADATA").split("/", 1)[0]
+    if directory != f"xy-{expected_version}.dist-info":
+        raise AssertionError(
+            f"wheel has {directory!r} but its filename says version {expected_version!r}"
+        )
+
+
 def _require_unique_archive_members(infos: list[zipfile.ZipInfo]) -> None:
     seen: set[str] = set()
     duplicates: set[str] = set()
@@ -80,7 +139,9 @@ def _require_only_shippable_roots(names: set[str]) -> None:
         name
         for name in names
         if name.rstrip("/")
-        and not (name.startswith("xy/") or name.split("/", 1)[0].endswith(".dist-info"))
+        and not (
+            name.startswith(("reflex_xy/", "xy/")) or name.split("/", 1)[0].endswith(".dist-info")
+        )
     )
     if unexpected:
         raise AssertionError(
@@ -128,74 +189,66 @@ def _require_filename_tag(path: Path, tags: list[str]) -> None:
         )
 
 
-def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
-    return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
-            flags=re.IGNORECASE,
-        )
-    )
+def _normalize_numeric_local_version(version: str) -> str:
+    # Hatchling normalizes an all-digit commit hash in the filename/dist-info,
+    # while uv-dynamic-versioning can preserve its leading zeros in METADATA.
+    # Numeric local versions compare as integers under PEP 440 (§33).
+    return re.sub(r"(?<=\+)0+(?=[0-9]+$)", "", version)
 
 
-def _dependency_name(requirement: str) -> str:
-    requirement = requirement.split(";", 1)[0].strip()
-    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
-    return "" if match is None else match.group(1).replace("_", "-").lower()
-
-
-def _is_reflex_dependency(requirement: str) -> bool:
-    name = _dependency_name(requirement)
-    return name == "reflex" or name.startswith("reflex-")
-
-
-def _require_metadata(names: set[str], data: bytes) -> None:
+def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
     missing: list[str] = []
     if metadata.get("Name", "").strip() != "xy":
         missing.append("Name: xy")
-    project_version = _project_version()
-    if metadata.get("Version", "").strip() != project_version:
-        missing.append(f"Version: {project_version}")
+    if _normalize_numeric_local_version(
+        metadata.get("Version", "").strip()
+    ) != _normalize_numeric_local_version(expected_version):
+        missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
-    requirements = metadata.get_all("Requires-Dist") or []
-    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
-        if not any(
-            _dependency_satisfies_floor(requirement, package, minimum)
-            for requirement in requirements
-        ):
-            missing.append(f"Requires-Dist: {package}>={minimum}")
-    reflex_requirements = [
-        requirement for requirement in requirements if _is_reflex_dependency(requirement)
-    ]
-    if reflex_requirements:
-        missing.append(f"no Reflex runtime dependency ({reflex_requirements})")
+    missing.extend(dependency_metadata_errors(metadata))
     if missing:
         raise AssertionError(f"missing or invalid METADATA lines: {missing}")
     _dist_info_name(names, "METADATA")
 
 
-def _project_version(pyproject_path: Path = ROOT / "pyproject.toml") -> str:
-    try:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise AssertionError(f"cannot read project version from {pyproject_path}: {exc}") from exc
-    version = str((data.get("project") or {}).get("version") or "").strip()
-    if not version:
-        raise AssertionError(f"{pyproject_path} is missing project.version")
+def _filename_version(path: Path) -> str:
+    """The version the wheel *claims* to be, taken from its own filename.
+
+    pyproject no longer carries a version to compare against — it is derived
+    from the git tag at build time — so the invariant this can still enforce is
+    internal consistency: the filename installers key off and the METADATA pip
+    records must agree. A build that resolved the version twice and differently
+    (say, a tagless CI checkout mid-way through) shows up as exactly that
+    disagreement.
+    """
+    version = path.name[:-4].split("-")[1]
+    if not VERSION_RE.match(version):
+        raise AssertionError(f"wheel filename has an unexpected version segment: {path.name}")
     return version
 
 
-def _require_static_bundle(name: str, data: bytes, needles: set[str]) -> None:
+def _decode_substantial_bundle(name: str, data: bytes) -> str:
     text = data.decode("utf-8")
     if len(text) < 1000:
         raise AssertionError(f"{name} is suspiciously small")
+    return text
+
+
+def _require_static_bundle(name: str, data: bytes, needles: set[str]) -> None:
+    text = _decode_substantial_bundle(name, data)
     missing = sorted(needle for needle in needles if needle not in text)
     if missing:
         raise AssertionError(f"{name} missing expected JS markers: {missing}")
+
+
+def _require_static_esm_exports(name: str, data: bytes, required: set[str]) -> None:
+    text = _decode_substantial_bundle(name, data)
+    missing = missing_esm_exports(text, required)
+    if missing:
+        raise AssertionError(f"{name} missing expected exports: {missing}")
 
 
 def _require_text_markers(name: str, data: bytes, needles: set[str]) -> None:
@@ -207,9 +260,9 @@ def _require_text_markers(name: str, data: bytes, needles: set[str]) -> None:
         raise AssertionError(f"{name} missing expected markers: {missing}")
 
 
-def _require_py_typed_marker(data: bytes) -> None:
+def _require_py_typed_marker(data: bytes, name: str = "xy/py.typed") -> None:
     if data != b"":
-        raise AssertionError("xy/py.typed must be an empty full-package PEP 561 marker")
+        raise AssertionError(f"{name} must be an empty full-package PEP 561 marker")
 
 
 def _record_hash(data: bytes) -> str:
@@ -280,7 +333,9 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
         _require_only_shippable_roots(names)
         wheel = _parse_wheel(names, zf.read(_dist_info_name(names, "WHEEL")))
         _require_filename_tag(path, wheel.tags)
-        _require_metadata(names, zf.read(_dist_info_name(names, "METADATA")))
+        expected_version = _filename_version(path)
+        _require_dist_info_version(names, expected_version)
+        _require_metadata(names, zf.read(_dist_info_name(names, "METADATA")), expected_version)
         _require_record(zf, names)
 
     missing = sorted(REQUIRED_FILES - names)
@@ -292,6 +347,16 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             "xy/__init__.py",
             zf.read("xy/__init__.py"),
             {"__version__", "__all__", "_EXPORTS", "__getattr__"},
+        )
+        _require_text_markers(
+            "reflex_xy/__init__.py",
+            zf.read("reflex_xy/__init__.py"),
+            {"XYPlugin", "chart", "figure", "__version__", '_distribution_version("xy")'},
+        )
+        _require_text_markers(
+            "reflex_xy/assets/XYChart.jsx",
+            zf.read("reflex_xy/assets/XYChart.jsx"),
+            {"XYChart", "xy_client.js"},
         )
         _require_text_markers(
             "xy/_figure.py",
@@ -332,11 +397,12 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             {"BACKEND", "_native", "ImportError"},
         )
         _require_py_typed_marker(zf.read("xy/py.typed"))
-        _require_static_bundle(
+        _require_py_typed_marker(zf.read("reflex_xy/py.typed"), "reflex_xy/py.typed")
+        _require_static_esm_exports(
             "xy/static/index.js",
             zf.read("xy/static/index.js"),
-            # Minified bundle: assert the export aliases, not source lines.
-            {"as render", "as renderStandalone", "as decodeFrame", "as ChartView"},
+            # Minified bundle: assert the exported public surface, not source lines.
+            {"render", "renderStandalone", "decodeFrame", "ChartView"},
         )
         _require_static_bundle(
             "xy/static/standalone.js",

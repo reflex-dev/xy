@@ -123,6 +123,145 @@ def test_state_round_trip_patch_semantics_and_clamps(tmp_path: Path) -> None:
     assert result == {key: True for key in result}
 
 
+_LOST_POINTER_CAPTURE_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const ranges = () => Object.fromEntries(
+      view._axisIds().map((id) => [id, [...view._axisRange(id)]]));
+    const center = (el) => {
+      const r = el.getBoundingClientRect();
+      return [r.left + r.width / 2, r.top + r.height / 2];
+    };
+    const [x, y] = center(view.canvas);
+
+    const realRaf = window.requestAnimationFrame;
+    let frames = [];
+    let ts = 0;
+    window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    const flush = () => {
+      for (let round = 0; round < 300 && (frames.length || view._viewAnim); round++) {
+        const queued = frames; frames = [];
+        ts += 100;
+        for (const fn of queued) fn(ts);
+      }
+    };
+
+    const endEvents = [];
+    view.root.addEventListener("xy:view_change", (event) => {
+      if (event.detail.source === "pan_drag" && event.detail.phase === "end") {
+        endEvents.push(event.detail);
+      }
+    });
+    const pointer = (target, type, pointerId, clientX, clientY, buttons) => {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId,
+        pointerType: "mouse",
+        button: 0,
+        buttons,
+        clientX,
+        clientY,
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+      }));
+    };
+
+    pointer(view.canvas, "pointerdown", 71, x, y, 1);
+    pointer(view.canvas, "pointermove", 71, x + 60, y + 10, 1);
+    const atBoundary = ranges();
+
+    // Chrome's iframe sequence when the primary button is released in the
+    // parent document: no pointerup in this document, then lost capture and
+    // a buttonless pointermove when the cursor re-enters.
+    pointer(view.canvas, "lostpointercapture", 71, x + 60, y + 10, 0);
+    pointer(view.canvas, "pointermove", 71, x + 120, y + 20, 0);
+    flush();
+    const canvasReentryDidNotPan =
+      JSON.stringify(ranges()) === JSON.stringify(atBoundary);
+
+    // Coordinate-dependent canvas gestures cannot invent an endpoint outside
+    // this document, so capture loss cancels their transient overlay/state.
+    view._setDragMode("select");
+    pointer(view.canvas, "pointerdown", 72, x, y, 1);
+    pointer(view.canvas, "pointermove", 72, x + 50, y + 40, 1);
+    const selectionWasActive = view.selRect.style.display === "block";
+    pointer(view.canvas, "lostpointercapture", 72, x + 50, y + 40, 0);
+    const selectionCancelled = view.root.xy.state().selection === null
+      && view.selRect.style.display === "none";
+
+    // Editable lasso handles restore the last committed vertex.
+    view._sendSelectPolygon([[0, 0], [4, 0], [4, 16], [0, 16]], { history: false });
+    const lassoBefore = JSON.stringify(view._lassoPolygon);
+    const handle = view.selLassoHandles.children[1];
+    const [hx, hy] = center(handle);
+    pointer(handle, "pointerdown", 73, hx, hy, 1);
+    pointer(view.selLasso, "pointermove", 73, hx + 30, hy + 20, 1);
+    const lassoMoved = JSON.stringify(view._lassoPolygon) !== lassoBefore;
+    pointer(view.selLasso, "lostpointercapture", 73, hx + 30, hy + 20, 0);
+    const lassoRestored = JSON.stringify(view._lassoPolygon) === lassoBefore
+      && !handle.hasAttribute("data-xy-active");
+
+    // Axis-band pan owns the same finish-at-last-valid-frame policy.
+    view._setDragMode("pan");
+    const axisBand = view.root.querySelector('[data-xy-axis-band="x"]');
+    const [ax, ay] = center(axisBand);
+    pointer(axisBand, "pointerdown", 74, ax, ay, 1);
+    pointer(axisBand, "pointermove", 74, ax + 45, ay, 1);
+    const axisAtBoundary = ranges();
+    pointer(axisBand, "lostpointercapture", 74, ax + 45, ay, 0);
+    pointer(axisBand, "pointermove", 74, ax + 90, ay, 0);
+    const axisReentryDidNotPan =
+      JSON.stringify(ranges()) === JSON.stringify(axisAtBoundary);
+
+    // Chrome owned by the modebar cannot remain in its dragging state either.
+    view.root.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true }));
+    const modebar = view._modebar;
+    const [mx, my] = center(modebar);
+    pointer(modebar, "pointerdown", 75, mx, my, 1);
+    pointer(modebar, "pointermove", 75, mx + 40, my + 20, 1);
+    const modebarAtBoundary = [modebar.style.left, modebar.style.top];
+    pointer(modebar, "lostpointercapture", 75, mx + 40, my + 20, 0);
+    pointer(modebar, "pointermove", 75, mx + 80, my + 40, 0);
+    const modebarReleased = !view._modebarDragging
+      && !modebar.classList.contains("xy-dragging")
+      && JSON.stringify([modebar.style.left, modebar.style.top])
+        === JSON.stringify(modebarAtBoundary);
+
+    flush();
+    window.requestAnimationFrame = realRaf;
+
+    document.body.setAttribute("data-xy-lost-capture-probe", JSON.stringify({
+      canvasReentryDidNotPan,
+      finalEndEmittedForBothPans: endEvents.length === 2,
+      finalEndKeptInteraction: endEvents[0]?.interaction_id != null
+        && endEvents[0]?.axes?.length > 0
+        && endEvents[1]?.interaction_id != null
+        && endEvents[1]?.axes?.length > 0,
+      selectionWasActive,
+      selectionCancelled,
+      lassoMoved,
+      lassoRestored,
+      axisReentryDidNotPan,
+      modebarReleased,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-lost-capture-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_capture_loss_policy_covers_every_capture_owning_gesture(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _LOST_POINTER_CAPTURE_PROBE),
+        "data-xy-lost-capture-probe",
+        label="shared pointer-capture loss probe",
+    )
+    assert result == {key: True for key in result}
+
+
 _HISTORY_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {
@@ -515,6 +654,597 @@ def test_selection_modes_double_click_clear_selection(tmp_path: Path) -> None:
     assert result == {key: True for key in result}
 
 
+_TAILWIND_LASSO_CSS = """
+@layer base, components, utilities;
+@layer utilities {
+  .fill-slate-900 { fill: rgb(15 23 42); }
+  .pointer-events-none { pointer-events: none; }
+}
+"""
+
+_TAILWIND_LASSO_SLOT_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+
+    // SVG paint utilities are irrelevant to the existing div band: it keeps
+    // the normal selection background/border and structural pointer behavior.
+    view._sendSelect([0.5, 1], [3, 12], { mode: "box", history: false });
+    const boxStyle = getComputedStyle(view.selRect);
+    const boxPaintStayedDefault =
+      boxStyle.borderTopStyle === "solid"
+      && parseFloat(boxStyle.borderTopWidth) > 0
+      && boxStyle.backgroundColor !== "rgba(0, 0, 0, 0)"
+      && boxStyle.backgroundColor !== "rgb(15, 23, 42)"
+      && boxStyle.borderTopColor !== "rgb(244, 63, 94)";
+    const boxContractStayedIntact =
+      view.selRect.dataset.xySlot === "selection"
+      && view.selRect.classList.contains("fill-slate-900")
+      && view.selRect.classList.contains("pointer-events-none")
+      && boxStyle.pointerEvents === "none"
+      && view.selRect.style.display === "block";
+
+    view._sendSelectPolygon(
+      [[1, 2], [3.5, 2], [3.5, 12], [1, 12]],
+      { history: false },
+    );
+    const path = view.selLassoPath;
+    const handles = [...view.selLassoHandles.children];
+    const geometry = [path, ...handles];
+    const pathStyle = getComputedStyle(path);
+    const handleStyles = handles.map((handle) => getComputedStyle(handle));
+    const slotReachedEveryNode = geometry.every(
+      (node) =>
+        node.dataset.xySlot === "selection"
+        && node.classList.contains("fill-slate-900")
+        && node.classList.contains("pointer-events-none"),
+    );
+    const classPaintedFill =
+      pathStyle.fill === "rgb(15, 23, 42)"
+      && handleStyles.every((style) => style.fill === "rgb(15, 23, 42)");
+    const explicitStylePaintedStroke =
+      pathStyle.stroke === "rgb(244, 63, 94)"
+      && pathStyle.strokeWidth === "3px"
+      && handleStyles.every(
+        (style) => style.stroke === "rgb(244, 63, 94)" && style.strokeWidth === "3px",
+      );
+    const pointerContractStayedIntact =
+      pathStyle.pointerEvents === "none"
+      && handleStyles.every((style) => style.pointerEvents === "all");
+
+    // A common box-oriented utility (`pointer-events-none`) must not make the
+    // editable lasso handles disappear from browser hit testing.
+    const firstHandle = handles[0];
+    const handleRect = firstHandle.getBoundingClientRect();
+    const clientX = handleRect.left + handleRect.width / 2;
+    const clientY = handleRect.top + handleRect.height / 2;
+    const hit = document.elementFromPoint(clientX, clientY);
+    const hitTargetsHandle =
+      hit?.closest?.("[data-xy-selection-lasso-handle]") === firstHandle;
+
+    const pointBeforeDrag = [...view._lassoPolygon[0]];
+    firstHandle.dispatchEvent(new PointerEvent("pointerdown", {
+      pointerId: 411, pointerType: "mouse", button: 0, buttons: 1,
+      clientX, clientY, bubbles: true,
+    }));
+    view.selLasso.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 411, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: clientX + 18, clientY: clientY - 10, bubbles: true,
+    }));
+    view.selLasso.dispatchEvent(new PointerEvent("pointerup", {
+      pointerId: 411, pointerType: "mouse", button: 0, buttons: 0,
+      clientX: clientX + 18, clientY: clientY - 10, bubbles: true,
+    }));
+    const pointAfterDrag = view._lassoPolygon[0];
+    const handleDragStillWorks =
+      pointAfterDrag[0] !== pointBeforeDrag[0] || pointAfterDrag[1] !== pointBeforeDrag[1];
+
+    document.body.setAttribute("data-xy-tailwind-lasso-slot-probe", JSON.stringify({
+      boxPaintStayedDefault,
+      boxContractStayedIntact,
+      slotReachedEveryNode,
+      classPaintedFill,
+      explicitStylePaintedStroke,
+      pointerContractStayedIntact,
+      hitTargetsHandle,
+      handleDragStillWorks,
+      lassoReplacedBox:
+        view.selRect.style.display === "none" && view.selLasso.style.display === "block",
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-tailwind-lasso-slot-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_tailwind_selection_slot_styles_lasso_without_changing_box_behavior(
+    tmp_path: Path,
+) -> None:
+    chart = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0, 3.0, 4.0], [0.0, 1.0, 4.0, 9.0, 16.0]),
+        class_names={"selection": "fill-slate-900 pointer-events-none"},
+        styles={"selection": {"stroke": "#f43f5e", "stroke_width": 3}},
+        width=480,
+        height=360,
+    )
+    document = chart.to_html(custom_css=_TAILWIND_LASSO_CSS)
+    assert _RENDER_CALL in document
+    result = _run(
+        tmp_path,
+        document.replace(_RENDER_CALL, _TAILWIND_LASSO_SLOT_PROBE, 1),
+        "data-xy-tailwind-lasso-slot-probe",
+        label="Tailwind lasso selection-slot probe",
+    )
+    assert result == {
+        "boxPaintStayedDefault": True,
+        "boxContractStayedIntact": True,
+        "slotReachedEveryNode": True,
+        "classPaintedFill": True,
+        "explicitStylePaintedStroke": True,
+        "pointerContractStayedIntact": True,
+        "hitTargetsHandle": True,
+        "handleDragStillWorks": True,
+        "lassoReplacedBox": True,
+    }
+
+
+# Box / x-range / y-range brushes persist like the lasso (view-state.md §2): the
+# overlay stays drawn and re-projects through the real draw path, the range
+# brushes drop their cross-axis borders, and the mode discriminator round-trips
+# through durable state.
+_SELECTION_PERSIST_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const cs = () => getComputedStyle(view.selRect);
+    const w = (v) => parseFloat(v) || 0;
+
+    // Box select stays visible with a full border and no mode in state.
+    view._sendSelect([0.5, 1.0], [3.0, 12.0], { mode: "box", history: false });
+    const b = cs();
+    const boxVisible = view.selRect.style.display === "block"
+      && view._boxSelection && view._boxSelection.mode === "box"
+      && view.selRect.dataset.xyBand === "select";
+    const boxAllBorders = w(b.borderTopWidth) > 0 && w(b.borderBottomWidth) > 0
+      && w(b.borderLeftWidth) > 0 && w(b.borderRightWidth) > 0;
+    const boxStateNoMode = view.root.xy.state().selection.range.mode === undefined;
+
+    // Re-projects through a view change via the real _drawNow path.
+    const leftBefore = view.selRect.style.left;
+    view._setView({ ranges: { x: [0, 2] } },
+      { animate: false, source: "test", phase: "end", history: false });
+    view._drawNow();
+    const boxPersistsThroughZoom = view.selRect.style.display === "block"
+      && view.selRect.style.left !== leftBefore;
+
+    // x-range: no top/bottom border, spans full plot height, mode round-trips.
+    view._sendSelect([0.5, view.view.y0], [2.5, view.view.y1], { mode: "x", history: false });
+    const xb = cs();
+    const xRangeBand = view.selRect.dataset.xyBand === "select-x";
+    const xNoHorizBorder = w(xb.borderTopWidth) === 0 && w(xb.borderBottomWidth) === 0
+      && w(xb.borderLeftWidth) > 0 && w(xb.borderRightWidth) > 0;
+    const xSpansHeight = Math.abs(w(view.selRect.style.top) - view.plot.y) < 1.5
+      && Math.abs(w(view.selRect.style.height) - view.plot.h) < 1.5;
+    const xModeInState = view.root.xy.state().selection.range.mode === "x";
+
+    // y-range: no left/right border, spans full plot width.
+    view._sendSelect([view.view.x0, 1.0], [view.view.x1, 9.0], { mode: "y", history: false });
+    const yb = cs();
+    const yRangeBand = view.selRect.dataset.xyBand === "select-y";
+    const yNoVertBorder = w(yb.borderLeftWidth) === 0 && w(yb.borderRightWidth) === 0
+      && w(yb.borderTopWidth) > 0 && w(yb.borderBottomWidth) > 0;
+    const ySpansWidth = Math.abs(w(view.selRect.style.left) - view.plot.x) < 1.5
+      && Math.abs(w(view.selRect.style.width) - view.plot.w) < 1.5;
+    const yModeInState = view.root.xy.state().selection.range.mode === "y";
+
+    // A lasso replaces the rectangular overlay (mutual exclusion).
+    view._sendSelectPolygon([[0, 0], [2, 0], [2, 4], [0, 4]], { history: false });
+    const boxClearedByLasso = view._boxSelection === null
+      && view.selRect.style.display === "none"
+      && view.selLasso.style.display === "block";
+
+    // applyState round-trips an x-range brush back to select-x and clears lasso.
+    view.root.xy.applyState({ v: 1,
+      selection: { range: { x0: 0.5, x1: 2.5, y0: -1, y1: 5, mode: "x" } } });
+    view._drawNow();
+    const xModeRestored = view.selRect.dataset.xyBand === "select-x"
+      && view._boxSelection && view._boxSelection.mode === "x"
+      && view.selLasso.style.display === "none";
+    // A bad mode value is rejected by validation.
+    const badModeRejected = view.root.xy.applyState({ v: 1,
+      selection: { range: { x0: 0, x1: 1, y0: 0, y1: 1, mode: "diagonal" } } }) === false;
+
+    // Clearing hides the overlay.
+    view.root.xy.applyState({ v: 1, selection: null });
+    const clearedHidesOverlay = view._boxSelection === null
+      && view.selRect.style.display === "none";
+
+    document.body.setAttribute("data-xy-selection-persist-probe", JSON.stringify({
+      boxVisible, boxAllBorders, boxStateNoMode, boxPersistsThroughZoom,
+      xRangeBand, xNoHorizBorder, xSpansHeight, xModeInState,
+      yRangeBand, yNoVertBorder, ySpansWidth, yModeInState,
+      boxClearedByLasso, xModeRestored, badModeRejected, clearedHidesOverlay,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-selection-persist-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_rectangular_selection_persists_with_range_borders(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _SELECTION_PERSIST_PROBE),
+        "data-xy-selection-persist-probe",
+        label="rectangular selection persistence probe",
+    )
+    assert result == {key: True for key in result}
+
+
+def _linked_chart_html() -> str:
+    chart = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0, 3.0, 4.0], [0.0, 1.0, 4.0, 9.0, 16.0]),
+        width=480,
+        height=360,
+    )
+    fig = chart.figure()
+    fig.set_interaction(link_group="probe-group", link_select=True)
+    html = fig.to_html()
+    assert _RENDER_CALL in html
+    return html
+
+
+# A selection arriving from a link-group peer must hydrate the SAME persisted
+# overlay state a local gesture would, so _drawNow re-projects it — box/x/y
+# range bands and lasso alike, with the other overlay cleared (Greptile P1 on
+# the box-persistence PR: linked range selections left _boxSelection unset).
+_LINKED_SELECTION_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const w = (v) => parseFloat(v) || 0;
+    const cs = () => getComputedStyle(view.selRect);
+    // Drive the real BroadcastChannel handler synchronously with the exact
+    // message shape _broadcastLinkedSelection sends (source != our own).
+    const link = (selection) => {
+      view._linkChannel.onmessage({ data: { source: "peer", selection } });
+      view._drawNow();
+    };
+    const hasChannel = !!view._linkChannel;
+
+    // Linked x-range -> persisted box overlay on this peer: select-x band,
+    // no top/bottom border, mode round-tripped into durable state.
+    link({ range: { x0: 0.5, x1: 2.5, y0: -1, y1: 5, mode: "x" } });
+    const xb = cs();
+    const linkedXRange = view.selRect.style.display === "block"
+      && view.selRect.dataset.xyBand === "select-x"
+      && w(xb.borderTopWidth) === 0 && w(xb.borderBottomWidth) === 0
+      && w(xb.borderLeftWidth) > 0 && w(xb.borderRightWidth) > 0
+      && view._boxSelection && view._boxSelection.mode === "x"
+      && view.root.xy.state().selection.range.mode === "x";
+
+    // Linked polygon -> lasso shown, rectangular overlay cleared.
+    link({ polygon: [[0, 0], [2, 0], [2, 4], [0, 4]] });
+    const linkedPolygon = view.selLasso.style.display === "block"
+      && !!view.selLassoPath.getAttribute("d")
+      && view._boxSelection === null
+      && view.selRect.style.display === "none";
+
+    // Linked plain box -> box band, no mode, lasso overlay cleared.
+    link({ range: { x0: -1, x1: 1, y0: -1, y1: 1 } });
+    const linkedBox = view.selRect.style.display === "block"
+      && view.selRect.dataset.xyBand === "select"
+      && view._lassoPolygon === null
+      && view.root.xy.state().selection.range.mode === undefined;
+
+    // Linked clear -> both overlays and durable selection gone.
+    link({ clear: true });
+    const linkedClear = view._boxSelection === null && view._lassoPolygon === null
+      && view.selRect.style.display === "none" && view.selLasso.style.display === "none"
+      && view.root.xy.state().selection === null;
+
+    document.body.setAttribute("data-xy-linked-selection-probe", JSON.stringify({
+      hasChannel, linkedXRange, linkedPolygon, linkedBox, linkedClear,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-linked-selection-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_linked_selection_hydrates_persisted_overlay(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _linked_chart_html().replace(_RENDER_CALL, _LINKED_SELECTION_PROBE),
+        "data-xy-linked-selection-probe",
+        label="linked selection overlay probe",
+    )
+    assert result == {key: True for key in result}
+
+
+_REPUBLISH_STATE_PROBE = """
+  const host = document.getElementById("chart");
+  let view = xy.renderStandalone(host, spec, buf);
+  try {
+    const hydrateSelectionForRepublish = (target, selection) => {
+      const applied = target._applyStatePatch(
+        { v: 1, selection },
+        {
+          source: "republish",
+          history: false,
+          dispatch: false,
+          broadcast: false,
+        },
+      );
+      const localMaskApplied = applied === true
+        && target._restoreSelectionLocalMask(selection, { localMask: true });
+      return applied === true && localMaskApplied === true;
+    };
+    const selectableTrace = (target) => target.gpuTraces.find(
+      (trace) => trace.trace.kind === "scatter"
+        && trace.tier !== "density"
+        && !trace._legendHidden
+        && trace._cpu
+        && trace.n > 0,
+    );
+    const backendIneligibleTraces = (target) => target.gpuTraces.filter(
+      (trace) => trace.trace.kind !== "scatter"
+        || trace.tier === "density"
+        || trace._legendHidden,
+    );
+    const selectionMask = (target, trace = selectableTrace(target)) => {
+      if (!trace?.selBuf) return [];
+      const mask = new Float32Array(trace.n);
+      target.gl.bindBuffer(target.gl.ARRAY_BUFFER, trace.selBuf);
+      target.gl.getBufferSubData(target.gl.ARRAY_BUFFER, 0, mask);
+      return [...mask];
+    };
+    const hasImmediateSelectionMask = (target) => {
+      const trace = selectableTrace(target);
+      const mask = selectionMask(target, trace);
+      const backendIneligible = backendIneligibleTraces(target);
+      return Boolean(
+        trace
+        && trace.selActive === true
+        && trace.selBuf
+        && target._selectionCount > 0
+        && mask.some((selected) => selected === 1)
+        // Lines and aggregate density are absent from backend geometric
+        // selection replies, so provisional hydration must never mask them.
+        && backendIneligible.length === 2
+        && backendIneligible.every((candidate) => !candidate.selActive && !candidate.selBuf),
+      );
+    };
+
+    view._drawNow();
+    // Navigate only the secondary axis. The primary x/y aliases remain at
+    // home, which is the case the old four-field wrapper check missed.
+    view._setView(
+      { ranges: { y2: [104, 112] } },
+      { animate: false, source: "test", phase: "end", history: false },
+    );
+    view._sendSelect(
+      [0.5, view.view.y0],
+      [2.5, view.view.y1],
+      { mode: "x", history: false },
+    );
+    const rangeState = view.root.xy.state();
+
+    // Exercise the wrapper's unchanged-chrome updatePayload path: rebuilding
+    // the traces drops their mask buffers, so silent hydration must restore a
+    // provisional GPU mask immediately, before the backend can reply.
+    let semanticEvents = 0;
+    let broadcasts = 0;
+    let commSends = 0;
+    view.comm = { send: () => { commSends += 1; } };
+    view.root.addEventListener("xy:brush", () => { semanticEvents += 1; });
+    view.root.addEventListener("xy:select", () => { semanticEvents += 1; });
+    view._broadcastLinkedSelection = () => { broadcasts += 1; };
+    const updatedInPlace = view.updatePayload(spec, view._payload);
+    view._transitionView = null;
+    view._setView(
+      { ranges: rangeState.ranges },
+      { animate: false, source: "republish", phase: "end", history: false },
+    );
+    const inPlaceApplied = hydrateSelectionForRepublish(view, rangeState.selection);
+    view._drawNow();
+    const inPlaceMaskBeforeGlLoss = selectionMask(view);
+    const priorGlLoss = view._glLost;
+    view._glLost = true;
+    const glLossHydrationGuarded =
+      view._restoreSelectionLocalMask(
+        rangeState.selection,
+        { localMask: true },
+      ) === false;
+    view._glLost = priorGlLoss;
+    const inPlaceRangeAndGlLossGuarded =
+      updatedInPlace
+      && inPlaceApplied
+      && view.root.xy.state().selection?.range?.mode === "x"
+      && view._boxSelection?.mode === "x"
+      && hasImmediateSelectionMask(view)
+      && glLossHydrationGuarded
+      && JSON.stringify(selectionMask(view)) === JSON.stringify(inPlaceMaskBeforeGlLoss);
+    const inPlaceRestoreStayedSilent =
+      semanticEvents === 0
+      && broadcasts === 0
+      && commSends === 0
+      && view._historyPast.length === 0;
+
+    view.destroy();
+    host.replaceChildren();
+    const rangeSpec = {
+      ...spec,
+      title: "Republished range",
+      dom: {
+        ...(spec.dom || {}),
+        class_name: "republished-tailwind-range",
+      },
+    };
+    view = xy.renderStandalone(host, rangeSpec, buf);
+    semanticEvents = 0;
+    broadcasts = 0;
+    commSends = 0;
+    view.comm = { send: () => { commSends += 1; } };
+    view.root.addEventListener("xy:brush", () => { semanticEvents += 1; });
+    view.root.addEventListener("xy:select", () => { semanticEvents += 1; });
+    view._broadcastLinkedSelection = () => { broadcasts += 1; };
+    view._setView(
+      { ranges: rangeState.ranges },
+      { animate: false, source: "republish", phase: "end", history: false },
+    );
+    const rangeApplied = hydrateSelectionForRepublish(view, rangeState.selection);
+    view._drawNow();
+    const rangeHydrated =
+      rangeApplied
+      && view.root.xy.state().selection?.range?.mode === "x"
+      && view._boxSelection?.mode === "x"
+      && view.selRect.style.display === "block"
+      && view.selRect.dataset.xyBand === "select-x"
+      && hasImmediateSelectionMask(view);
+    const secondaryAxisHydrated =
+      JSON.stringify(view.root.xy.state().ranges.y2)
+      === JSON.stringify(rangeState.ranges.y2);
+    const rangeChromeChanged =
+      view.root.classList.contains("republished-tailwind-range")
+      && view.root.querySelector('[data-xy-slot="title"]')?.textContent
+        === "Republished range";
+    const rangeRestoreStayedSilent =
+      semanticEvents === 0
+      && broadcasts === 0
+      && commSends === 0
+      && view._historyPast.length === 0;
+
+    // Repeat with lasso geometry: the replacement must own a real polygon
+    // overlay and durable state immediately, before any asynchronous mask
+    // response can arrive.
+    view._sendSelectPolygon(
+      [[0.5, 1], [2.5, 1], [2.5, 9], [0.5, 9]],
+      { history: false },
+    );
+    const polygonState = view.root.xy.state();
+    view.destroy();
+    host.replaceChildren();
+    const polygonSpec = {
+      ...spec,
+      title: "Republished polygon",
+      dom: {
+        ...(spec.dom || {}),
+        class_name: "republished-tailwind-polygon",
+      },
+    };
+    view = xy.renderStandalone(host, polygonSpec, buf);
+    semanticEvents = 0;
+    broadcasts = 0;
+    commSends = 0;
+    view.comm = { send: () => { commSends += 1; } };
+    view.root.addEventListener("xy:brush", () => { semanticEvents += 1; });
+    view.root.addEventListener("xy:select", () => { semanticEvents += 1; });
+    view._broadcastLinkedSelection = () => { broadcasts += 1; };
+    const polygonApplied = hydrateSelectionForRepublish(view, polygonState.selection);
+    view._drawNow();
+    const polygonHydrated =
+      polygonApplied
+      && view.root.xy.state().selection?.polygon?.length === 4
+      && view._lassoPolygon?.length === 4
+      && view.selLasso.style.display === "block"
+      && !!view.selLassoPath.getAttribute("d")
+      && view.selRect.style.display === "none"
+      && hasImmediateSelectionMask(view);
+    const polygonChromeChanged =
+      view.root.classList.contains("republished-tailwind-polygon")
+      && view.root.querySelector('[data-xy-slot="title"]')?.textContent
+        === "Republished polygon";
+    const polygonHydrationStayedSilent =
+      semanticEvents === 0
+      && broadcasts === 0
+      && commSends === 0
+      && view._historyPast.length === 0;
+
+    // The tagged authoritative reply replaces, rather than combines with,
+    // the provisional mask and remains silent. An ordinary reply still emits
+    // the public semantic event.
+    const polygonTrace = selectableTrace(view);
+    const provisionalMask = selectionMask(view, polygonTrace);
+    const authoritativeIndices = new Uint32Array([0]);
+    view._onKernelMsg(
+      {
+        type: "selection",
+        traces: [{ id: polygonTrace.trace.id, count: 1, buf: 0 }],
+        total: 1,
+        suppress_event: true,
+      },
+      [authoritativeIndices.buffer],
+    );
+    const authoritativeMask = selectionMask(view, polygonTrace);
+    const authoritativeReplyOverwroteSilently =
+      semanticEvents === 0
+      && provisionalMask[0] === 0
+      && authoritativeMask[0] === 1
+      && authoritativeMask.slice(1).every((selected) => selected === 0)
+      && JSON.stringify(authoritativeMask) !== JSON.stringify(provisionalMask)
+      && backendIneligibleTraces(view).every(
+        (candidate) => !candidate.selActive && !candidate.selBuf,
+      );
+    view._onKernelMsg({ type: "selection", traces: [], total: 0 }, []);
+    const polygonRestoreAndRepliesCorrect =
+      polygonHydrationStayedSilent
+      && authoritativeReplyOverwroteSilently
+      && semanticEvents === 1;
+
+    document.body.setAttribute("data-xy-republish-state-probe", JSON.stringify({
+      inPlaceRangeAndGlLossGuarded,
+      inPlaceRestoreStayedSilent,
+      rangeHydrated,
+      secondaryAxisHydrated,
+      rangeChromeChanged,
+      rangeRestoreStayedSilent,
+      polygonHydrated,
+      polygonChromeChanged,
+      polygonRestoreAndRepliesCorrect,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-republish-state-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_republish_hydrates_all_axis_ranges_and_selection_without_echo(
+    tmp_path: Path,
+) -> None:
+    chart = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 4.0, 9.0]),
+        xy.scatter([0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 4.0, 9.0], density=True),
+        xy.line([0.0, 1.0, 2.0, 3.0], [100.0, 106.0, 114.0, 120.0], y_axis="y2"),
+        xy.y_axis(id="y2", side="right"),
+        width=480,
+        height=360,
+    )
+    document = chart.to_html()
+    assert _RENDER_CALL in document
+    result = _run(
+        tmp_path,
+        document.replace(_RENDER_CALL, _REPUBLISH_STATE_PROBE, 1),
+        "data-xy-republish-state-probe",
+        label="republish durable-state hydration probe",
+    )
+    assert result == {
+        "inPlaceRangeAndGlLossGuarded": True,
+        "inPlaceRestoreStayedSilent": True,
+        "rangeHydrated": True,
+        "secondaryAxisHydrated": True,
+        "rangeChromeChanged": True,
+        "rangeRestoreStayedSilent": True,
+        "polygonHydrated": True,
+        "polygonChromeChanged": True,
+        "polygonRestoreAndRepliesCorrect": True,
+    }
+
+
 _ROWS_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {
@@ -774,7 +1504,8 @@ _AXIS_BAND_PROBE = """
     const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
     const bandsExist = !!bandX && !!bandY;
     const cursors = bandsExist
-      && bandX.style.cursor === "ew-resize" && bandY.style.cursor === "ns-resize";
+      && getComputedStyle(bandX).cursor === "ew-resize"
+      && getComputedStyle(bandY).cursor === "ns-resize";
 
     const realRaf = window.requestAnimationFrame;
     let frames = [];
@@ -856,11 +1587,12 @@ _AXIS_BAND_POLICY_PROBE = """
     // pan-only y band shows a grab hand, grabbing while a drag is active.
     const bandX = view.root.querySelector('[data-xy-axis-band="x"]');
     const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
-    const zoomableShowsResize = !!bandX && bandX.style.cursor === "ew-resize";
-    const panOnlyShowsGrab = !!bandY && bandY.style.cursor === "grab";
+    const zoomableShowsResize = !!bandX && getComputedStyle(bandX).cursor === "ew-resize";
+    const panOnlyShowsGrab = !!bandY && getComputedStyle(bandY).cursor === "grab";
 
     let grabbingDuringDrag = false;
     let grabRestoredAfterDrag = false;
+    let cursorRestoredWithoutInline = false;
     if (bandY) {
       const yRect = bandY.getBoundingClientRect();
       const sx = yRect.left + yRect.width / 2;
@@ -869,14 +1601,15 @@ _AXIS_BAND_POLICY_PROBE = """
         { pointerId: 9, clientX: x, clientY: y, bubbles: true, cancelable: true });
       bandY.dispatchEvent(new PointerEvent("pointerdown", opts(sx, sy)));
       bandY.dispatchEvent(new PointerEvent("pointermove", opts(sx, sy + 40)));
-      grabbingDuringDrag = bandY.style.cursor === "grabbing";
+      grabbingDuringDrag = getComputedStyle(bandY).cursor === "grabbing";
       bandY.dispatchEvent(new PointerEvent("pointerup", opts(sx, sy + 40)));
-      grabRestoredAfterDrag = bandY.style.cursor === "grab";
+      grabRestoredAfterDrag = getComputedStyle(bandY).cursor === "grab";
+      cursorRestoredWithoutInline = bandY.style.cursor === "";
     }
 
     document.body.setAttribute("data-xy-axisband-policy-probe", JSON.stringify({
       zoomableShowsResize, panOnlyShowsGrab,
-      grabbingDuringDrag, grabRestoredAfterDrag,
+      grabbingDuringDrag, grabRestoredAfterDrag, cursorRestoredWithoutInline,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -893,6 +1626,92 @@ def test_axis_band_respects_axis_policies(tmp_path: Path) -> None:
         tmp_path, document, "data-xy-axisband-policy-probe", label="axis-band policy probe"
     )
     assert result == {key: True for key in result}
+
+
+_AXIS_BAND_AUTHORED_CURSOR_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
+    if (!bandY) throw new Error("missing y axis band");
+    const authoredInitially = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+    const rect = bandY.getBoundingClientRect();
+    const sx = rect.left + rect.width / 2;
+    const sy = rect.top + rect.height / 2;
+    const dispatch = (type, pointerId, y) => bandY.dispatchEvent(new PointerEvent(type, {
+      pointerId, clientX: sx, clientY: y, bubbles: true, cancelable: true,
+    }));
+
+    dispatch("pointerdown", 21, sy);
+    dispatch("pointermove", 21, sy + 40);
+    const grabbingDuringCancelledDrag = getComputedStyle(bandY).cursor === "grabbing";
+    dispatch("pointercancel", 21, sy + 40);
+    const authoredAfterCancel = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    dispatch("pointerdown", 22, sy);
+    dispatch("pointermove", 22, sy + 40);
+    const grabbingDuringCompletedDrag = getComputedStyle(bandY).cursor === "grabbing";
+    dispatch("pointerup", 22, sy + 40);
+    const authoredAfterPointerUp = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    // Overlapping pointers: a second finger lands mid-pan and lifts first.
+    // Snapshotting the authored cursor per-gesture captured the controller's
+    // own `grabbing` here and replayed it back as author intent, latching the
+    // cursor permanently — a later well-formed drag did not heal it either.
+    dispatch("pointerdown", 31, sy);
+    dispatch("pointermove", 31, sy + 40);
+    dispatch("pointerdown", 32, sy);
+    dispatch("pointerup", 32, sy + 40);
+    dispatch("pointerup", 31, sy + 40);
+    const authoredAfterOverlappingPointers =
+      bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    dispatch("pointerdown", 33, sy);
+    dispatch("pointermove", 33, sy + 40);
+    dispatch("pointerup", 33, sy + 40);
+    const authoredAfterRecoveryDrag = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    document.body.setAttribute("data-xy-axisband-authored-cursor-probe", JSON.stringify({
+      authoredInitially,
+      grabbingDuringCancelledDrag,
+      authoredAfterCancel,
+      grabbingDuringCompletedDrag,
+      authoredAfterPointerUp,
+      authoredAfterOverlappingPointers,
+      authoredAfterRecoveryDrag,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-axisband-authored-cursor-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_axis_band_restores_authored_cursor_after_drag(tmp_path: Path) -> None:
+    document = _chart_html(
+        xy.interaction_config(pan_axes=("x", "y"), zoom_axes=("x",)),
+        styles={"axis_band": {"cursor": "crosshair"}},
+    ).replace(_RENDER_CALL, _AXIS_BAND_AUTHORED_CURSOR_PROBE)
+    result = _run(
+        tmp_path,
+        document,
+        "data-xy-axisband-authored-cursor-probe",
+        label="axis-band authored cursor restore probe",
+    )
+    assert result == {
+        "authoredInitially": True,
+        "grabbingDuringCancelledDrag": True,
+        "authoredAfterCancel": True,
+        "grabbingDuringCompletedDrag": True,
+        "authoredAfterPointerUp": True,
+        "authoredAfterOverlappingPointers": True,
+        "authoredAfterRecoveryDrag": True,
+    }
 
 
 _AXIS_BAND_EXCLUDED_PROBE = """

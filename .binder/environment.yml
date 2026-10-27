@@ -1,0 +1,21 @@
+channels:
+  - conda-forge
+dependencies:
+  # Toolchain for the postBuild source install: the native Rust core and the
+  # Node-built render client are hard requirements of a checkout install.
+  # Loose version pins on purpose — exact conda build strings are
+  # arch-specific (mybinder.org also schedules aarch64 nodes) and conda-forge
+  # rebuilds retire them, which would quietly make this file unsolvable.
+  - rust=1.88.*
+  - nodejs=22.*
+  # repo2docker's default kernel env resolves to Python 3.10 (observed
+  # 3.10.19 on mybinder and in CI), below xy's requires-python >=3.11, which
+  # kills the pip install at metadata. Pin the interpreter loosely — version
+  # only, never a build string. pip stays unpinned.
+  - python=3.13.*
+  # Conda deliberately carries nothing else. The scientific stack the example
+  # notebooks import (including pysam and gwosc for the real_world series) is
+  # pip-installed in postBuild from wheels: keeping ~200 conda packages out
+  # of the solve makes the build faster and sidesteps observed mamba
+  # extraction flakes on mybinder builder nodes
+  # ("Cannot find a valid extracted directory cache").

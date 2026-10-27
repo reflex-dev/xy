@@ -1508,21 +1508,19 @@ fn spectral_window(nfft: usize) -> Vec<f64> {
 
 fn windowed_fft(data: &[f64], start: usize, nfft: usize, window: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let available = data.len().saturating_sub(start).min(nfft);
-    let mean = if available == 0 {
-        0.0
-    } else {
-        data[start..start + available].iter().sum::<f64>() / available as f64
-    };
     let mut real = vec![0.0; nfft];
     let mut imag = vec![0.0; nfft];
     for index in 0..available {
-        real[index] = (data[start + index] - mean) * window[index];
+        // Matplotlib's psd/csd/cohere/specgram default is detrend_none.
+        // Explicit detrending modes are rejected by the pyplot shim until
+        // the native kernel can select them deliberately.
+        real[index] = data[start + index] * window[index];
     }
     fft_in_place(&mut real, &mut imag);
     (real, imag)
 }
 
-/// Windowed real FFT returning the nonnegative-frequency half spectrum.
+/// Hann-windowed, non-detrended real FFT returning the nonnegative half spectrum.
 pub fn rfft_into(
     data: &[f64],
     nfft: usize,
@@ -1565,8 +1563,8 @@ fn spectral_segment_count(len: usize, nfft: usize, noverlap: usize) -> Option<us
     }
 }
 
-/// Welch auto/cross spectral estimate. A missing `y` computes only `pxx`;
-/// otherwise all auto and complex cross spectra are averaged natively.
+/// Non-detrended Welch auto/cross spectral estimate. A missing `y` computes
+/// only `pxx`; otherwise all auto and complex cross spectra are averaged.
 #[allow(clippy::too_many_arguments)]
 pub fn welch_spectra_into(
     x: &[f64],
@@ -1644,7 +1642,7 @@ pub fn welch_spectra_into(
     true
 }
 
-/// Spectrogram matrix in time-major `(segments, bins)` layout.
+/// Non-detrended spectrogram matrix in time-major `(segments, bins)` layout.
 #[allow(clippy::too_many_arguments)]
 pub fn spectrogram_into(
     data: &[f64],
@@ -1900,7 +1898,7 @@ pub fn triangle_edges_into(
     }
     let mut seen = std::collections::HashSet::with_capacity(capacity);
     let mut written = 0;
-    for face in triangles.chunks_exact(3) {
+    for face in triangles.as_chunks::<3>().0 {
         if face
             .iter()
             .any(|index| *index < 0 || *index as usize >= x.len())
@@ -2196,7 +2194,7 @@ pub fn marching_triangles_into(
         && out_y1.is_empty()
         && out_levels.is_empty();
     let mut written = 0;
-    for face in triangles.chunks_exact(3) {
+    for face in triangles.as_chunks::<3>().0 {
         if face
             .iter()
             .any(|index| *index < 0 || *index as usize >= x.len())
@@ -2504,7 +2502,7 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
         n_buckets,
         start,
         end,
-        par_threads(end - start),
+        par_threads_above(end - start, PAR_THRESHOLD_COMPUTE).min(n_buckets),
     )
 }
 
@@ -2585,12 +2583,19 @@ fn m4_range(
     out
 }
 
+fn m4_bucket_end<F>(values: &[f64], bucket: usize, bucket_of: &F) -> usize
+where
+    F: Fn(f64) -> usize,
+{
+    values.partition_point(|&value| bucket_of(value) == bucket)
+}
+
 /// Buckets are monotone non-decreasing in sorted x, so every bucket's rows are
-/// contiguous. Split the window at bucket boundaries (nudging each split
-/// forward until it starts a new bucket), scan each segment with the same
-/// serial routine, and concatenate in order — bitwise identical to the serial
-/// pass for any thread count. Degenerate case: one giant bucket collapses to
-/// a single segment (serial speed, still correct).
+/// contiguous. Split the window at bucket boundaries (finding each boundary
+/// with a binary search), scan each segment with the same serial routine, and
+/// concatenate in order — bitwise identical to the serial pass for any thread
+/// count. Degenerate case: one giant bucket collapses to a single segment
+/// without repeatedly scanning that bucket.
 #[allow(clippy::too_many_arguments)]
 fn m4_indices_impl(
     x: &[f64],
@@ -2606,14 +2611,17 @@ fn m4_indices_impl(
     if threads <= 1 {
         return m4_range(x, y, x0, inv_bucket_w, n_buckets, start, end);
     }
-    let bucket_of = |i: usize| (((x[i] - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
+    let bucket_of = |value: f64| {
+        (((value - x0) * inv_bucket_w) as usize).min(n_buckets - 1)
+    };
     let span = end - start;
     let chunk = span.div_ceil(threads);
     let mut bounds: Vec<usize> = vec![start];
     for t in 1..threads {
         let mut j = (start + t * chunk).min(end);
-        while j < end && j > 0 && bucket_of(j) == bucket_of(j - 1) {
-            j += 1;
+        if j < end {
+            let bucket = bucket_of(x[j - 1]);
+            j += m4_bucket_end(&x[j..end], bucket, &bucket_of);
         }
         let prev = *bounds.last().expect("bounds never empty");
         if j > prev && j < end {
@@ -2698,6 +2706,7 @@ fn marching_squares_scan<F>(
     x_coords: &[f64],
     y_coords: &[f64],
     levels: &[f64],
+    corner_mask: bool,
     mut emit: F,
 ) -> usize
 where
@@ -2714,11 +2723,55 @@ where
             let v10 = z[row * cols + col + 1];
             let v11 = z[(row + 1) * cols + col + 1];
             let v01 = z[(row + 1) * cols + col];
-            if !(v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite()) {
-                continue;
-            }
-            let local_min = v00.min(v10).min(v11).min(v01);
-            let local_max = v00.max(v10).max(v11).max(v01);
+            let all_finite =
+                v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite();
+            let (local_min, local_max, triangle_edges): (
+                f64,
+                f64,
+                Option<&[(usize, usize); 3]>,
+            ) = if all_finite {
+                (
+                    v00.min(v10).min(v11).min(v01),
+                    v00.max(v10).max(v11).max(v01),
+                    None,
+                )
+            } else {
+                if !corner_mask {
+                    continue;
+                }
+                let finite = [
+                    v00.is_finite(),
+                    v10.is_finite(),
+                    v11.is_finite(),
+                    v01.is_finite(),
+                ];
+                if finite.iter().filter(|&&value| value).count() != 3 {
+                    continue;
+                }
+                let values = [v00, v10, v11, v01];
+                let local_min = values
+                    .iter()
+                    .copied()
+                    .filter(|value| value.is_finite())
+                    .fold(f64::INFINITY, f64::min);
+                let local_max = values
+                    .iter()
+                    .copied()
+                    .filter(|value| value.is_finite())
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let edges = match finite.iter().position(|value| !value).unwrap() {
+                    0 => &[(1, 2), (2, 3), (3, 1)],
+                    1 => &[(0, 2), (2, 3), (3, 0)],
+                    2 => &[(0, 1), (1, 3), (3, 0)],
+                    3 => &[(0, 1), (1, 2), (2, 0)],
+                    _ => unreachable!(),
+                };
+                (
+                    local_min,
+                    local_max,
+                    Some(edges),
+                )
+            };
             let corners = [
                 (x_coords[col], y_coords[row], v00),
                 (x_coords[col + 1], y_coords[row], v10),
@@ -2726,6 +2779,34 @@ where
                 (x_coords[col], y_coords[row + 1], v01),
             ];
             let mut process_level = |level: f64| {
+                if let Some(edges) = triangle_edges {
+                    let mut intersections = [(0.0, 0.0); 2];
+                    let mut n_intersections = 0usize;
+                    for &(a, b) in edges {
+                        let (xa, ya, va) = corners[a];
+                        let (xb, yb, vb) = corners[b];
+                        if (va >= level) == (vb >= level) {
+                            continue;
+                        }
+                        let fraction = ((level - va) / (vb - va)).clamp(0.0, 1.0);
+                        if n_intersections < intersections.len() {
+                            intersections[n_intersections] =
+                                (xa + (xb - xa) * fraction, ya + (yb - ya) * fraction);
+                        }
+                        n_intersections += 1;
+                    }
+                    if n_intersections == 2 {
+                        emit(
+                            intersections[0].0,
+                            intersections[1].0,
+                            intersections[0].1,
+                            intersections[1].1,
+                            level,
+                        );
+                        count += 1;
+                    }
+                    return;
+                }
                 let mask = u8::from(v00 >= level)
                     | (u8::from(v10 >= level) << 1)
                     | (u8::from(v11 >= level) << 2)
@@ -2787,6 +2868,7 @@ pub fn marching_squares_into(
     x_coords: &[f64],
     y_coords: &[f64],
     levels: &[f64],
+    corner_mask: bool,
     x0_out: &mut [f64],
     x1_out: &mut [f64],
     y0_out: &mut [f64],
@@ -2806,6 +2888,7 @@ pub fn marching_squares_into(
         x_coords,
         y_coords,
         levels,
+        corner_mask,
         |x0, x1, y0, y1, level| {
             if written < capacity {
                 x0_out[written] = x0;
@@ -3101,22 +3184,29 @@ fn bin_2d_count_f32_scalar(
     }
 }
 
-/// Row-scan kernels fan out across cores only past this size, where thread
+/// Row-scan kernels fan out across cores only past these sizes, where thread
 /// spawn + merge cost is well amortized. Threading stays inside the call —
-/// the ABI remains synchronous (engine doc E5).
+/// the ABI remains synchronous (engine doc E5). Compute-bound scans cross over
+/// earlier: at ~2.5–3 ns/row serial, M4 and uniform histogram amortize a
+/// fan-out from ~128k rows, the same crossover zone maps use.
 const PAR_THRESHOLD: usize = 1 << 19;
+const PAR_THRESHOLD_COMPUTE: usize = 1 << 17;
 
 fn par_threads(n: usize) -> usize {
+    par_threads_above(n, PAR_THRESHOLD)
+}
+
+fn par_threads_above(n: usize, threshold: usize) -> usize {
     static CODSPEED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *CODSPEED.get_or_init(|| std::env::var_os("CODSPEED_ENV").is_some()) {
         return 1;
     }
     let cores = std::thread::available_parallelism().map_or(1, |p| p.get());
-    par_threads_for(n, cores)
+    par_threads_above_for(n, threshold, cores)
 }
 
-fn par_threads_for(n: usize, cores: usize) -> usize {
-    if n >= PAR_THRESHOLD {
+fn par_threads_above_for(n: usize, threshold: usize, cores: usize) -> usize {
+    if n >= threshold {
         cores.clamp(1, MAX_ROW_THREADS)
     } else {
         1
@@ -3231,7 +3321,17 @@ pub(crate) fn bin_2d_counts(
             .collect()
     });
 
-    let mut grid = vec![0u32; w * h];
+    // Fold into the last worker's grid rather than a fresh one. Every other
+    // member of this family merges into a caller-owned buffer; this one
+    // allocated and zeroed a whole extra `w * h` u32 grid that it then
+    // overwrote completely, so peak was (threads + 1) grids instead of
+    // `threads` — 16.8 MB of surplus on a 2048^2 pyramid build, and far more
+    // out-of-core, where an adaptive `base_dim` keeps the parallel branch live
+    // at much larger grids. Integer addition is associative and the single
+    // saturation point is unchanged, so the result is bitwise identical for
+    // any thread count.
+    let mut grids = grids;
+    let mut grid = grids.pop().expect("at least one worker grid");
     let cell_chunk = (w * h).div_ceil(threads);
     let grids_ref = &grids;
     std::thread::scope(|s| {
@@ -3239,11 +3339,9 @@ pub(crate) fn bin_2d_counts(
             let base = ci * cell_chunk;
             s.spawn(move || {
                 for (j, cell) in out.iter_mut().enumerate() {
-                    *cell = grids_ref
-                        .iter()
-                        .map(|g| g[base + j] as u64)
-                        .sum::<u64>()
-                        .min(u32::MAX as u64) as u32;
+                    *cell = (*cell as u64
+                        + grids_ref.iter().map(|g| g[base + j] as u64).sum::<u64>())
+                    .min(u32::MAX as u64) as u32;
                 }
             });
         }
@@ -3312,6 +3410,289 @@ fn bin_2d_impl(
             });
         }
     });
+}
+
+/// sRGB byte → linear-light u16 (IEC 61966-2-1, scaled to 0..=65535,
+/// round-half-even). A checked-in literal keeps the mean-color pipeline
+/// below integer-only end to end (no runtime `powf`/libm dependency), so it
+/// is bitwise deterministic for any thread count and across platforms.
+/// Strictly increasing, so the inverse is an exact search.
+pub(crate) const SRGB_TO_LINEAR_U16: [u16; 256] = [
+    0, 20, 40, 60, 80, 99, 119, 139,
+    159, 179, 199, 219, 241, 264, 288, 313,
+    340, 367, 396, 427, 458, 491, 526, 562,
+    599, 637, 677, 718, 761, 805, 851, 898,
+    947, 997, 1048, 1101, 1156, 1212, 1270, 1330,
+    1391, 1453, 1517, 1583, 1651, 1720, 1790, 1863,
+    1937, 2013, 2090, 2170, 2250, 2333, 2418, 2504,
+    2592, 2681, 2773, 2866, 2961, 3058, 3157, 3258,
+    3360, 3464, 3570, 3678, 3788, 3900, 4014, 4129,
+    4247, 4366, 4488, 4611, 4736, 4864, 4993, 5124,
+    5257, 5392, 5530, 5669, 5810, 5953, 6099, 6246,
+    6395, 6547, 6700, 6856, 7014, 7174, 7335, 7500,
+    7666, 7834, 8004, 8177, 8352, 8528, 8708, 8889,
+    9072, 9258, 9445, 9635, 9828, 10022, 10219, 10417,
+    10619, 10822, 11028, 11235, 11446, 11658, 11873, 12090,
+    12309, 12530, 12754, 12980, 13209, 13440, 13673, 13909,
+    14146, 14387, 14629, 14874, 15122, 15371, 15623, 15878,
+    16135, 16394, 16656, 16920, 17187, 17456, 17727, 18001,
+    18277, 18556, 18837, 19121, 19407, 19696, 19987, 20281,
+    20577, 20876, 21177, 21481, 21787, 22096, 22407, 22721,
+    23038, 23357, 23678, 24002, 24329, 24658, 24990, 25325,
+    25662, 26001, 26344, 26688, 27036, 27386, 27739, 28094,
+    28452, 28813, 29176, 29542, 29911, 30282, 30656, 31033,
+    31412, 31794, 32179, 32567, 32957, 33350, 33745, 34143,
+    34544, 34948, 35355, 35764, 36176, 36591, 37008, 37429,
+    37852, 38278, 38706, 39138, 39572, 40009, 40449, 40891,
+    41337, 41785, 42236, 42690, 43147, 43606, 44069, 44534,
+    45002, 45473, 45947, 46423, 46903, 47385, 47871, 48359,
+    48850, 49344, 49841, 50341, 50844, 51349, 51858, 52369,
+    52884, 53401, 53921, 54445, 54971, 55500, 56032, 56567,
+    57105, 57646, 58190, 58737, 59287, 59840, 60396, 60955,
+    61517, 62082, 62650, 63221, 63795, 64372, 64952, 65535,
+];
+
+/// Nearest sRGB byte for a linear-light u16 — the exact inverse of the table
+/// above (integer search over a strictly increasing sequence; ties round to
+/// the darker byte).
+pub(crate) fn linear_u16_to_srgb_u8(linear: u16) -> u8 {
+    let above = SRGB_TO_LINEAR_U16.partition_point(|&v| v <= linear);
+    if above == 0 {
+        return 0; // unreachable: table[0] == 0 ≤ every u16
+    }
+    if above >= 256 {
+        return 255;
+    }
+    let below_value = SRGB_TO_LINEAR_U16[above - 1];
+    let above_value = SRGB_TO_LINEAR_U16[above];
+    if linear - below_value <= above_value - linear {
+        (above - 1) as u8
+    } else {
+        above as u8
+    }
+}
+
+/// Per-point straight-alpha RGBA8 source for mean-color binning.
+pub enum BinColorSource<'a> {
+    /// One LUT index per point plus an RGBA8 palette/colormap table
+    /// (1..=256 entries). Indices wrap modulo the table length — the
+    /// palette's own repeat rule, so out-of-palette categorical codes bin
+    /// with exactly the color they draw with.
+    Indexed { idx: &'a [u8], lut: &'a [[u8; 4]] },
+    /// Straight-alpha RGBA8, 4 bytes per point (the `direct_rgba` channel).
+    Rgba(&'a [u8]),
+}
+
+/// One cell of the mean-color accumulator: exact integer sums, so the
+/// parallel merge is order-independent (bitwise deterministic for any thread
+/// count, like `bin_2d`). Color sums are alpha-weighted linear-light u16, so
+/// a translucent point contributes proportionally and the mean is the
+/// physically downsampled color of the cell's points.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct MeanColorCell {
+    pub(crate) count: u32,
+    alpha: u64,
+    red: u64,
+    green: u64,
+    blue: u64,
+}
+
+impl MeanColorCell {
+    /// Straight-alpha RGBA8: sRGB mean color + mean point alpha (integer
+    /// rounding, half away from zero — deterministic).
+    fn rgba8(&self) -> [u8; 4] {
+        if self.count == 0 || self.alpha == 0 {
+            return [0, 0, 0, 0];
+        }
+        let mean = |sum: u64| ((sum + self.alpha / 2) / self.alpha).min(u16::MAX as u64) as u16;
+        let alpha =
+            ((self.alpha + u64::from(self.count) / 2) / u64::from(self.count)).min(255) as u8;
+        [
+            linear_u16_to_srgb_u8(mean(self.red)),
+            linear_u16_to_srgb_u8(mean(self.green)),
+            linear_u16_to_srgb_u8(mean(self.blue)),
+            alpha,
+        ]
+    }
+
+    /// Storage form for pyramid color planes: linear-light u16 mean color
+    /// plus the mean straight alpha rescaled to 0..=65535.
+    pub(crate) fn mean_u16x4(&self) -> [u16; 4] {
+        if self.count == 0 || self.alpha == 0 {
+            return [0, 0, 0, 0];
+        }
+        let mean = |sum: u64| ((sum + self.alpha / 2) / self.alpha).min(u16::MAX as u64) as u16;
+        let alpha = ((self.alpha * 257 + u64::from(self.count) / 2) / u64::from(self.count))
+            .min(u16::MAX as u64) as u16;
+        [mean(self.red), mean(self.green), mean(self.blue), alpha]
+    }
+}
+
+/// Byte budget for the mean-color scan's worker accumulators together. Each
+/// worker owns a private `cells × size_of::<MeanColorCell>()` (40 B/cell)
+/// grid; screen-sized grids and the 2048² default base level fit the full
+/// 4-worker fan-out comfortably, but a no-rescan trace's adaptive base level
+/// (§28; up to 16384² cells) would turn that fan-out into tens of GB of
+/// transient build memory — the difference between a colored billion-point
+/// build fitting in RAM or not. Workers over budget are shed down to a
+/// serial scan: one-time build wall-clock is traded, peak RSS never. (The
+/// merge target grid rides on top of the budget; at every size where memory
+/// binds, the scan is already serial and allocates exactly one grid.)
+const MEAN_COLOR_ACCUM_BUDGET_BYTES: usize = 1 << 30;
+
+/// Pure fan-out choice for the mean-color scan: the row-scan fan-out
+/// (`bin_2d_threads`) capped at 4, then shed to whatever worker count keeps
+/// the private accumulators inside `MEAN_COLOR_ACCUM_BUDGET_BYTES`.
+fn mean_color_threads_for(row_threads: usize, cells: usize) -> usize {
+    let per_grid = cells.saturating_mul(std::mem::size_of::<MeanColorCell>());
+    let by_memory = (MEAN_COLOR_ACCUM_BUDGET_BYTES / per_grid.max(1)).max(1);
+    row_threads.min(4).min(by_memory)
+}
+
+/// Fused count+color accumulation over a full grid: the shared core of
+/// `bin_2d_mean_color` and the pyramid build's base pass
+/// (`tiles::build_color`). Returns the raw accumulator cells so callers keep
+/// exact counts alongside the color means.
+///
+/// Fan-out is gated by the points-per-cell ratio (like `bin_2d`), capped at
+/// 4, and shed further to fit `MEAN_COLOR_ACCUM_BUDGET_BYTES`: each worker's
+/// private accumulator is ~10× a count grid (40 B/cell), so the cap bounds
+/// the transient while still cutting the pyramid's 100M-row base scan to a
+/// quarter. Integer sums merge order-independently — bitwise deterministic
+/// for any thread count.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn bin_2d_mean_color_cells(
+    x: &[f64],
+    y: &[f64],
+    colors: &BinColorSource<'_>,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+) -> Vec<MeanColorCell> {
+    let n = x.len();
+    let cells = w * h;
+    let threads = mean_color_threads_for(bin_2d_threads(n, cells), cells);
+    if threads <= 1 || n < threads {
+        let mut grid = vec![MeanColorCell::default(); cells];
+        bin_2d_mean_color_accumulate(x, y, colors, 0, x0, x1, y0, y1, w, h, &mut grid);
+        return grid;
+    }
+    let chunk = n.div_ceil(threads);
+    let grids: Vec<Vec<MeanColorCell>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let lo = (t * chunk).min(n);
+                let hi = ((t + 1) * chunk).min(n);
+                let (xs, ys) = (&x[lo..hi], &y[lo..hi]);
+                s.spawn(move || {
+                    let mut grid = vec![MeanColorCell::default(); cells];
+                    bin_2d_mean_color_accumulate(xs, ys, colors, lo, x0, x1, y0, y1, w, h, &mut grid);
+                    grid
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("bin_2d_mean_color worker panicked"))
+            .collect()
+    });
+    let mut grid = vec![MeanColorCell::default(); cells];
+    for part in &grids {
+        for (acc, cell) in grid.iter_mut().zip(part) {
+            acc.count = acc.count.saturating_add(cell.count);
+            acc.alpha += cell.alpha;
+            acc.red += cell.red;
+            acc.green += cell.green;
+            acc.blue += cell.blue;
+        }
+    }
+    grid
+}
+
+/// Mean-color companion to `bin_2d` (§5 Tier 2, LOD doc §2): average the
+/// *resolved point colors* of each cell so the density surface wears the data
+/// set's own colors while count drives only the alpha channel. `out` is
+/// `w*h*4` straight-alpha RGBA8, row 0 = bottom (same orientation as
+/// `bin_2d`): rgb = alpha-weighted mean point color (averaged in linear
+/// light, quantized back to sRGB), a = plain mean of the points' straight
+/// alpha. Empty cells are fully zeroed; a cell whose points are all alpha-0
+/// keeps rgb 0 too (its display alpha is 0, so no color is ever invented).
+/// In-window/NaN predicates and cell indexing are bit-identical to
+/// `bin_2d_count_scalar`, so occupied cells match the count grid exactly.
+#[allow(clippy::too_many_arguments)] // window (x0,x1,y0,y1) + grid (w,h) + io is irreducible
+pub fn bin_2d_mean_color(
+    x: &[f64],
+    y: &[f64],
+    colors: &BinColorSource<'_>,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: &mut [u8],
+) {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(out.len(), w * h * 4);
+    assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
+    match colors {
+        BinColorSource::Indexed { idx, lut } => {
+            assert_eq!(idx.len(), x.len());
+            assert!(!lut.is_empty() && lut.len() <= 256);
+        }
+        BinColorSource::Rgba(rgba) => assert_eq!(rgba.len(), x.len() * 4),
+    }
+    let grid = bin_2d_mean_color_cells(x, y, colors, x0, x1, y0, y1, w, h);
+    for (cell, quad) in grid.iter().zip(out.as_chunks_mut::<4>().0.iter_mut()) {
+        quad.copy_from_slice(&cell.rgba8());
+    }
+}
+
+/// Shared scan used by the serial and parallel paths (per-point behavior is
+/// identical by construction). `base` offsets the row index into the color
+/// source so parallel chunks read their own colors.
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_mean_color_accumulate(
+    x: &[f64],
+    y: &[f64],
+    colors: &BinColorSource<'_>,
+    base: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    grid: &mut [MeanColorCell],
+) {
+    let sx = w as f64 / (x1 - x0);
+    let sy = h as f64 / (y1 - y0);
+    for i in 0..x.len() {
+        let xv = x[i];
+        let yv = y[i];
+        if !xv.is_finite() || !yv.is_finite() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
+            continue;
+        }
+        let cx = (((xv - x0) * sx) as usize).min(w - 1);
+        let cy = (((yv - y0) * sy) as usize).min(h - 1);
+        let [r, g, b, a] = match colors {
+            BinColorSource::Indexed { idx, lut } => lut[idx[base + i] as usize % lut.len()],
+            BinColorSource::Rgba(rgba) => {
+                let at = (base + i) * 4;
+                [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
+            }
+        };
+        let cell = &mut grid[cy * w + cx];
+        let weight = u64::from(a);
+        cell.count = cell.count.saturating_add(1);
+        cell.alpha += weight;
+        cell.red += weight * u64::from(SRGB_TO_LINEAR_U16[r as usize]);
+        cell.green += weight * u64::from(SRGB_TO_LINEAR_U16[g as usize]);
+        cell.blue += weight * u64::from(SRGB_TO_LINEAR_U16[b as usize]);
+    }
 }
 
 /// Fused density scan (§5 Tier 2): one pass over `x`/`y` producing BOTH the
@@ -4232,7 +4613,14 @@ pub fn stratified_sample_mask<T: Copy + Sync + Into<u64>>(
 pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64 {
     assert!(x1_gt_x0(lo, hi));
     assert!(!out.is_empty());
-    histogram_uniform_impl(data, lo, hi, par_threads(data.len()), out)
+    histogram_uniform_impl(data, lo, hi, histogram_threads(data.len(), out.len()), out)
+}
+
+/// Workers for a uniform histogram. Each owns a full bin vector and the merge
+/// is `threads * n_bins`, so points per bin caps the row gate — same rule as
+/// `bin_2d_threads`, whose per-thread grids are this kernel's per-thread bins.
+fn histogram_threads(n: usize, n_bins: usize) -> usize {
+    (n / n_bins.max(1)).clamp(1, par_threads_above(n, PAR_THRESHOLD_COMPUTE))
 }
 
 /// Per-bin u64 counting shared by the serial and parallel paths. Stays scalar
@@ -4495,6 +4883,201 @@ pub fn range_indices(
     range_indices_impl(x, y, lo_x, hi_x, lo_y, hi_y, par_threads(x.len()), out)
 }
 
+/// Which of `rows` land inside the lasso polygon, by even-odd ray casting
+/// (§34 selection). Writes the surviving canonical row ids to `out` (capacity
+/// `rows.len()`, order preserved) and returns how many.
+///
+/// The predicate is edge-for-edge the one the Python selection path used: for
+/// each edge from vertex `j` to vertex `i`, the horizontal ray is crossed when
+/// `(y_i > y) != (y_j > y)` and `x < (x_j - x_i) * (y - y_i) / (y_j - y_i) +
+/// x_i`, and membership is the parity of the crossings. `y_j - y_i` cannot be
+/// zero where the endpoints straddle the ray, so the guarded division here
+/// covers exactly the lanes the vectorized form computed unconditionally and
+/// then masked its inf/NaN away. `x_j - x_i` and `y_j - y_i` are hoisted per
+/// edge — exact subtractions, so the arithmetic is unchanged; the division is
+/// NOT turned into a reciprocal multiply, which would not be.
+///
+/// Parity is order-independent, so walking edges inside the point loop rather
+/// than points inside the edge loop gives the same answer while holding the
+/// whole polygon in registers: no per-edge full-length temporaries (a
+/// 64-vertex lasso over 160k candidates moved ~0.5 GB through memory).
+///
+/// A non-finite coordinate fails every comparison and so is never inside,
+/// matching both the vectorized predicate and `range_indices`.
+///
+/// `None` means a row id was >= `x.len()`. Reporting it costs nothing over the
+/// indexing this already did — see [`range_scan_rows`] for why the check must
+/// not be left to Rust's own panicking one.
+pub fn polygon_select(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    poly_x: &[f64],
+    poly_y: &[f64],
+    out: &mut [u32],
+) -> Option<usize> {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(poly_x.len(), poly_y.len());
+    assert!(out.len() >= rows.len());
+    let n = poly_x.len();
+    if n < 3 {
+        return Some(0);
+    }
+    // (x_i, y_i, y_j, x_j - x_i, y_j - y_i) per edge, hoisted so the inner
+    // loop is a bounds-check-free walk over a couple of KB.
+    let edges: Vec<(f64, f64, f64, f64, f64)> = (0..n)
+        .map(|i| {
+            let j = if i == 0 { n - 1 } else { i - 1 };
+            (
+                poly_x[i],
+                poly_y[i],
+                poly_y[j],
+                poly_x[j] - poly_x[i],
+                poly_y[j] - poly_y[i],
+            )
+        })
+        .collect();
+    let index = PolygonSlabs::build(poly_y, &edges);
+    let mut write = 0;
+    for &r in rows {
+        let i = r as usize;
+        let (Some(&xv), Some(&yv)) = (x.get(i), y.get(i)) else {
+            return None;
+        };
+        let mut inside = false;
+        // An edge can only flip parity for a point inside its own y-extent,
+        // so the slab index hands back a superset of the edges that can
+        // cross this row and the rest are provably no-ops — same crossings,
+        // same parity, but a freehand lasso's hundreds of vertices stop
+        // being scanned in full for every candidate point.
+        for &e in index.candidates(yv) {
+            let (xi, yi, yj, dx, dy) = edges[e as usize];
+            if ((yi > yv) != (yj > yv)) && xv < dx * (yv - yi) / dy + xi {
+                inside = !inside;
+            }
+        }
+        if inside {
+            out[write] = r;
+            write += 1;
+        }
+    }
+    Some(write)
+}
+
+/// Ceiling on `PolygonSlabs` CSR entries (4 MB of u32 at the worst case), so
+/// neither the allocation nor the u32 cursors depend on caller-supplied
+/// vertex counts.
+const POLYGON_INDEX_RECORD_BUDGET: usize = 1 << 20;
+
+/// Edges bucketed by y, so a point tests only those spanning its row.
+struct PolygonSlabs {
+    y0: f64,
+    y1: f64,
+    inv_h: f64,
+    n: usize,
+    /// CSR over slabs into `items`; empty when the index was declined.
+    starts: Vec<u32>,
+    items: Vec<u32>,
+    /// Every edge, in order — the answer when the index was declined.
+    all: Vec<u32>,
+}
+
+impl PolygonSlabs {
+    /// Bucketing is declined for a non-finite polygon (slab bounds stop
+    /// meaning anything), for a vertex count too small to pay for the build
+    /// (< 16), and for one so large that `POLYGON_INDEX_RECORD_BUDGET` leaves
+    /// fewer than 8 slabs to sort into. Slab count otherwise tracks the vertex
+    /// count, capped at 256.
+    fn build(poly_y: &[f64], edges: &[(f64, f64, f64, f64, f64)]) -> Self {
+        let n_edges = edges.len();
+        let unindexed = || Self {
+            y0: 0.0,
+            y1: 0.0,
+            inv_h: 0.0,
+            n: 0,
+            starts: Vec::new(),
+            items: Vec::new(),
+            all: (0..n_edges as u32).collect(),
+        };
+        if n_edges < 16 || !poly_y.iter().all(|v| v.is_finite()) {
+            return unindexed();
+        }
+        let mut y0 = f64::INFINITY;
+        let mut y1 = f64::NEG_INFINITY;
+        for &v in poly_y {
+            y0 = y0.min(v);
+            y1 = y1.max(v);
+        }
+        let height = y1 - y0;
+        if height <= 0.0 {
+            return unindexed();
+        }
+        // An edge is filed once per slab its y-extent spans, so the index
+        // holds at most `edges x slabs` entries. Capping that product bounds
+        // both the allocation and the u32 cursors, and shedding slabs rather
+        // than refusing outright keeps a huge polygon indexed — the fallback
+        // scan is O(edges) for every point, which is exactly what hurts most
+        // at high vertex counts. `select_polygon` caps callers at 2048
+        // vertices, well inside the full 256 slabs; this guards the kernel's
+        // own contract, which has no such ceiling.
+        let n = n_edges
+            .clamp(16, 256)
+            .min((POLYGON_INDEX_RECORD_BUDGET / n_edges).max(1));
+        if n < 8 {
+            return unindexed();
+        }
+        let inv_h = n as f64 / height;
+        // Half-open [lo, hi) per edge, matching the crossing test's own
+        // convention, so an edge lands in exactly the slabs it can cross.
+        let slab_of = |v: f64| (((v - y0) * inv_h) as usize).min(n - 1);
+        let span = |e: &(f64, f64, f64, f64, f64)| {
+            let (lo, hi) = if e.1 <= e.2 { (e.1, e.2) } else { (e.2, e.1) };
+            (slab_of(lo), slab_of(hi))
+        };
+        let mut counts = vec![0u32; n + 1];
+        for e in edges {
+            let (a, b) = span(e);
+            for c in counts.iter_mut().take(b + 2).skip(a + 1) {
+                *c += 1;
+            }
+        }
+        for s in 0..n {
+            counts[s + 1] += counts[s];
+        }
+        let mut fill = counts.clone();
+        let mut items = vec![0u32; counts[n] as usize];
+        for (i, e) in edges.iter().enumerate() {
+            let (a, b) = span(e);
+            for slot in fill.iter_mut().take(b + 1).skip(a) {
+                items[*slot as usize] = i as u32;
+                *slot += 1;
+            }
+        }
+        Self {
+            y0,
+            y1,
+            inv_h,
+            n,
+            starts: counts,
+            items,
+            all: Vec::new(),
+        }
+    }
+
+    /// Edges that could cross the ray at `yv`. A y outside the polygon's own
+    /// extent (or NaN) crosses nothing.
+    fn candidates(&self, yv: f64) -> &[u32] {
+        if self.n == 0 {
+            return &self.all;
+        }
+        if !(yv >= self.y0 && yv < self.y1) {
+            return &[];
+        }
+        let s = (((yv - self.y0) * self.inv_h) as usize).min(self.n - 1);
+        &self.items[self.starts[s] as usize..self.starts[s + 1] as usize]
+    }
+}
+
 /// Append the global indices (`base + i`) of in-window rows to `out`,
 /// returning the match count. NaN fails every comparison → skipped, matching
 /// the historical behavior. Dispatches to the AVX2 clone when available.
@@ -4581,6 +5164,102 @@ fn range_indices_impl(
         write += c;
     }
     write
+}
+
+/// Which of `rows` land inside the rectangular window (§34 selection), the
+/// row-restricted twin of [`range_indices`]. Writes the surviving canonical row
+/// ids to `out` (capacity `rows.len()`, order preserved) and returns how many.
+///
+/// The predicate is the same inclusive comparison chain `range_scan_scalar`
+/// uses, so a subset scan agrees with a full scan row for row — including on
+/// NaN, which fails every comparison and is therefore never selected.
+///
+/// This exists because the zone-map-pruned selection path already knows its
+/// candidate rows before it scans. Without it, that path had to gather
+/// `x[rows]` and `y[rows]` into two fresh f64 columns just to call
+/// `range_indices` — 16 bytes per candidate, which is why selecting *half* a
+/// 10M-row trace cost 134.6 MB where selecting *all* of it cost 38.1 MB.
+#[allow(clippy::too_many_arguments)]
+pub fn range_indices_rows(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> Option<usize> {
+    assert_eq!(x.len(), y.len());
+    assert!(out.len() >= rows.len());
+    let n = rows.len();
+    let threads = par_threads(n);
+    if threads <= 1 || n < threads {
+        return range_scan_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out);
+    }
+    let chunk = n.div_ceil(threads);
+    let counts: Vec<Option<usize>> = std::thread::scope(|s| {
+        let handles: Vec<_> = rows
+            .chunks(chunk)
+            .zip(out[..n].chunks_mut(chunk))
+            .map(|(rseg, oseg)| {
+                s.spawn(move || range_scan_rows(x, y, rseg, lo_x, hi_x, lo_y, hi_y, oseg))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("range_indices_rows worker panicked"))
+            .collect()
+    });
+    // An out-of-range id in any segment fails the whole call, before the
+    // gather-down reads a count that was never produced.
+    let counts: Option<Vec<usize>> = counts.into_iter().collect();
+    let counts = counts?;
+    // Same gather-down as `range_indices_impl`: each worker packed its hits at
+    // the front of its own out-segment, so slide the later segments back.
+    let mut write = counts[0];
+    for (t, &c) in counts.iter().enumerate().skip(1) {
+        let start = t * chunk;
+        out.copy_within(start..start + c, write);
+        write += c;
+    }
+    Some(write)
+}
+
+/// One segment of the row-restricted scan; `None` if a row id was >= `x.len()`.
+///
+/// The check is `get` rather than `x[i]` deliberately. Indexing bounds-checks
+/// too, but reports by panicking, and `ffi_guard` only converts a panic into
+/// the C ABI's error sentinel where panics unwind — the PyEmscripten wheel is
+/// built `-C panic=abort` (`.github/workflows/release.yml`) precisely so they
+/// cannot, and there an out-of-range id aborts the Pyodide instance instead of
+/// returning. `xy.kernels` is public API, so row ids are caller data. Same two
+/// bounds checks either way, so answering instead of aborting is free: a
+/// separate validating pass over `rows` was not — one serial sweep of 5M u32
+/// cost more than this entire parallel scan (1.0 ms -> 2.4 ms).
+#[allow(clippy::too_many_arguments)]
+fn range_scan_rows(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> Option<usize> {
+    let mut n = 0usize;
+    for &row in rows {
+        let i = row as usize;
+        let (Some(&xv), Some(&yv)) = (x.get(i), y.get(i)) else {
+            return None;
+        };
+        if xv >= lo_x && xv <= hi_x && yv >= lo_y && yv <= hi_y {
+            out[n] = row;
+            n += 1;
+        }
+    }
+    Some(n)
 }
 
 /// Per-point log-normalized local density for a subset. This fuses the
@@ -4796,6 +5475,190 @@ fn min_max_impl(data: &[f64], threads: usize) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The vectorized formulation `polygon_select` replaced, kept as the
+    /// executable definition of the predicate: one pass per edge, crossing
+    /// parity accumulated over every candidate.
+    fn polygon_reference(
+        x: &[f64],
+        y: &[f64],
+        rows: &[u32],
+        poly_x: &[f64],
+        poly_y: &[f64],
+    ) -> Vec<u32> {
+        let n = poly_x.len();
+        let mut inside = vec![false; rows.len()];
+        let mut j = n - 1;
+        for i in 0..n {
+            let (xi, yi) = (poly_x[i], poly_y[i]);
+            let (xj, yj) = (poly_x[j], poly_y[j]);
+            for (k, &r) in rows.iter().enumerate() {
+                let (xv, yv) = (x[r as usize], y[r as usize]);
+                let crosses = (yi > yv) != (yj > yv);
+                let edge_x = (xj - xi) * (yv - yi) / (yj - yi) + xi;
+                inside[k] ^= crosses && xv < edge_x;
+            }
+            j = i;
+        }
+        rows.iter()
+            .zip(&inside)
+            .filter(|(_, &b)| b)
+            .map(|(&r, _)| r)
+            .collect()
+    }
+
+    fn polygon_case(poly_x: &[f64], poly_y: &[f64], x: &[f64], y: &[f64]) {
+        let rows: Vec<u32> = (0..x.len() as u32).collect();
+        let mut out = vec![0u32; rows.len()];
+        let n = polygon_select(x, y, &rows, poly_x, poly_y, &mut out).expect("rows in bounds");
+        assert_eq!(
+            &out[..n],
+            &polygon_reference(x, y, &rows, poly_x, poly_y)[..],
+            "polygon with {} vertices",
+            poly_x.len()
+        );
+    }
+
+    /// The y-slab index must only ever restrict the candidate edge set, never
+    /// the answer: indexed (>= 16 vertices) and unindexed paths agree with the
+    /// per-edge reference on convex, concave, self-intersecting, degenerate
+    /// and axis-aligned polygons, and on non-finite data.
+    #[test]
+    fn polygon_select_matches_the_per_edge_reference_indexed_and_not() {
+        let mut x = Vec::new();
+        let mut y = Vec::new();
+        // Deterministic lattice plus points landing exactly on vertices/edges.
+        for i in 0..60 {
+            for j in 0..60 {
+                x.push(i as f64 * 2.0);
+                y.push(j as f64 * 2.0);
+            }
+        }
+        x.extend_from_slice(&[f64::NAN, 0.0, f64::INFINITY, -f64::INFINITY, 50.0]);
+        y.extend_from_slice(&[50.0, f64::NAN, 50.0, 50.0, f64::INFINITY]);
+
+        // Triangle and axis-aligned box: below the index threshold, and the
+        // box's horizontal edges are the zero-height ones.
+        polygon_case(&[10.0, 90.0, 50.0], &[10.0, 20.0, 80.0], &x, &y);
+        polygon_case(&[20.0, 80.0, 80.0, 20.0], &[20.0, 20.0, 80.0, 80.0], &x, &y);
+        // Bowtie: self-intersecting, so even-odd parity is load-bearing.
+        polygon_case(&[10.0, 90.0, 90.0, 10.0], &[10.0, 90.0, 10.0, 90.0], &x, &y);
+        // Collinear and zero-height polygons decline the index.
+        polygon_case(&[0.0, 50.0, 100.0], &[0.0, 50.0, 100.0], &x, &y);
+        polygon_case(&[0.0, 50.0, 100.0], &[30.0, 30.0, 30.0], &x, &y);
+
+        // Indexed paths: circles and a concave star past the 16-vertex gate.
+        for n in [16usize, 17, 64, 257] {
+            let (px, py): (Vec<f64>, Vec<f64>) = (0..n)
+                .map(|k| {
+                    let t = std::f64::consts::TAU * k as f64 / n as f64;
+                    (50.0 + 30.0 * t.cos(), 50.0 + 30.0 * t.sin())
+                })
+                .unzip();
+            polygon_case(&px, &py, &x, &y);
+        }
+        let (px, py): (Vec<f64>, Vec<f64>) = (0..24)
+            .map(|k| {
+                let t = std::f64::consts::TAU * k as f64 / 24.0;
+                let r = if k % 2 == 0 { 40.0 } else { 12.0 };
+                (50.0 + r * t.cos(), 50.0 + r * t.sin())
+            })
+            .unzip();
+        polygon_case(&px, &py, &x, &y);
+
+        // A non-finite vertex declines the index; the scan must still agree.
+        polygon_case(
+            &[10.0, 90.0, 90.0, 10.0, 50.0],
+            &[10.0, 10.0, 90.0, 90.0, f64::NAN],
+            &x,
+            &y,
+        );
+
+        // Fewer than three vertices selects nothing.
+        let rows: Vec<u32> = (0..x.len() as u32).collect();
+        let mut out = vec![0u32; rows.len()];
+        assert_eq!(
+            polygon_select(&x, &y, &rows, &[0.0, 9.0], &[0.0, 9.0], &mut out),
+            Some(0)
+        );
+        assert_eq!(
+            polygon_select(&x, &y, &[], &[0.0, 9.0, 5.0], &[0.0, 9.0, 5.0], &mut out),
+            Some(0)
+        );
+
+        // An id past the end of the column is reported, not indexed. The
+        // kernels answer this themselves so it holds where panics abort
+        // rather than unwind (the PyEmscripten wheel's `-C panic=abort`).
+        assert_eq!(
+            polygon_select(
+                &x,
+                &y,
+                &[x.len() as u32],
+                &[0.0, 9.0, 5.0],
+                &[0.0, 9.0, 5.0],
+                &mut out
+            ),
+            None
+        );
+        assert_eq!(
+            range_indices_rows(&x, &y, &[x.len() as u32], 0.0, 9.0, 0.0, 9.0, &mut out),
+            None
+        );
+        // The ceiling is `< len`, not `<= len`: the last id is in range, so it
+        // is answered rather than refused — here as "not selected", because
+        // that row's y is infinite. Row 0 of the lattice is genuinely inside.
+        let last = [x.len() as u32 - 1];
+        assert_eq!(
+            range_indices_rows(&x, &y, &last, -1e9, 1e9, -1e9, 1e9, &mut out),
+            Some(0)
+        );
+        assert_eq!(
+            range_indices_rows(&x, &y, &[0], -1e9, 1e9, -1e9, 1e9, &mut out),
+            Some(1)
+        );
+        assert_eq!(out[0], 0);
+    }
+
+    /// `polygon_select` is a public export with no polygon-size ceiling of its
+    /// own — `Figure.select_polygon` caps callers at 2048 vertices, the kernel
+    /// does not — so the slab index must bound its own CSR rather than trust
+    /// the vertex count it is handed.
+    #[test]
+    fn polygon_slab_index_stays_inside_its_record_budget() {
+        for n in [16usize, 2048, 65_536, 200_000] {
+            // Worst case for the CSR: every edge spans the full height, so
+            // each is filed into every slab.
+            let poly_x: Vec<f64> = (0..n).map(|i| i as f64).collect();
+            let poly_y: Vec<f64> = (0..n)
+                .map(|i| if i % 2 == 0 { 0.0 } else { 100.0 })
+                .collect();
+            let edges: Vec<(f64, f64, f64, f64, f64)> = (0..n)
+                .map(|i| {
+                    let j = if i == 0 { n - 1 } else { i - 1 };
+                    (
+                        poly_x[i],
+                        poly_y[i],
+                        poly_y[j],
+                        poly_x[j] - poly_x[i],
+                        poly_y[j] - poly_y[i],
+                    )
+                })
+                .collect();
+            let index = PolygonSlabs::build(&poly_y, &edges);
+            assert!(
+                index.items.len() <= POLYGON_INDEX_RECORD_BUDGET,
+                "{n} vertices produced {} CSR entries",
+                index.items.len()
+            );
+            // Either the index was declined outright or it kept enough slabs
+            // to be worth consulting.
+            assert!(
+                index.n == 0 || index.n >= 8,
+                "{n} vertices -> {} slabs",
+                index.n
+            );
+        }
+    }
 
     #[test]
     fn factorize_fixed_preserves_first_seen_codes_and_full_record_identity() {
@@ -5188,6 +6051,7 @@ mod tests {
             &x,
             &y,
             &levels,
+            false,
             &mut x0,
             &mut x1,
             &mut y0,
@@ -5221,6 +6085,7 @@ mod tests {
                 &x,
                 &y,
                 &levels,
+                false,
                 &mut x0,
                 &mut x1,
                 &mut y0,
@@ -5262,6 +6127,7 @@ mod tests {
             &[0.0, 1.0],
             &[0.0, 1.0],
             &[0.5],
+            false,
             &mut x0,
             &mut x1,
             &mut y0,
@@ -5269,6 +6135,36 @@ mod tests {
             &mut emitted_levels,
         );
         assert_eq!(written, 0);
+    }
+
+    #[test]
+    fn marching_squares_corner_mask_retains_the_opposite_triangle() {
+        let z = [f64::NAN, 1.0, 0.0, 0.0];
+        let mut x0 = [0.0; 1];
+        let mut x1 = [0.0; 1];
+        let mut y0 = [0.0; 1];
+        let mut y1 = [0.0; 1];
+        let mut emitted_levels = [0.0; 1];
+        let written = marching_squares_into(
+            &z,
+            2,
+            2,
+            &[0.0, 1.0],
+            &[0.0, 1.0],
+            &[0.5],
+            true,
+            &mut x0,
+            &mut x1,
+            &mut y0,
+            &mut y1,
+            &mut emitted_levels,
+        );
+        assert_eq!(written, 1);
+        assert_eq!(x0[0].min(x1[0]), 0.5);
+        assert_eq!(x0[0].max(x1[0]), 1.0);
+        assert_eq!(y0, [0.5]);
+        assert_eq!(y1, [0.5]);
+        assert_eq!(emitted_levels, [0.5]);
     }
 
     #[test]
@@ -5913,6 +6809,34 @@ mod tests {
     }
 
     #[test]
+    fn m4_clustered_split_search_is_logarithmic() {
+        use std::cell::Cell;
+
+        let x: Vec<f64> = (0..200_000)
+            .map(|i| if i < 194_000 { 0.5 } else { 1.5 })
+            .collect();
+        let y: Vec<f64> = (0..x.len()).map(|i| (i as f64 * 0.01).sin()).collect();
+        let serial = m4_indices_impl(&x, &y, 0.0, 2.0, 1_000, 0, x.len(), 1);
+        let dispatched = m4_indices_impl(&x, &y, 0.0, 2.0, 1_000, 0, x.len(), 18);
+        assert_eq!(serial, dispatched);
+
+        let probes = Cell::new(0usize);
+        let bucket_of = |value: f64| {
+            probes.set(probes.get() + 1);
+            value as usize
+        };
+
+        let offset = m4_bucket_end(&x[10_000..], 0, &bucket_of);
+
+        assert_eq!(offset, 184_000);
+        assert!(
+            probes.get() <= 20,
+            "dominant-bucket split used {} probes",
+            probes.get()
+        );
+    }
+
+    #[test]
     fn min_max_skips_non_finite() {
         assert_eq!(min_max(&[f64::NAN, 2.0, -1.0]), Some((-1.0, 2.0)));
         assert_eq!(
@@ -5982,9 +6906,251 @@ mod tests {
         // shape): per-thread grids + merge dwarf the scan — stay serial.
         assert_eq!(bin_2d_threads(1 << 20, 1 << 20), 1);
         assert_eq!(bin_2d_threads(2_100_000, 2048 * 2048), 1);
-        assert_eq!(par_threads_for(PAR_THRESHOLD - 1, 64), 1);
-        assert_eq!(par_threads_for(PAR_THRESHOLD, 64), MAX_ROW_THREADS);
-        assert_eq!(par_threads_for(PAR_THRESHOLD, 1), 1);
+        assert_eq!(
+            par_threads_above_for(PAR_THRESHOLD - 1, PAR_THRESHOLD, 64),
+            1
+        );
+        assert_eq!(
+            par_threads_above_for(PAR_THRESHOLD, PAR_THRESHOLD, 64),
+            MAX_ROW_THREADS
+        );
+        assert_eq!(par_threads_above_for(PAR_THRESHOLD, PAR_THRESHOLD, 1), 1);
+    }
+
+    #[test]
+    fn histogram_threads_bin_aware() {
+        let n = PAR_THRESHOLD_COMPUTE;
+        let cap = par_threads_above(n, PAR_THRESHOLD_COMPUTE);
+        // Below the compute gate: serial regardless of bin count.
+        assert_eq!(histogram_threads(PAR_THRESHOLD_COMPUTE - 1, 8), 1);
+        // Chart-sized bin counts (512 is the benchmark config): pure row gate.
+        assert_eq!(histogram_threads(n, 512), cap);
+        assert_eq!(histogram_threads(n, 8), cap);
+        // Bins as numerous as the rows: merge dwarfs the scan — stay serial.
+        assert_eq!(histogram_threads(n, n), 1);
+        assert_eq!(histogram_threads(200_000, 1_000_000), 1);
+        // In between, workers track points per bin.
+        assert_eq!(histogram_threads(1 << 18, 1 << 15), 8.min(cap));
+    }
+
+    #[test]
+    fn histogram_high_bin_count_matches_serial() {
+        // 128k-512k band: high bin counts route serial, and the public path
+        // stays bit-identical to the serial impl either way.
+        let n = PAR_THRESHOLD_COMPUTE + 1_000;
+        let bins = 300_000;
+        let data: Vec<f64> = (0..n).map(|i| (i % 977) as f64 * 0.25).collect();
+        assert_eq!(histogram_threads(n, bins), 1);
+        let mut serial = vec![0f64; bins];
+        let ts = histogram_uniform_impl(&data, 0.0, 244.0, 1, &mut serial);
+        let mut routed = vec![0f64; bins];
+        let tr = histogram_uniform(&data, 0.0, 244.0, &mut routed);
+        assert_eq!(ts, tr);
+        assert_eq!(serial, routed);
+        // Same rows, ordinary bin count: still fans out.
+        let cap = par_threads_above(n, PAR_THRESHOLD_COMPUTE);
+        assert_eq!(histogram_threads(n, 512), cap);
+        let mut small_serial = vec![0f64; 512];
+        let ss = histogram_uniform_impl(&data, 0.0, 244.0, 1, &mut small_serial);
+        let mut small_routed = vec![0f64; 512];
+        let sr = histogram_uniform(&data, 0.0, 244.0, &mut small_routed);
+        assert_eq!(ss, sr);
+        assert_eq!(small_serial, small_routed);
+    }
+
+    #[test]
+    fn par_thread_gates_route_by_cost_class() {
+        const { assert!(PAR_THRESHOLD_COMPUTE < PAR_THRESHOLD) }
+        let t_c = PAR_THRESHOLD_COMPUTE;
+        for cores in [1, 4, 20, 64] {
+            let cap = cores.clamp(1, MAX_ROW_THREADS);
+            // Compute-bound kernels fan out from 128k rows.
+            assert_eq!(par_threads_above_for(t_c - 1, t_c, cores), 1);
+            assert_eq!(par_threads_above_for(t_c, t_c, cores), cap);
+            // ...and stay serial in the band the general gate still reserves.
+            assert_eq!(par_threads_above_for(t_c, PAR_THRESHOLD, cores), 1);
+        }
+    }
+
+    #[test]
+    fn srgb_linear_table_roundtrips_every_byte() {
+        for (byte, &linear) in SRGB_TO_LINEAR_U16.iter().enumerate() {
+            assert_eq!(
+                linear_u16_to_srgb_u8(linear),
+                byte as u8,
+                "table entry {byte} must invert exactly"
+            );
+        }
+        assert_eq!(linear_u16_to_srgb_u8(0), 0);
+        assert_eq!(linear_u16_to_srgb_u8(u16::MAX), 255);
+        assert!(
+            SRGB_TO_LINEAR_U16.windows(2).all(|p| p[1] > p[0]),
+            "strictly increasing — the inverse search depends on it"
+        );
+    }
+
+    const MC_RED_BLUE: [[u8; 4]; 2] = [[255, 0, 0, 255], [0, 0, 255, 255]];
+
+    #[test]
+    fn bin_2d_mean_color_places_pure_and_mixed_cells() {
+        // 2×2 grid over the unit square: bottom-left one red point;
+        // bottom-right one red + one blue; NaN and out-of-window skipped.
+        let x = [0.1, 0.6, 0.9, f64::NAN, 2.0];
+        let y = [0.1, 0.1, 0.1, 0.5, 0.5];
+        let idx = [0u8, 0, 1, 0, 1];
+        let colors = BinColorSource::Indexed {
+            idx: &idx,
+            lut: &MC_RED_BLUE,
+        };
+        let mut out = vec![0u8; 2 * 2 * 4];
+        bin_2d_mean_color(&x, &y, &colors, 0.0, 1.0, 0.0, 1.0, 2, 2, &mut out);
+        assert_eq!(&out[0..4], &[255, 0, 0, 255], "pure cell keeps exact color");
+        // Half red + half blue averaged in linear light: 65535/2 → 32768,
+        // whose nearest sRGB byte is 188 — brighter than the sRGB-space
+        // average (128), the physically downsampled mix.
+        assert_eq!(&out[4..8], &[188, 0, 188, 255]);
+        assert_eq!(&out[8..16], &[0u8; 8], "empty cells stay fully zero");
+    }
+
+    #[test]
+    fn bin_2d_mean_color_weights_by_alpha() {
+        // A faint red (alpha 51 = 20%) and an opaque blue share a cell: the
+        // mean must lean blue 5:1, and the cell alpha is the plain mean.
+        let x = [0.5, 0.5];
+        let y = [0.5, 0.5];
+        let lut = [[255, 0, 0, 51], [0, 0, 255, 255]];
+        let idx = [0u8, 1];
+        let colors = BinColorSource::Indexed {
+            idx: &idx,
+            lut: &lut,
+        };
+        let mut out = vec![0u8; 4];
+        bin_2d_mean_color(&x, &y, &colors, 0.0, 1.0, 0.0, 1.0, 1, 1, &mut out);
+        let expected_red = linear_u16_to_srgb_u8(((51u64 * 65535 + 153) / 306) as u16);
+        let expected_blue = linear_u16_to_srgb_u8(((255u64 * 65535 + 153) / 306) as u16);
+        assert_eq!(out, vec![expected_red, 0, expected_blue, 153]);
+        assert!(out[2] > out[0], "opaque blue outweighs faint red");
+
+        // All-invisible cell: count > 0 but zero weight — never invent color.
+        let ghost_lut = [[255, 0, 0, 0]];
+        let ghost_idx = [0u8, 0];
+        let ghost = BinColorSource::Indexed {
+            idx: &ghost_idx,
+            lut: &ghost_lut,
+        };
+        bin_2d_mean_color(&x, &y, &ghost, 0.0, 1.0, 0.0, 1.0, 1, 1, &mut out);
+        assert_eq!(out, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn bin_2d_mean_color_rgba_source_and_lut_wrap() {
+        let x = [0.5, 0.5];
+        let y = [0.5, 0.5];
+        let rgba: Vec<u8> = vec![255, 0, 0, 255, 0, 0, 255, 255];
+        let mut direct = vec![0u8; 4];
+        bin_2d_mean_color(
+            &x,
+            &y,
+            &BinColorSource::Rgba(&rgba),
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            &mut direct,
+        );
+        assert_eq!(direct, vec![188, 0, 188, 255]);
+        // Indices wrap modulo the LUT length (the palette repeat rule): code 2
+        // over a 2-entry LUT wears entry 0.
+        let idx = [2u8, 1];
+        let mut wrapped = vec![0u8; 4];
+        bin_2d_mean_color(
+            &x,
+            &y,
+            &BinColorSource::Indexed {
+                idx: &idx,
+                lut: &MC_RED_BLUE,
+            },
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            &mut wrapped,
+        );
+        assert_eq!(wrapped, direct);
+    }
+
+    #[test]
+    fn bin_2d_mean_color_parallel_matches_serial_oracle() {
+        // Enough rows to fan out (PAR_THRESHOLD gate) over a small grid; the
+        // serial cell accumulator is the oracle, so the threaded integer
+        // merge must reproduce it bit-for-bit.
+        let n = PAR_THRESHOLD + 4096;
+        let mut x = Vec::with_capacity(n);
+        let mut y = Vec::with_capacity(n);
+        let mut idx = Vec::with_capacity(n);
+        let mut seed = 0x00C0FFEE_u64;
+        for _ in 0..n {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            x.push((seed % 1000) as f64 / 10.0);
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            y.push((seed % 1000) as f64 / 10.0);
+            idx.push((seed % 4) as u8);
+        }
+        let lut = [
+            [255, 0, 0, 255],
+            [0, 0, 255, 255],
+            [0, 200, 80, 128],
+            [240, 240, 240, 30],
+        ];
+        let colors = BinColorSource::Indexed {
+            idx: &idx,
+            lut: &lut,
+        };
+        let (w, h) = (32, 32);
+        let mut out = vec![0u8; w * h * 4];
+        bin_2d_mean_color(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, w, h, &mut out);
+        // The oracle accumulates serially by construction (direct call, one
+        // chunk) — `bin_2d_mean_color_cells` itself fans out at this size.
+        let mut cells = vec![MeanColorCell::default(); w * h];
+        bin_2d_mean_color_accumulate(&x, &y, &colors, 0, 0.0, 100.0, 0.0, 100.0, w, h, &mut cells);
+        for (cell_index, cell) in cells.iter().enumerate() {
+            assert_eq!(
+                &out[cell_index * 4..cell_index * 4 + 4],
+                &cell.rgba8(),
+                "cell {cell_index}"
+            );
+        }
+        // Occupancy must match bin_2d exactly (same predicates, same cells).
+        let mut counts = vec![0.0f32; w * h];
+        bin_2d(&x, &y, 0.0, 100.0, 0.0, 100.0, w, h, &mut counts);
+        for (cell_index, count) in counts.iter().enumerate() {
+            assert_eq!(
+                *count > 0.0,
+                out[cell_index * 4 + 3] > 0,
+                "cell {cell_index} occupancy"
+            );
+        }
+    }
+
+    #[test]
+    fn mean_color_threads_shed_to_fit_accumulator_budget() {
+        // Screen-sized grids and the 2048² default base level keep the full
+        // 4-worker fan-out; the adaptive no-rescan base levels (§28) shed to
+        // serial so worker accumulators (40 B/cell) never multiply into
+        // tens of GB of transient build memory.
+        assert_eq!(mean_color_threads_for(16, 512 * 384), 4);
+        assert_eq!(mean_color_threads_for(4, 2048 * 2048), 4);
+        assert_eq!(mean_color_threads_for(4, 4096 * 4096), 1);
+        assert_eq!(mean_color_threads_for(4, 16384 * 16384), 1);
+        assert_eq!(mean_color_threads_for(1, 64), 1);
     }
 
     #[test]

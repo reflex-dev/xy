@@ -318,12 +318,19 @@ _ATOMIC_RESIZE_PROBE = """
     const compactNodes = [...view._colorbar.querySelectorAll(
       '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
     )];
+    const visibleTickText = (nodes) => nodes
+      .filter((node) => !node.hidden && node.dataset.xySlot === "colorbar_tick")
+      .map((node) => node.textContent);
     const compactState = {
       plotWidth: view.plot.w,
       colorbarWidth: view._colorbar.getBoundingClientRect().width,
       compact: view._colorbar.dataset.xyCompact,
       hiddenChrome: compactNodes.filter((node) => node.hidden).length,
       chromeCount: compactNodes.length,
+      visibleTicks: visibleTickText(compactNodes),
+      titleHidden: compactNodes
+        .filter((node) => node.dataset.xySlot === "colorbar_title")
+        .every((node) => node.hidden),
     };
 
     view._resize(760, 500);
@@ -340,6 +347,47 @@ _ATOMIC_RESIZE_PROBE = """
   } catch (err) {
     document.body.setAttribute(
       "data-xy-atomic-resize-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
+_LEGEND_LOC_ALIAS_PROBE = """
+<script>
+(() => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const legend = document.querySelector('[data-xy-slot="legend"]');
+    if (!legend) throw new Error("legend never rendered");
+    const rootRect = view.root.getBoundingClientRect();
+    const topLeftRect = legend.getBoundingClientRect();
+    const topLeft = {
+      leftError: Math.abs(topLeftRect.left - (rootRect.left + view.plot.x + 6)),
+      topError: Math.abs(topLeftRect.top - (rootRect.top + view.plot.y + 6)),
+    };
+
+    view._positionLegend(legend, "bottom right");
+    const bottomRightRect = legend.getBoundingClientRect();
+    const bottomRight = {
+      rightError: Math.abs(
+        bottomRightRect.right - (rootRect.left + view.plot.x + view.plot.w - 6)
+      ),
+      bottomError: Math.abs(
+        bottomRightRect.bottom - (rootRect.top + view.plot.y + view.plot.h - 6)
+      ),
+    };
+    document.body.setAttribute(
+      "data-xy-legend-loc-alias",
+      JSON.stringify({ topLeft, bottomRight })
+    );
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-legend-loc-alias-error",
       String((err && err.stack) || err)
     );
   }
@@ -385,6 +433,53 @@ def _probe_atomic_resize(chromium: str, document: str, page: Path) -> dict:
     return run_browser_probe(
         chromium, document, page, "data-xy-atomic-resize", label="atomic resize probe"
     )
+
+
+def _probe_legend_loc_alias(chromium: str, document: str, page: Path) -> dict:
+    """Render core top/bottom aliases and read their browser edge positions."""
+    return run_browser_probe(
+        chromium,
+        document,
+        page,
+        "data-xy-legend-loc-alias",
+        label="legend loc alias probe",
+    )
+
+
+def test_core_legend_top_and_bottom_aliases_reach_browser_edges() -> None:
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the legend loc alias probe")
+
+    chart = xy.chart(
+        xy.line([0, 1, 2], [1, 2, 1], name="series"),
+        xy.legend(loc="top left"),
+        width=480,
+        height=320,
+    )
+    document = chart.to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    document = document.replace("</body>", _LEGEND_LOC_ALIAS_PROBE + "\n</body>", 1)
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = _probe_legend_loc_alias(
+            chromium,
+            document,
+            Path(td) / "legend_loc_alias.html",
+        )
+
+    assert payload["topLeft"]["leftError"] <= 1, payload
+    assert payload["topLeft"]["topError"] <= 1, payload
+    assert payload["bottomRight"]["rightError"] <= 1, payload
+    assert payload["bottomRight"]["bottomError"] <= 1, payload
 
 
 def test_snake_case_legend_max_height_survives_resize() -> None:
@@ -467,9 +562,17 @@ def test_narrow_fluid_resize_stays_painted_and_preserves_plot_space() -> None:
     assert payload["compactState"]["plotWidth"] >= 280, payload
     assert payload["compactState"]["colorbarWidth"] == pytest.approx(18, abs=1), payload
     assert payload["compactState"]["compact"] == "true", payload
-    assert payload["compactState"]["hiddenChrome"] == payload["compactState"]["chromeCount"], (
-        payload
-    )
+    # The compact form keeps the two EXTREME tick labels, stacked above and below
+    # the gradient, and drops the interior ladder plus the rotated title. Hiding
+    # every one of them — the previous contract this line asserted — left a colour
+    # ramp with no numbers on it, which is unreadable rather than condensed. The
+    # width and plot-space assertions above are what keep the fix free: restacking
+    # the endpoints costs no side gutter, so the collapse still hands the plot the
+    # room it was collapsing for.
+    assert payload["compactState"]["visibleTicks"] == ["0", "1"], payload
+    assert payload["compactState"]["titleHidden"] is True, payload
+    hidden = payload["compactState"]["hiddenChrome"]
+    assert hidden == payload["compactState"]["chromeCount"] - 2, payload
     assert payload["restoredState"] == {"compact": "false", "hiddenChrome": 0}, payload
 
 

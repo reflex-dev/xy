@@ -42,6 +42,21 @@ directive listed above is unchanged. `tests/test_static_client_security.py`
 asserts the directive is exactly `worker-src blob:`, and
 `docs/guides/serving-csp-and-offline-use.md` documents it for host operators.
 
+#### Status as of 2026-07-24 (XY-SEC-2026-01)
+
+`font-src data:` was added. The policy previously declared no `font-src`, so it
+inherited `default-src 'none'` and blocked **every** font load — including the
+`data:` URL `@font-face` that `docs/styling/themes-and-tokens.md` documents as
+the portable brand-font recipe. A standalone export therefore fell back to
+`system-ui` with only a console CSP violation to explain it, and the same
+failure reached Chromium PNG, which renders that document.
+
+The new directive is exactly `data:`, so no network origin can serve a face and
+a standalone file stays self-contained offline — the property `default-src
+'none'` exists to protect. `img-src data:` already grants the same shape of
+access for images. `tests/test_static_client_security.py` asserts `font-src` is
+exactly `data:`.
+
 ### XY-SEC-2026-02: Legend swatches accepted raw CSS paint strings
 
 Severity: medium.
@@ -120,6 +135,38 @@ Fix:
 
 - Added a narrow file-level `allow(dead_code)` with rationale on `src/simd.rs`.
 - Verified the exact CI clippy command now passes.
+
+### XY-CI-2026-02: Workflows inherited default GITHUB_TOKEN permissions
+
+Severity: medium CI hardening.
+
+GitHub CodeQL reported 13 jobs across `ci.yml`, `release.yml`, and
+`benchmark-refresh.yml` that did not set an explicit `GITHUB_TOKEN` permission
+ceiling. Their effective permissions therefore depended on repository or
+organization defaults instead of being reviewable in the workflow.
+
+Fix:
+
+- Added workflow-level `permissions: { contents: read }` defaults to all three
+  workflows.
+- Kept release jobs with privileged duties on explicit job-level permission
+  blocks, which replace the workflow default rather than inheriting extra
+  grants.
+
+### XY-SEC-2026-05: Workflow-test regex allowed exponential backtracking
+
+Severity: high scanner severity; practical exposure limited to a test fixture.
+
+A negative test removed one CI step with a nested, ambiguous regular
+expression. GitHub CodeQL showed that tab-only lines could be repartitioned
+across the repeated whitespace groups, causing exponential backtracking if the
+terminal lookahead failed.
+
+Fix:
+
+- Replaced the regex with deterministic string-boundary lookup and slicing.
+- Preserved the fixture's deliberate failure on workflow-shape drift and its
+  independence from the pinned `upload-artifact` commit SHA.
 
 ## Confirmed Controls
 

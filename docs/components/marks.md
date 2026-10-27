@@ -20,6 +20,9 @@ components:
   - xy.stairs
   - xy.stem
   - xy.segments
+  - xy.ribbon
+  - xy.sankey
+  - xy.funnel
   - xy.triangle_mesh
 ---
 
@@ -80,6 +83,8 @@ built.
 | Density and grids | `hexbin`, `heatmap`, `contour` |
 | Uncertainty | `errorbar`, `error_band` |
 | Explicit geometry | `stem`, `segments`, `triangle_mesh` |
+| Directed flows | `ribbon`, `sankey` |
+| Ordered processes | `funnel` |
 
 The [Chart Gallery](/docs/xy/overview/gallery/) explains expected data shapes and
 family-specific choices.
@@ -125,8 +130,10 @@ def marks_layer_demo():
 - Children draw in declaration order, so broad fills normally come before
   lines and points.
 - `key=` supplies stable row identity for keyed browser data transitions, and
-  mark-level `animation=` overrides or disables the chart's `xy.animation()`
-  policy. See [Animations and data transitions](/docs/xy/styling/animations/).
+  mark-level `animation=` cascades over the chart's `xy.animation()` policy
+  field by field — `xy.animation(duration=90)` on a mark changes only the
+  duration — or disables that mark with `animation=False`. See
+  [Animations and data transitions](/docs/xy/styling/animations/).
 
 Canvas and WebGL marks are not DOM elements. CSS selectors and Tailwind classes
 cannot paint their geometry; use `style=` or the mark's paint props. In

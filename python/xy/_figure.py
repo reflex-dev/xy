@@ -8,10 +8,13 @@ work is forbidden on the client).
 
 from __future__ import annotations
 
+import contextlib
 import math
-from collections.abc import Mapping
+import warnings
+from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from os import PathLike
-from typing import Any, Optional, TypeAlias
+from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
@@ -34,8 +37,11 @@ from .config import (  # noqa: E402, F401
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     DIRECT_SOFT_CEILING,
+    POLAR_DIRECT_CEILING,
+    POLAR_MARK_KINDS,
     PROTOCOL_VERSION,
     SCATTER_DENSITY_THRESHOLD,
+    default_palette_color,
 )
 from .dom import validate_dom_slots
 
@@ -44,6 +50,26 @@ _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[
 # "selection not passed" sentinel for state_patch_message: None is meaningful
 # there (clear the selection), so absence needs its own marker.
 _STATE_UNSET: Any = object()
+
+#: Structural-probe mode. While active, a mark whose data channels are all
+#: empty validates its *configuration* (enums, bounds, colormaps, range
+#: shapes) and contributes no traces, instead of refusing zero rows. This is
+#: the core validation seam compile gates build on (the Reflex plan probe:
+#: spec/design/reflex-integration.md §3.6 "Kind coverage") — structure is
+#: checkable with no data bound, and data-dependent aggregation never runs
+#: on invented values. Non-empty data behaves identically in and out of
+#: probe mode.
+_STRUCTURAL_PROBE: ContextVar[bool] = ContextVar("xy_structural_probe", default=False)
+
+
+@contextlib.contextmanager
+def structural_probe():
+    """Build figures in structural-probe mode (see ``_STRUCTURAL_PROBE``)."""
+    token = _STRUCTURAL_PROBE.set(True)
+    try:
+        yield
+    finally:
+        _STRUCTURAL_PROBE.reset(token)
 
 
 class Selection:
@@ -96,6 +122,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         x_label: Optional[str] = None,
         y_label: Optional[str] = None,
         padding: Any = None,
+        coords: str = "cartesian",
     ) -> None:
         # width/height: pixels, or "100%" to fill the parent container — the
         # client measures the container and re-renders on resize
@@ -103,6 +130,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # size (§28). height="100%" needs a parent with a defined height (the
         # usual CSS contract); otherwise the chart falls back to its 120px
         # min-height.
+        # Captured at construction so every mark applied to this figure agrees
+        # on the mode regardless of where the applier call happens.
+        self._structural_probe = _STRUCTURAL_PROBE.get()
         self.width = self._pixel_dimension(width, "width")
         self.height = self._pixel_dimension(height, "height")
         # padding: override the auto plot margins (top, right, bottom, left) in
@@ -110,8 +140,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # padding + hidden axes gives an edge-to-edge sparkline for dashboards.
         self.padding = self._padding(padding, "padding")
         self.title = self._optional_text(title, "title")
+        # Optional renderer-owned title slots. Declarative charts keep using
+        # ``title``; the pyplot shim fills this with Matplotlib's independent
+        # left/center/right title artists.
+        self.title_options: list[dict[str, Any]] = []
         self.x_label = self._optional_text(x_label, "x_label")
         self.y_label = self._optional_text(y_label, "y_label")
+        # "cartesian" (two separable axes) or "polar" (the x axis carries theta,
+        # the y axis carries r). Polar reinterprets the same two axes rather
+        # than declaring new ids: axis ids are required to start with 'x'/'y' in
+        # four separate places, and the interaction axis policies are built on
+        # that grammar. See spec/design/polar-axes.md.
+        self.coords = _validate.coords(coords, "coords")
         self.axis_options: dict[str, dict[str, Any]] = {
             "x": {"label": self.x_label, "side": "bottom"},
             "y": {"label": self.y_label, "side": "left"},
@@ -143,6 +183,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # ignore this and always render the deterministic final scene.
         self.animation_options: Optional[dict[str, Any]] = None
         self.mark_style: dict[str, dict[str, str | int | float]] = {}
+        # Categorical color cycle for this chart: unnamed series colors AND
+        # categorical color channels. `xy.theme(palette=[...])` replaces it;
+        # None means the built-in CVD-safe default (config.DEFAULT_PALETTE).
+        # Set before any mark is applied — a trace bakes its color at build.
+        # A list is a positional cycle; a `{category: color}` mapping pins
+        # colors to category labels (`palette_cycle` flattens it for the
+        # series cycle, `channels.resolve_color` looks categories up in it).
+        self.palette: Union[list[str], dict[str, str], None] = None
+        # How many logical series have already taken a palette slot. The cycle
+        # advances per *series*, never per trace: a box is four traces and a
+        # stem is two, and indexing by `len(self.traces)` made those marks skip
+        # (or collide on) palette entries — four brand colors and four boxes
+        # painted every box `palette[0]`.
+        self._series_cursor = 0
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
         # Declarative marks still call the shared fluent mark bodies with the
@@ -162,6 +216,56 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # (wire-protocol §4).
         self._append_seq = 0
 
+    # -- palette ------------------------------------------------------------
+
+    @property
+    def palette_cycle(self) -> Optional[list[str]]:
+        """The chart palette as a positional cycle, or None when unset.
+
+        A `{category: color}` palette pins colors by label; series that are not
+        categories still need an order, and the mapping's own is the only one
+        the author expressed."""
+        if self.palette is None:
+            return None
+        if isinstance(self.palette, dict):
+            return list(self.palette.values())
+        return list(self.palette)
+
+    @property
+    def colors(self) -> list[str]:
+        """This chart's categorical cycle — its own palette, else the default."""
+        return self.palette_cycle or list(DEFAULT_PALETTE)
+
+    def palette_color(self, index: int, *, stacklevel: int = 3) -> str:
+        """Color for the `index`-th series (0-based): the chart palette, cycled.
+
+        Wrapping is allowed but never silent (§28) — see
+        `config.default_palette_color`, which owns the built-in-palette warning
+        and its CVD-order rationale."""
+        cycle = self.palette_cycle
+        if cycle is None:
+            return default_palette_color(index, stacklevel=stacklevel + 1)
+        if index >= len(cycle):
+            warnings.warn(
+                f"more than {len(cycle)} series use default colors; the chart "
+                f"palette repeats every {len(cycle)} (series "
+                f"{len(cycle) + 1} wears series 1's color). Pass a longer "
+                "xy.theme(palette=...), or an explicit color= per series.",
+                RuntimeWarning,
+                stacklevel=stacklevel,
+            )
+        return cycle[index % len(cycle)]
+
+    def next_series_color(self, *, stacklevel: int = 4) -> str:
+        """Take the next categorical slot for one logical series.
+
+        Marks call this only when the caller gave no `color=`, so a mark that
+        builds several traces (box, stem) — or that delegates to another mark
+        body with the color already resolved — consumes exactly one slot."""
+        index = self._series_cursor
+        self._series_cursor += 1
+        return self.palette_color(index, stacklevel=stacklevel)
+
     # -- axis config --------------------------------------------------------
 
     def set_axis(
@@ -175,18 +279,31 @@ class Figure(AnnotationsMixin, PayloadMixin):
         type_: Optional[str] = None,
         constant: Optional[float] = None,
         domain: Optional[tuple[float, float]] = None,
+        margin: Optional[float] = None,
         bounds: Any = None,
         reverse: bool = False,
         format: Optional[str] = None,
         tick_count: Optional[int] = None,
         tick_values: Optional[Any] = None,
+        minor_tick_values: Optional[Any] = None,
         tick_labels: Optional[Any] = None,
         tick_label_angle: Optional[float] = None,
         tick_label_strategy: Optional[str] = None,
         tick_label_anchor: Optional[str] = None,
         tick_label_min_gap: Optional[float] = None,
         side: Optional[str] = None,
+        tick_sides: Optional[Any] = None,
+        tick_label_sides: Optional[Any] = None,
         style: Optional[dict[str, Any]] = None,
+        minor_style: Optional[dict[str, Any]] = None,
+        nonpositive: Optional[str] = None,
+        theta_unit: Optional[str] = None,
+        theta_zero: Optional[Any] = None,
+        theta_direction: Optional[str] = None,
+        sector: Optional[tuple[float, float]] = None,
+        grid_shape: Optional[str] = None,
+        hole: Optional[float] = None,
+        r_origin: Optional[float] = None,
     ) -> "Figure":
         axis_id = self._axis_id(axis_id, "axis id")
         axis_dim = self._axis_dim(axis_id)
@@ -202,6 +319,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
             if type_ == "log" and domain[0] <= 0:
                 raise ValueError(f"{axis_id} log axis domain must be positive")
+        if margin is not None:
+            margin = self._nonnegative_scalar(margin, f"{axis_id} axis margin")
         if isinstance(bounds, str):
             if bounds != "data":
                 raise ValueError(f"{axis_id} axis bounds must be an increasing pair or 'data'")
@@ -209,17 +328,89 @@ class Figure(AnnotationsMixin, PayloadMixin):
             bounds = self._finite_increasing_pair(bounds, f"{axis_id} axis bounds")
             if type_ == "log" and bounds[0] <= 0:
                 raise ValueError(f"{axis_id} log axis bounds must be positive")
+        if theta_unit is not None:
+            theta_unit = _validate.theta_unit(theta_unit, f"{axis_id} axis theta_unit")
+        if theta_direction is not None:
+            theta_direction = _validate.theta_direction(
+                theta_direction, f"{axis_id} axis theta_direction"
+            )
+        if theta_zero is not None:
+            theta_zero = _validate.theta_zero(theta_zero, f"{axis_id} axis theta_zero")
+        if sector is not None:
+            sector = _validate.theta_sector(sector, f"{axis_id} axis sector")
+        if grid_shape is not None:
+            grid_shape = _validate.polar_grid_shape(grid_shape, f"{axis_id} axis grid_shape")
+        if hole is not None:
+            hole = _validate.polar_hole(hole, f"{axis_id} axis hole")
+        if r_origin is not None:
+            r_origin = self._finite_scalar(r_origin, f"{axis_id} axis r_origin")
+        if hole is not None and r_origin is not None:
+            raise ValueError(f"{axis_id} axis hole and r_origin are mutually exclusive")
+        if axis_dim == "y" and any(
+            option is not None
+            for option in (theta_unit, theta_direction, theta_zero, sector, grid_shape)
+        ):
+            raise ValueError(
+                f"{axis_id} axis: theta options describe the angular "
+                "axis and belong on an x axis (xy.theta_axis); the radial axis is the y axis"
+            )
+        if axis_dim == "x" and any(option is not None for option in (hole, r_origin)):
+            raise ValueError(
+                f"{axis_id} axis: hole/r_origin describe the radial axis and belong on a "
+                "y axis (xy.r_axis); the angular axis is the x axis"
+            )
+        if type_ == "log" and r_origin is not None and r_origin <= 0:
+            raise ValueError(f"{axis_id} log axis r_origin must be positive")
+        if sector is not None and self.coords == "polar":
+            unit = theta_unit or "radians"
+            turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+            if sector[1] - sector[0] > turn:
+                raise ValueError(
+                    f"{axis_id} axis sector sweep must not exceed one full turn ({turn:g} {unit})"
+                )
         if side is None:
             side = "bottom" if axis_dim == "x" else ("right" if axis_id != "y" else "left")
         elif axis_dim == "x" and side not in {"top", "bottom"}:
             raise ValueError("x axis side must be 'top' or 'bottom'")
         elif axis_dim == "y" and side not in {"left", "right"}:
             raise ValueError("y axis side must be 'left' or 'right'")
+        if tick_sides is not None:
+            if isinstance(tick_sides, (str, bytes)) or not isinstance(tick_sides, Sequence):
+                raise ValueError(f"{axis_id} axis tick_sides must be a sequence")
+            allowed_tick_sides = ("bottom", "top") if axis_dim == "x" else ("left", "right")
+            tick_sides = list(tick_sides)
+            if any(value not in allowed_tick_sides for value in tick_sides):
+                raise ValueError(
+                    f"{axis_id} axis tick_sides must contain only {list(allowed_tick_sides)}"
+                )
+            tick_sides = [value for value in allowed_tick_sides if value in tick_sides]
+        if tick_label_sides is not None:
+            if isinstance(tick_label_sides, (str, bytes)) or not isinstance(
+                tick_label_sides, Sequence
+            ):
+                raise ValueError(f"{axis_id} axis tick_label_sides must be a sequence")
+            allowed_label_sides = ("bottom", "top") if axis_dim == "x" else ("left", "right")
+            tick_label_sides = list(tick_label_sides)
+            if any(value not in allowed_label_sides for value in tick_label_sides):
+                raise ValueError(
+                    f"{axis_id} axis tick_label_sides must contain only {list(allowed_label_sides)}"
+                )
+            tick_label_sides = [value for value in allowed_label_sides if value in tick_label_sides]
         values = (
             None
             if tick_values is None
             else [self._finite_scalar(value, f"{axis_id} tick value") for value in tick_values]
         )
+        minor_values = (
+            None
+            if minor_tick_values is None
+            else [
+                self._finite_scalar(value, f"{axis_id} minor tick value")
+                for value in minor_tick_values
+            ]
+        )
+        if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+            raise ValueError(f"{axis_id} axis nonpositive must be 'clip' or 'mask' on a log axis")
         labels = None if tick_labels is None else [str(value) for value in tick_labels]
         if labels is not None and (values is None or len(labels) != len(values)):
             raise ValueError(f"{axis_id} tick_labels must match tick_values")
@@ -235,11 +426,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "type": type_,
             "constant": constant,
             "domain": domain,
+            "margin": margin,
             "bounds": bounds,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
             "tick_values": values,
+            "minor_tick_values": minor_values,
             "tick_labels": labels,
             "tick_label_angle": self._optional_finite_scalar(
                 tick_label_angle, f"{axis_id} axis tick_label_angle"
@@ -254,7 +447,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if tick_label_min_gap is None
             else self._nonnegative_scalar(tick_label_min_gap, f"{axis_id} axis tick_label_min_gap"),
             "side": side,
+            "tick_sides": tick_sides,
+            "tick_label_sides": tick_label_sides,
             "style": styles.compile_axis_style(style, f"{axis_id} axis style"),
+            "minor_style": styles.compile_axis_style(minor_style, f"{axis_id} minor axis style"),
+            "nonpositive": nonpositive,
+            # Polar angular configuration. Meaningless on a cartesian chart and
+            # omitted from the wire there, so existing specs stay byte-identical.
+            "theta_unit": theta_unit,
+            "theta_zero": theta_zero,
+            "theta_direction": theta_direction,
+            "sector": sector,
+            "grid_shape": grid_shape,
+            "hole": hole,
+            "r_origin": r_origin,
         }
         if axis_id == "x":
             self.x_label = self.axis_options[axis_id]["label"]
@@ -417,6 +623,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
     stairs = _marks.stairs
     stem = _marks.stem
     segments = _marks.segments
+    ribbon = _marks.ribbon
+    sankey = _marks.sankey
+    funnel = _marks.funnel
     triangle_mesh = _marks.triangle_mesh
     bar = _marks.bar
     column = _marks.column
@@ -432,6 +641,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         stroke: Optional[str],
         stroke_width: float,
         fill: Any,
+        wedge_gap: float = 0.0,
     ) -> dict[str, Any]:
         """Validate the rect-family mark styling (rounded corners, border,
         gradient fill) into the sparse style keys the client renders.
@@ -454,10 +664,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
             radius = self._nonnegative_scalar(corner_radius, f"{kind} corner_radius")
             if radius:
                 style["corner_radius"] = radius
+        gap = self._nonnegative_scalar(wedge_gap, f"{kind} wedge_gap")
+        if gap:
+            # Gap between neighbouring polar wedges, in PX — an angular pad's
+            # gap is `r · dtheta` wide and so tapers to nothing at the hole.
+            # Meaningless under cartesian coords, where bars have their own
+            # width; recorded on the style and read only by the wedge paths.
+            style["wedge_gap"] = gap
         stroke = self._optional_css_color(stroke, f"{kind} stroke")
         stroke_width = self._nonnegative_scalar(stroke_width, f"{kind} stroke_width")
-        if stroke is not None and stroke_width == 0.0:
-            stroke_width = 1.0
+        stroke_width = _marks._implied_stroke_width(stroke, stroke_width)
         fill_spec = _validate.mark_fill(fill, f"{kind} fill")
         if stroke is not None:
             style["stroke"] = stroke
@@ -637,6 +853,203 @@ class Figure(AnnotationsMixin, PayloadMixin):
         value = self.interaction.get(name)
         return list(self.axis_options) if value is None else self._axis_policy(value, name)
 
+    def _validate_funnel_axes(self) -> None:
+        """Refuse axis types the funnel geometry cannot draw truthfully.
+
+        A funnel's segments are centered on zero, so half its corners are
+        negative — a log cross axis maps them to NaN and a symlog one bends
+        the silhouette; a time cross axis has no meaning for widths. The
+        stage axis is categorical by construction, and a forced type
+        (`_axis_kind` lets a forced "time" beat the category registry) would
+        silently strip the stage labels. Every one of these *would* draw
+        something, and a plausible wrong picture is worse than an error (§28).
+        """
+        for t in self.traces:
+            if t.kind != "funnel":
+                continue
+            vertical = str(t.style.get("orientation", "vertical")) == "vertical"
+            cross_axis = t.x_axis if vertical else t.y_axis
+            stage_axis = t.y_axis if vertical else t.x_axis
+            cross_type = self.axis_options.get(cross_axis, {}).get("type")
+            if cross_type in {"log", "symlog", "time"}:
+                raise ValueError(
+                    f"funnel cross axis {cross_axis!r} cannot be {cross_type!r}: "
+                    "segments are centered on zero, so their widths only read "
+                    "on a linear axis"
+                )
+            stage_type = self.axis_options.get(stage_axis, {}).get("type")
+            if stage_type in {"log", "symlog", "time"}:
+                raise ValueError(
+                    f"funnel stage axis {stage_axis!r} cannot be {stage_type!r}: "
+                    "the stage axis is categorical (stage names in declared order)"
+                )
+
+    def _validate_coords(self) -> None:
+        """Refuse mark kinds the polar transform does not yet render correctly.
+
+        A whole-scene check rather than a per-mark one: marks can be appended
+        at any time, so only payload-build time sees the finished figure.
+
+        The refusal is deliberate. Every unsupported kind here *would* draw
+        something — a bar would come out as a chord-edged rectangle rather than
+        an annular sector, an area would fill the wrong region — and a
+        plausible wrong picture is worse than an error. §28 requires the
+        decision to ship rather than be silently approximated.
+        """
+        if self.coords != "polar":
+            return
+        unsupported = sorted({t.kind for t in self.traces} - POLAR_MARK_KINDS)
+        if unsupported:
+            raise ValueError(
+                f"coords='polar' does not support {unsupported} yet; "
+                f"supported kinds are {sorted(POLAR_MARK_KINDS)}. "
+                "See spec/design/polar-axes.md."
+            )
+        unsupported_annotations = sorted(
+            {str(annotation.get("kind")) for annotation in self.annotations} & {"rule", "band"}
+        )
+        if unsupported_annotations:
+            raise ValueError(
+                "coords='polar' does not support rule/band annotations yet; "
+                f"found {unsupported_annotations}. Point-anchored text, label, marker, "
+                "arrow, and callout annotations remain supported."
+            )
+        # One angular and one radial axis, no more. A secondary axis binds and
+        # validates exactly like a Cartesian one, but the polar transform reads
+        # only the primary pair, so the result is the failure this method exists
+        # to prevent: an overlapping secondary range draws *pixel-identical* to
+        # the primary, inviting the reader to decode it against a tick ladder it
+        # does not belong to, while a disjoint one culls the series away
+        # entirely — and either way the axis still gets its Cartesian spine and
+        # title drawn in the gutter of a disc. Refuse instead.
+        extra_axes = sorted(
+            (
+                set(self.axis_options)
+                | {t.x_axis for t in self.traces}
+                | {t.y_axis for t in self.traces}
+            )
+            - {"x", "y"}
+        )
+        if extra_axes:
+            raise ValueError(
+                "coords='polar' supports a single angular ('x') and radial ('y') "
+                f"axis; found {extra_axes}. See spec/design/polar-axes.md."
+            )
+        theta = self.axis_options.get("x", {})
+        # A non-linear *angle* has no coherent projection, and the two renderers
+        # never agreed on one: the client scales theta before projecting it
+        # while the static exporters ignore the scale outright (their SVG is
+        # byte-identical across linear/log/symlog), so the same figure points a
+        # datum at opposite sides of the disc depending on where it is drawn.
+        # The spec offers a scale row for r only; a log radial axis stays valid.
+        # Inspecting only the *declared* spelling let an inferred time column
+        # through: datetime theta shipped with kind="time" pinned to a fixed
+        # 0..2pi range, so twelve consecutive days wrapped the disc billions of
+        # times and the spokes were labelled as radians. `theta_axis(domain=)`
+        # is aliased to `sector`, so there was no escape hatch either. Refuse on
+        # the resolved kind, and say what a time angle would have to mean.
+        if self._axis_kind("x") == "time":
+            raise ValueError(
+                "coords='polar' does not support a time angular axis; an "
+                "instant has no angle. Map time onto the turn yourself — e.g. "
+                "theta = 2*pi * ((t - t0) / period) — and pass the result as a "
+                "number. A time *radial* axis (r_axis) is supported."
+            )
+        theta_scale = theta.get("type")
+        if theta_scale is not None and theta_scale != "linear":
+            raise ValueError(
+                f"coords='polar' does not support a {theta_scale!r} angular axis; "
+                "the angle must be linear. A log or symlog *radial* axis "
+                "(r_axis) is supported. See spec/design/polar-axes.md."
+            )
+        # `reverse` is the Cartesian "flip this axis" switch; on a disc the
+        # equivalent is a direction of travel, which the angular axis already
+        # spells as `direction`. It rode the wire as `"reverse": true` and every
+        # renderer ignored it, so the axis silently drew unreversed — the same
+        # accepted-but-inert trap as a secondary axis. Point at the switch that
+        # works instead. (`r_axis(reverse=True)` is honoured and unaffected.)
+        if theta.get("reverse"):
+            raise ValueError(
+                "coords='polar' does not support reverse=True on the angular "
+                "axis; use theta_axis(direction='clockwise') to reverse the "
+                "direction of travel. See spec/design/polar-axes.md."
+            )
+        sector = theta.get("sector")
+        if sector is not None:
+            unit = theta.get("theta_unit") or "radians"
+            turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+            if sector[1] - sector[0] > turn:
+                raise ValueError(
+                    f"x axis sector sweep must not exceed one full turn ({turn:g} {unit})"
+                )
+        radial = self.axis_options.get("y", {})
+        r_origin = radial.get("r_origin")
+        if r_origin is not None:
+            # The first resolved limit is the centre-side ring and the second
+            # is the outer ring.  On an ordinary radial axis that means the
+            # origin lies at/below r_lo; reversing the axis reverses that
+            # inequality too.  Sorting here accepted an origin on the wrong
+            # side of a reversed view, which then normalized every visible
+            # radius beyond 1 and culled the entire plot.
+            r_inner, r_outer = self._range("y")
+            if radial.get("type") == "log" and r_origin <= 0:
+                raise ValueError("y log axis r_origin must be positive")
+            if r_inner < r_outer:
+                if not r_origin < r_outer:
+                    raise ValueError(
+                        "y axis r_origin must be less than the resolved radial maximum"
+                    )
+                if r_origin > r_inner:
+                    raise ValueError("y axis r_origin must not exceed the resolved radial minimum")
+            else:
+                if not r_origin > r_outer:
+                    raise ValueError(
+                        "y axis r_origin must be greater than the resolved radial minimum"
+                    )
+                if r_origin < r_inner:
+                    raise ValueError(
+                        "y axis r_origin must not be less than the resolved radial maximum"
+                    )
+        for t in self.traces:
+            # heatmap/contour are exempt because a cell grid legitimately
+            # carries more cells than the *point* ceiling. Narrowing the gate
+            # to that end un-capped bar/column/errorbar as collateral, and a
+            # polar bar is the most expensive mark there is — 2*(96+1) verts
+            # per wedge against a cartesian quad's 4 — so a million of them
+            # built without a word. Name every capped kind explicitly.
+            if (
+                t.kind in {"line", "scatter", "area", "bar", "column", "errorbar"}
+                and t.n_points > POLAR_DIRECT_CEILING
+            ):
+                # Polar has no decimation or density tier to fall back to
+                # (polar-axes.md §7), so past the cap the only honest options
+                # are refusing or an unbounded direct draw. Refuse, and say
+                # which trace and why.
+                raise ValueError(
+                    f"polar {t.kind} trace has {t.n_points:,} points, over the "
+                    f"{POLAR_DIRECT_CEILING:,}-point polar ceiling: polar traces "
+                    "always draw every point (no decimation/density tier yet — "
+                    "spec/design/polar-axes.md §7). Reduce the data or bin it "
+                    "before charting."
+                )
+
+    def _zoom_enabled(self) -> bool:
+        """The resolved `zoom` capability.
+
+        `zoom` is the one interaction switch whose default depends on the
+        coordinate system: polar resolves it to False (polar-axes.md §8 — the
+        centre is a fixed point, so zooming a constant-rim composition crops it
+        instead of navigating it), Cartesian to True. Every consumer of the
+        resolved value goes through here, so validation and the payload cannot
+        disagree about it — they did, and `default_drag_action='zoom'` on a
+        polar chart passed construction only to ship the self-contradicting
+        `{"zoom": false, "default_drag_action": "zoom"}`.
+        """
+        value = self.interaction.get("zoom")
+        if value is None:
+            return self.coords != "polar"
+        return value is not False
+
     def _validate_interaction(self) -> None:
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
             if name in self.interaction:
@@ -649,8 +1062,31 @@ class Figure(AnnotationsMixin, PayloadMixin):
         action = self._default_drag_action(action)
         if action in {"auto", "none"}:
             return
+        if self.coords == "polar":
+            # A disc has no drag tools at all (polar-axes.md §8), which is why
+            # polar's resolved drag mode is `none`: the client returns [] for
+            # `pan_axes` and forces `box_zoom`/`select`/`brush` off under polar,
+            # whatever the flags say. So every action but `auto`/`none` is
+            # accepted-and-inert — the plausible-but-wrong outcome §28 refuses
+            # everywhere else in this validator. Radial zoom is unaffected: it is
+            # a wheel/button gesture, not a drag.
+            raise ValueError(
+                f"coords='polar' does not support default_drag_action={action!r}; a "
+                "disc has no drag tools (theta pan, box zoom, and rectangular/lasso "
+                "selection all lack polar geometry), so only 'auto' and 'none' are "
+                "meaningful. Radial zoom is a separate wheel/button capability, "
+                "controlled by the `zoom` switch rather than by a drag action. See "
+                "spec/design/polar-axes.md."
+            )
 
         def enabled(name: str) -> bool:
+            # `zoom` reads through the resolved predicate rather than the raw
+            # dict so this can never disagree with what `_interaction_spec`
+            # ships. The polar guard above means the two currently agree for
+            # every action that reaches here; keeping the indirection is what
+            # stops that from silently ceasing to be true.
+            if name == "zoom":
+                return self._zoom_enabled()
             return self.interaction.get(name, True) is not False
 
         if action == "pan" and not (enabled("navigation") and enabled("pan")):
@@ -965,8 +1401,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
             x1c = self.store.ingest(x1)
             y0c = self.store.ingest(y0)
             y1c = self.store.ingest(y1)
-            xc = self.store.ingest(x0c.values + (x1c.values - x0c.values) / 2.0)
-            yc = self.store.ingest(y1c.values)
+            # Conventional center/value columns follow the orientation: the
+            # pick readout (§16) reports the category-band center and the value
+            # end, so a horizontal bar must not read back its x midpoint (half
+            # the value) or its y1 edge (category position + half width).
+            if orientation == "horizontal":
+                xc = self.store.ingest(x1c.values)
+                yc = self.store.ingest(y0c.values + (y1c.values - y0c.values) / 2.0)
+            else:
+                xc = self.store.ingest(x0c.values + (x1c.values - x0c.values) / 2.0)
+                yc = self.store.ingest(y1c.values)
             style: dict[str, Any] = {"color": color, "opacity": opacity, "role": role}
             if orientation is not None:
                 style["orientation"] = orientation
@@ -1040,21 +1484,113 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if not positive_los:
                 raise ValueError(f"{axis_id} log axis requires at least one positive value")
             lo, hi = min(positive_los), max(positive_his)
-        if lo == hi:
+        if self.coords == "polar" and self._axis_dim(axis_id) == "x":
+            categories = self._axis_categories.get(axis_id)
+            if categories:
+                # Categorical theta keeps data in category-index coordinates;
+                # the renderer maps those indices evenly across the authored
+                # sector (or the default full turn). Returning angular units
+                # here made category 2 mean two radians and broke bar bands.
+                return (0.0, float(len(categories) - 1))
+            # Numeric theta is used directly as an angle, never rescaled into
+            # the axis range. The independent `sector` field governs partial
+            # layout/clipping; this range remains the full-turn tick domain.
+            unit = self.axis_options.get(axis_id, {}).get("theta_unit") or "radians"
+            return (0.0, 360.0) if unit == "degrees" else (0.0, 2.0 * math.pi)
+        configured_margin = opts.get("margin")
+        if lo == hi and configured_margin is None:
+            if (
+                self.coords == "polar"
+                and self._axis_dim(axis_id) == "y"
+                and scale != "log"
+                # Zero is the Unix epoch on a time axis, not a centre, so
+                # pinning there spanned the disc from 1970 to the datum and
+                # parked its ring on the rim. Time takes the ordinary pad.
+                and self._axis_kind(axis_id) != "time"
+            ):
+                # Constant-radius data must not bypass the centre-origin
+                # default below: padding a singleton r=5 to [4.75, 5.25] draws
+                # a unit circle as a ring floating mid-disc, exactly the
+                # picture the polar branch exists to forbid. Same rule as the
+                # non-singleton branch: centre origin, no outer pad.
+                lo_out = min(0.0, lo)
+                hi_out = hi if hi > lo_out else lo_out + 1.0
+                return (hi_out, lo_out) if opts.get("reverse") else (lo_out, hi_out)
             pad = abs(lo) * 0.05 or 0.5
             lo, hi = lo - pad, hi + pad
             if scale == "log" and lo <= 0:
                 lo = hi / 10.0
             return (hi, lo) if opts.get("reverse") else (lo, hi)
-        pad = (hi - lo) * 0.03
+        if lo == hi:
+            # Match pyplot's singleton extent: an explicit margin is applied
+            # to a stable unit interval instead of being silently replaced by
+            # the core's legacy 5% nonsingular fallback.
+            hi = lo + 1.0
+        margin = 0.03 if configured_margin is None else configured_margin
+        if scale == "log" and configured_margin is not None:
+            transformed_lo, transformed_hi = np.log10((lo, hi))
+            pad = (transformed_hi - transformed_lo) * margin
+            # A wide domain can drive the padded exponent past the smallest
+            # representable double, leaving a log axis with a non-positive
+            # lower bound. Floor it the same way the default-margin branch
+            # does, without the ``lo / 10.0`` clamp that would override an
+            # authored margin.
+            out_lo = max(10.0 ** (transformed_lo - pad), np.nextafter(0.0, 1.0))
+            out_hi = 10.0 ** (transformed_hi + pad)
+        else:
+            pad = (hi - lo) * margin
+            out_lo = lo - pad
+            out_hi = hi + pad
+        if self.coords == "polar" and self._axis_dim(axis_id) == "y":
+            # The radial axis starts at the centre unless asked otherwise
+            # (matplotlib's default rmin=0). A radial axis padded away from
+            # zero is actively misleading: it puts the smallest datum at the
+            # centre, so a 5%-variation series reads as radiating from nothing.
+            # An explicit domain/bounds still wins — it short-circuits above.
+            # Log radius has no zero and already resolved its positive extent
+            # above. Linear/symlog keep the established centre-origin default.
+            # `min(0.0, lo)` collapsed to `lo` once the data went negative,
+            # which threw the pad away and produced the very picture this
+            # branch forbids: four readings within 0.7% of each other resolved
+            # to [-100.8, -100.1] and drew as a full-disc star. Centre origin
+            # is only meaningful when zero is an end of the range — below zero
+            # it is vacuous, so keep the ordinary padded extent there.
+            # A TIME radius is the exception: its zero is 1 January 1970, so a
+            # centre origin puts every modern instant in a hairline ring at the
+            # rim (twelve consecutive days out of ~1.7e12 ms resolved to a band
+            # 0.0006% of the radius wide) and the axis reads as a solid disc
+            # edge. Zero is not a meaningful radial origin for an instant, so a
+            # time radius keeps the ordinary padded extent — the same reasoning
+            # that already exempts a negative floor below.
+            if self._axis_kind(axis_id) == "time":
+                return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
+            if self._axis_kind(axis_id) == "time":
+                # Zero is the Unix epoch, not a centre. Pinning a time radius
+                # there spanned the disc from 1970 to the data and parked every
+                # ring at the rim; a singleton instant was the worst case. Time
+                # keeps the ordinary padded window, like the cartesian axis.
+                return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
+            if scale == "log":
+                out_lo = lo
+            elif lo >= 0.0:
+                out_lo = 0.0
+            # else: keep the padded out_lo computed above.
+            # No outer pad when the centre is the origin: the outermost ring
+            # should be the data max, matching how matplotlib and Plotly frame
+            # a polar plot. A negative floor keeps its pad on both sides so the
+            # range stays symmetric about the data. An explicit `margin` is an
+            # authored request for that pad, and dropping it was the third way
+            # the polar radial axis accepted a keyword and ignored it: keep the
+            # padded outer ring whenever one was asked for.
+            if (lo >= 0.0 or scale == "log") and configured_margin is None:
+                out_hi = hi
+            return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
         anchor = self._zero_baseline_anchor(axis_id)
-        out_lo = lo - pad
-        out_hi = hi + pad
         if anchor == "lo" and lo == 0.0 and hi > 0.0:
             out_lo = 0.0
         elif anchor == "hi" and hi == 0.0 and lo < 0.0:
             out_hi = 0.0
-        if scale == "log":
+        if scale == "log" and configured_margin is None:
             out_lo = max(out_lo, lo / 10.0, np.nextafter(0.0, 1.0))
         return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
 
@@ -1067,6 +1603,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """
         axis = self._axis_dim(axis_id)
         for t in self.traces:
+            # Only rectangle families have a sticky zero edge. Segment-based
+            # marks such as stem/errorbar also carry x0/x1/y0/y1 columns, but
+            # Matplotlib pads their baseline like ordinary line data.
+            if t.kind not in {"bar", "column", "histogram"}:
+                continue
             if axis == "x" and t.x_axis != axis_id:
                 continue
             if axis == "y" and t.y_axis != axis_id:
@@ -1075,16 +1616,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 continue
             base = t.x0.values if axis == "x" else t.y0.values
             value = t.x1.values if axis == "x" else t.y1.values
+            # Ask the questions as masked predicates rather than compacting
+            # `base`/`value` down to their finite rows first: the compaction
+            # allocates and copies two full columns per axis per build, and
+            # every question here is a single "does any row violate this?".
             finite = np.isfinite(base) & np.isfinite(value)
-            if not np.any(finite):
+            if not finite.any():
                 continue
-            base = base[finite]
-            value = value[finite]
-            if not np.all(base == 0.0):
+            if (finite & (base != 0.0)).any():
                 continue
-            if np.all(value >= 0.0):
+            if not (finite & (value < 0.0)).any():
                 return "lo"
-            if np.all(value <= 0.0):
+            if not (finite & (value > 0.0)).any():
                 return "hi"
         return None
 
@@ -1167,6 +1710,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "range": list(range_),
             "side": opts.get("side", "bottom" if axis == "x" else "left"),
         }
+        if opts.get("tick_sides") is not None:
+            spec["tick_sides"] = list(opts["tick_sides"])
+        if opts.get("tick_label_sides") is not None:
+            spec["tick_label_sides"] = list(opts["tick_label_sides"])
         if label_position is not None:
             spec["label_position"] = label_position
         if label_offset is not None:
@@ -1177,6 +1724,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["tick_count"] = tick_count
         if opts.get("tick_values") is not None:
             spec["tick_values"] = list(opts["tick_values"])
+        if opts.get("minor_tick_values") is not None:
+            spec["minor_tick_values"] = list(opts["minor_tick_values"])
         if opts.get("tick_labels") is not None:
             spec["tick_labels"] = list(opts["tick_labels"])
         if tick_label_angle is not None:
@@ -1192,6 +1741,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["scale"] = scale
         if scale == "symlog":
             spec["constant"] = opts.get("constant") or 1.0
+        if scale == "log" and opts.get("nonpositive") is not None:
+            spec["nonpositive"] = opts["nonpositive"]
         if opts.get("reverse"):
             spec["reverse"] = True
         if opts.get("domain") is not None:
@@ -1203,6 +1754,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             bounds = self._range(axis_id, use_domain=False)
         if bounds is not None:
             spec["bounds"] = sorted(bounds)
+        if opts.get("minor_style"):
+            spec["minor_style"] = dict(opts["minor_style"])
         if opts.get("format") is not None:
             spec["format"] = opts["format"]
         style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")
@@ -1210,6 +1763,24 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["style"] = style
         if kind == "category":
             spec["categories"] = list(self._axis_categories.get(axis_id, []))
+        if self.coords == "polar" and self._axis_dim(axis_id) == "x":
+            # Angular configuration rides the x (theta) axis. Defaults are
+            # spelled out rather than omitted so the client and both exporters
+            # read one resolved value instead of each re-deriving a fallback.
+            unit = opts.get("theta_unit") or "radians"
+            spec["theta_unit"] = unit
+            spec["theta_zero"] = "E" if opts.get("theta_zero") is None else opts["theta_zero"]
+            spec["theta_direction"] = opts.get("theta_direction") or "counterclockwise"
+            turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+            spec["sector"] = list(opts.get("sector") or (0.0, turn))
+            spec["grid_shape"] = opts.get("grid_shape") or "circular"
+        if self.coords == "polar" and self._axis_dim(axis_id) == "y":
+            # `hole` is always resolved on the wire. `r_origin` stays optional:
+            # when absent, renderers use the current visible r_lo, so radial
+            # zoom keeps the ordinary centre origin without a spec rewrite.
+            spec["hole"] = opts.get("hole") or 0.0
+            if opts.get("r_origin") is not None:
+                spec["r_origin"] = opts["r_origin"]
         return spec
 
     def _range_columns(self, t: Trace, axis_id: str) -> list[Column]:
@@ -1228,6 +1799,21 @@ class Figure(AnnotationsMixin, PayloadMixin):
             and t.y1 is not None
         ):
             return [t.x0, t.x1, t.x] if axis == "x" else [t.y0, t.y1, t.y]
+        if t.kind == "ribbon":
+            # x is just the two faces; y needs all four span edges, two of
+            # which ride in the `x`/`y` slots (ribbon geometry contract).
+            if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+                raise ValueError("ribbon trace missing geometry columns")
+            return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
+        if t.kind == "funnel":
+            # The generic x/y slots carry the trailing CROSS edges (funnel
+            # geometry contract), so they range on the cross axis — x for a
+            # vertical funnel, y for a horizontal one.
+            if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+                raise ValueError("funnel trace missing geometry columns")
+            if str(t.style.get("orientation", "vertical")) == "vertical":
+                return [t.x0, t.x1, t.x, t.y] if axis == "x" else [t.y0, t.y1]
+            return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
         return [t.x if axis == "x" else t.y]
@@ -1255,6 +1841,25 @@ class Figure(AnnotationsMixin, PayloadMixin):
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
+        if "zoom" not in self.interaction and not self._zoom_enabled():
+            # Polar zoom is OFF by default (polar-axes.md §8). The centre is a
+            # fixed point of the transform and r_lo is pinned, so zooming in
+            # only crops the rim while the geometry stays welded to the middle
+            # of the disc — on a pie, radial bar, or radar, whose radius is a
+            # constant rim or a fixed frame, that reads as broken rather than as
+            # navigation. A composition whose RADIUS is a measured quantity
+            # (`wind_rose`, where it is a frequency count) opts back in by
+            # shipping `zoom=True`, as does any author via
+            # `xy.interaction_config(zoom=True)`; an ordinary `polar_chart` whose
+            # radius IS data is expected to do the same.
+            #
+            # Resolved HERE and shipped explicitly, against §5.2's "unspecified
+            # keys stay absent" rule, for two reasons: the client cannot make
+            # this decision (`Chart.kind` never reaches the wire — every polar
+            # figure looks identical to it), and §28 requires the choice to be
+            # on the wire rather than re-derived per renderer. The predicate is
+            # `_zoom_enabled` so validation resolves the same default this ships.
+            spec["zoom"] = False
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
             if name in self.interaction:
                 spec[name] = self._axis_policy(self.interaction[name], name)
@@ -1285,12 +1890,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
         Contract: this is the *complete* set of class strings that can reach
         the DOM — the chart root (``class_name``), the chrome slots
-        (``class_names`` values), per-trace mark styles
-        (``trace.style["class_name"]``), and annotation nodes
-        (``annotation["class_name"]``). The Reflex adapter joins it into the
-        Tailwind scan manifest for static charts (XYBF payloads are opaque to
-        Tailwind's source scan), so this method must be extended whenever a
-        new class-carrying surface is added to the figure.
+        (``class_names`` values, including component-local classes merged into
+        those slots), and annotation labels (``annotation["class_name"]`` when
+        the annotation has text).
+        Per-trace mark ``class_name`` values are adapter-only metadata for
+        canvas geometry and do not create DOM nodes. The Reflex adapter joins
+        this inventory into the Tailwind scan manifest for static charts (XYBF
+        payloads are opaque to Tailwind's source scan), so this method must be
+        extended whenever a new DOM class-carrying surface is added.
         """
         class_strings: list[str] = []
         seen: set[str] = set()
@@ -1303,10 +1910,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         add(self.class_name)
         for value in self.class_names.values():
             add(value)
-        for trace in self.traces:
-            add(trace.style.get("class_name"))
         for annotation in self.annotations:
-            add(annotation.get("class_name"))
+            if annotation.get("text"):
+                add(annotation.get("class_name"))
         return class_strings
 
     def _dom_spec(self) -> dict[str, Any]:
@@ -1409,6 +2015,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         f32 upload offsets so precision holds at deep zoom."""
         return interaction.decimate_view(self, x0, x1, px_width)
 
+    def legend_toggle(self, trace_id: int, hidden: bool, category: Optional[int] = None) -> None:
+        """Record a legend visibility toggle: whole trace, or one categorical
+        code. Selections, decimation, and density re-bins honor it (§34)."""
+        interaction.legend_toggle(self, trace_id, hidden, category)
+
     def append(
         self,
         trace_id: int,
@@ -1422,7 +2033,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         alpha: Any = None,
         stroke_width: Any = None,
         symbol: Any = None,
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[memoryview]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay
@@ -1628,13 +2239,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
             self._widget = FigureWidget(self)
         return self._widget
 
-    def show(self) -> Any:
-        return self.widget()
+    def show(self, display: Optional[str] = None) -> Any:
+        """The live widget, or a standalone-HTML view when the html display
+        host is selected (reflex-shaped-api.md §3.3: "auto" falls back to
+        html only on WASM kernels, whose prebuilt frontends cannot load the
+        anywidget extension)."""
+        if export.notebook_display_mode(display) == "widget":
+            return self.widget()
+        return export.HtmlView(self._repr_html_())
 
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]
 
-        display(self.widget())
+        if export.notebook_display_mode() == "widget":
+            display(self.widget())
+        else:
+            display({"text/html": self._repr_html_()}, raw=True)
 
     def to_html(
         self,
@@ -1836,8 +2456,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
         n_total = sum(t.n_points for t in self.traces) or 1
         report["transport_bytes_per_point"] = len(blob) / n_total
         report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
+        report["bin_color_bytes"] = interaction.bin_color_cache_bytes(self)
+        report["legend_vis_cache_bytes"] = interaction.legend_vis_cache_bytes(self)
+        # Capacity, not live length: a streamed column's growth-buffer slack is
+        # resident RAM (§27), and equals `canonical_bytes` when nothing appended.
         report["resident_array_bytes"] = (
-            report["canonical_bytes"] + report["channel_bytes"] + report["pyramid_bytes"]
+            report["canonical_capacity_bytes"]
+            + report["channel_bytes"]
+            + report["pyramid_bytes"]
+            + report["bin_color_bytes"]
+            + report["legend_vis_cache_bytes"]
         )
         report["backend"] = kernels.BACKEND
         return report

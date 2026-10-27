@@ -13,6 +13,7 @@ import os
 import re as _re
 import shutil
 import subprocess
+import sys
 import tempfile
 import warnings
 from contextlib import suppress
@@ -22,6 +23,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, SupportsFloat, SupportsIndex, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from ._figure import Figure
 
 
@@ -86,6 +89,10 @@ _STANDALONE_CSP = (
     "script-src 'unsafe-inline'; "
     "style-src 'unsafe-inline'; "
     "img-src data:; "
+    # data: only — `custom_css` may embed a brand face as a data-URL
+    # `@font-face` (the documented portable-font recipe); no network origin
+    # is reachable, so a standalone file stays self-contained offline.
+    "font-src data:; "
     "connect-src 'none'; "
     # blob: only — the density re-bin worker boots from a Blob URL of its own
     # bundled source; no external worker script can ever load.
@@ -165,6 +172,21 @@ def _javascript_for_inline_script(source: str) -> str:
     return source.replace("</", "<\\/")
 
 
+def _iter_base64_chunks(blob: bytes) -> "Iterator[str]":
+    """`_base64_chunks` as a generator, for callers that consume chunks once.
+
+    The encoded text is 4/3 of the payload, so materializing the list *and* the
+    string built from it doubles that; yielding lets each chunk be wrapped and
+    released as it is produced.
+    """
+    if not blob:
+        return
+    view = memoryview(blob)
+    step = _B64_CHUNK_BYTES
+    for i in range(0, len(view), step):
+        yield base64.b64encode(view[i : i + step]).decode("ascii")
+
+
 def _base64_chunks(blob: bytes) -> list[str]:
     """Base64 the payload as 3-byte-aligned chunks (see `_B64_CHUNK_BYTES`).
 
@@ -172,11 +194,7 @@ def _base64_chunks(blob: bytes) -> list[str]:
     interior `=` padding and decodes to an exact byte length — letting the client
     reassemble one contiguous buffer without tracking base64 boundaries. A
     memoryview avoids copying the (potentially huge) blob per slice."""
-    if not blob:
-        return []
-    view = memoryview(blob)
-    step = _B64_CHUNK_BYTES
-    return [base64.b64encode(view[i : i + step]).decode("ascii") for i in range(0, len(view), step)]
+    return list(_iter_base64_chunks(blob))
 
 
 # Inline decoder for the chunked base64 payload. Prefers the native Uint8Array
@@ -342,6 +360,10 @@ def to_html(
     compression required. Needs a 2023+ browser; unsupported browsers get a
     plain-text notice instead of a chart."""
     compress = _bool_option(compress, "to_html compress")
+    if not compress:
+        return _to_html_plain(
+            fig, path, custom_css=custom_css, animation_progress=animation_progress
+        )
     spec, blob = fig.build_payload()
     if animation_progress is not None:
         progress = float(animation_progress)
@@ -421,6 +443,103 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 _NOTEBOOK_DIMENSION_RE = _re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:px|%|vw|vh|rem|em)?$")
 
 
+def _to_html_plain(
+    fig: "Figure",
+    path: Optional[str | PathLike[str]] = None,
+    *,
+    custom_css: Optional[str] = None,
+    animation_progress: Optional[float] = None,
+) -> str:
+    """Render `fig` to a standalone interactive HTML string (optionally saved).
+
+    User strings (title, names, labels) ride inside <script>/<title> blocks:
+    HTML-sensitive JSON characters are escaped so user text cannot alter the
+    script parse state, and the <title> text is entity-escaped.
+
+    `custom_css` injects an author stylesheet into the document <head> so the
+    utility classes referenced by `class_names` (e.g. Tailwind) resolve in the
+    standalone export; it must not contain a `</style>` breakout sequence."""
+    spec, blob = fig.build_payload()
+    if animation_progress is not None:
+        progress = float(animation_progress)
+        if not math.isfinite(progress) or not 0.0 <= progress <= 1.0:
+            raise ValueError("animation progress must be between 0 and 1")
+        spec["animation_capture_progress"] = progress
+    if len(blob) > EMBED_WARN_BYTES:
+        import warnings
+
+        warnings.warn(
+            f"embedding {len(blob) / 2**20:.0f} MB of data (+33% as base64) "
+            "into HTML; consider the aggregated embed once Tier 2 lands.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    spec_js = _json_for_inline_script(spec)
+    client_js = _javascript_for_inline_script(_bundled_js("standalone"))
+    title_html = _html.escape(fig.title or "xy")
+    # One <script> block PER chunk: a script element's source is itself a V8
+    # string, so folding every chunk into one block would rebuild the very
+    # ~512 MB single-string ceiling the chunking removed. Per-block sources
+    # stay at ~64 MB regardless of payload size. Chunk text is standard base64
+    # (`[A-Za-z0-9+/=]`) — it can hold no `"`, `\`, newline, or `<`, so it is a
+    # valid JS string literal verbatim and can never close the <script>. Quote
+    # it directly rather than via `json.dumps`, whose full-string escape scan
+    # dominated small-chart export cost.
+    # Assembled as parts joined once. Every large string — the client bundle, the
+    # spec, each base64 chunk — is its own part, so the join copies it exactly
+    # once and nothing is formatted into an intermediate first. Interpolating one
+    # of them costs a second full copy of it: folding the chunks through
+    # `"\n".join(...)` duplicated 4/3 of the payload, and (measured on
+    # `test_html_export_line`, where the ~330 KB client bundle *is* the document)
+    # interpolating `client_js` into a header part cost ~10% of a small export.
+    blob_len = len(blob)
+    parts = [
+        f"""<!doctype html>
+<html>
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{_STANDALONE_CSP}">
+<title>{title_html}</title>
+<style>
+html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
+#chart{{width:100%;}}
+</style>
+{_custom_css_block(custom_css)}</head>
+<body>
+<div id="chart"></div>
+<script>""",
+        client_js,
+        """</script>
+<script>var __xyChunks = [];</script>
+""",
+    ]
+    for index, chunk in enumerate(_iter_base64_chunks(blob)):
+        # The newline goes *between* blocks, exactly as the previous `"\n".join`
+        # did, so a payload-free document keeps its byte layout too.
+        parts.append('\n<script>__xyChunks.push("' if index else '<script>__xyChunks.push("')
+        parts.append(chunk)
+        parts.append('");</script>')
+    del blob
+    parts.append("\n<script>\n  ")
+    parts.append(_DECODE_B64_JS)
+    parts.append("\n  const spec = ")
+    parts.append(spec_js)
+    parts.append(f""";
+  const buf = xyDecodeB64(__xyChunks, {blob_len});
+  __xyChunks.length = 0;
+  xy.renderStandalone(document.getElementById("chart"), spec, buf);
+</script>
+</body>
+</html>""")
+    doc = "".join(parts)
+    del parts
+    if path is not None:
+        _atomic_write_text(path, doc)
+    return doc
+
+
+_NOTEBOOK_DIMENSION_RE = _re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:px|%|vw|vh|rem|em)?$")
+
+
 def _notebook_dimension(value: object, fallback: int) -> tuple[str, bool]:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return f"{max(1, int(value))}px", True
@@ -454,6 +573,62 @@ def notebook_iframe(doc: str, *, width: object, height: object) -> str:
         'border:0;background:transparent" '
         f'srcdoc="{source}"></iframe>'
     )
+
+
+# Notebook display-host resolution (reflex-shaped-api.md §3.3). The widget
+# host needs the anywidget frontend extension; a WASM-kernel deployment with a
+# prebuilt frontend (JupyterLite's `%pip`, e.g. try-jupyter) installs only the
+# kernel-side package, so the comm opens against a frontend that cannot answer
+# it. The kernel cannot observe the frontend registry, so "auto" resolves from
+# the runtime instead: an Emscripten kernel defaults to the standalone HTML
+# host, everything else to the widget. Marimo bundles its own anywidget
+# frontend even in its WASM build, so it keeps the widget host under "auto".
+_NOTEBOOK_DISPLAY_ENV = "XY_NOTEBOOK_DISPLAY"
+_NOTEBOOK_DISPLAY_MODES = ("auto", "widget", "html")
+
+
+class HtmlView:
+    """A displayable handle over the standalone-HTML notebook host.
+
+    Returned by ``show(display="html")`` so the isolated iframe renders through
+    the ordinary rich-repr path with no widget comm; ``str()`` yields the
+    fragment for direct embedding.
+    """
+
+    def __init__(self, html: str) -> None:
+        self._html = html
+
+    def _repr_html_(self) -> str:
+        return self._html
+
+    def __str__(self) -> str:
+        return self._html
+
+    def __repr__(self) -> str:
+        return f"<xy.export.HtmlView ({len(self._html)} chars; rich display renders it)>"
+
+
+def notebook_display_mode(display: Optional[str] = None) -> str:
+    """Resolve the notebook display host: ``"widget"`` or ``"html"``.
+
+    Precedence: the explicit ``display=`` argument, then the
+    ``XY_NOTEBOOK_DISPLAY`` environment variable, then ``"auto"`` — which
+    picks the standalone HTML host on Emscripten/WASM kernels (JupyterLite,
+    Pyodide; their prebuilt frontends cannot gain the anywidget extension at
+    runtime) and the live widget host everywhere else.
+    """
+    if display is not None:
+        mode, source = display, "display"
+    else:
+        mode, source = os.environ.get(_NOTEBOOK_DISPLAY_ENV) or "auto", _NOTEBOOK_DISPLAY_ENV
+    if not isinstance(mode, str) or mode.strip().lower() not in _NOTEBOOK_DISPLAY_MODES:
+        raise ValueError(f'{source} must be one of "auto", "widget", or "html"; got {mode!r}')
+    mode = mode.strip().lower()
+    if mode != "auto":
+        return mode
+    if sys.platform == "emscripten" and "marimo" not in sys.modules:
+        return "html"
+    return "widget"
 
 
 def _installed_browser(candidate: object) -> Optional[str]:
@@ -964,15 +1139,33 @@ def _export_dimensions(
     return w, h
 
 
+#: Pixels per band of the alpha flatten. The composite is elementwise, so the
+#: band size cannot change a byte; it bounds the six uint16 full-frame
+#: temporaries the one-shot form held (117 MB on a 3200x2400 export).
+_FLATTEN_PIXEL_CHUNK = 1 << 18
+
+
 def _flatten_alpha(rgba: "Any") -> "Any":
-    """Composite leftover alpha over white — the JPEG determinism backstop."""
+    """Composite leftover alpha over white — the JPEG determinism backstop.
+
+    Returns `(h, w, 3)`: both callers hand the result straight to the JPEG
+    encoder, which ignores alpha, so a fourth opaque plane is a quarter of a
+    frame carried for nothing. Composited in row bands — `rgb * a + 255 *
+    (255 - a) + 127` peaks at 65152 for any 8-bit input, so the uint16
+    intermediates are exact, and banding an elementwise expression is
+    bit-identical.
+    """
     import numpy as np
 
-    alpha = rgba[..., 3:4].astype(np.uint16)
-    rgb = (rgba[..., :3].astype(np.uint16) * alpha + 255 * (255 - alpha) + 127) // 255
-    out = np.empty_like(rgba)
-    out[..., :3] = rgb.astype(np.uint8)
-    out[..., 3] = 255
+    h, w = rgba.shape[0], rgba.shape[1]
+    out = np.empty((h, w, 3), dtype=np.uint8)
+    band = max(1, _FLATTEN_PIXEL_CHUNK // max(w, 1))
+    for r0 in range(0, h, band):
+        r1 = min(r0 + band, h)
+        chunk = rgba[r0:r1]
+        alpha = chunk[..., 3:4].astype(np.uint16)
+        rgb = (chunk[..., :3].astype(np.uint16) * alpha + 255 * (255 - alpha) + 127) // 255
+        out[r0:r1] = rgb.astype(np.uint8)
     return out
 
 

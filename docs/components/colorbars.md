@@ -193,14 +193,26 @@ itself; standalone HTML, SVG, and PNG ignore the opaque replacement.
 
 ## Styling slots
 
-The chart slots `colorbar`, `colorbar_bar`, `colorbar_tick`, and
-`colorbar_title` target built-in browser chrome:
+Seven chart slots target every visible part of built-in browser colorbar
+chrome: `colorbar`, `colorbar_bar`, `colorbar_tick`, `colorbar_title`,
+`colorbar_extension`, `colorbar_line`, and `colorbar_minor_tick`.
+
+The declarative `xy.colorbar()` API creates the container, gradient bar, major
+ticks, and title shown below. The Matplotlib-shaped `xy.pyplot` colorbar API can
+add contour-line and minor-tick nodes. It creates separate
+`colorbar_extension` triangles only for an extended, line-only contour
+colorbar; filled-contour extensions are painted as part of `colorbar_bar`
+instead. These remain stable CSS/Tailwind targets whenever their nodes are
+present, but listing their classes on a plain declarative colorbar would not
+create them.
 
 ~~~python
 chart = xy.scatter_chart(
     xy.scatter([1, 2, 3], [3, 5, 4], color=[0.2, 0.8, 1.4]),
     xy.colorbar(title="Intensity"),
-    class_names={"colorbar_title": "font-semibold"},
+    class_names={
+        "colorbar_title": "font-semibold",
+    },
     styles={
         "colorbar_bar": {"border_radius": 4},
         "colorbar_tick": {"font_size": 10},

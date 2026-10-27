@@ -36,6 +36,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
+import numpy as np
+
 from ._figure import Selection
 from ._framing import (
     DEFAULT_FRAME_LIMITS,
@@ -146,12 +148,21 @@ def _selection_reply(
         ids_remaining = SELECTION_EVENT_ID_LIMIT
         ids_truncated = False
         for tid in sorted(selected):
-            canonical = sorted(int(value) for value in selected[tid])
-            kept = canonical[:ids_remaining]
+            # Cap before boxing. The event ships at most SELECTION_EVENT_ID_LIMIT
+            # ids, but sorting a generator of `int(value)` first materialized a
+            # Python int per *selected* row — ~40 bytes each, so a 5M-row lasso
+            # built ~200 MB of PyLongs to keep 10k of them. `argpartition` puts
+            # the smallest `ids_remaining` at the front for the price of one
+            # index array, and only the survivors are boxed.
+            arr = np.asarray(selected[tid])
+            if arr.size > ids_remaining:
+                head = arr[np.argpartition(arr, ids_remaining)[:ids_remaining]]
+                ids_truncated = True
+            else:
+                head = arr
+            kept = np.sort(head).tolist()
             canonical_row_ids.append({"trace": int(tid), "ids": kept})
             ids_remaining -= len(kept)
-            if len(kept) < len(canonical):
-                ids_truncated = True
             if ids_remaining == 0:
                 ids_truncated = ids_truncated or any(
                     len(selected[other_tid]) for other_tid in sorted(selected) if other_tid > tid
@@ -242,6 +253,23 @@ def handle_message(
             return None
         if update["traces"]:
             return {"type": "density_update", "seq": seq, **update}, out
+        return None
+    if kind == "legend_toggle":
+        # Legend visibility toggle (§34 predicate; interaction spec §10).
+        # Fire-and-forget state sync: no reply — the client hides locally and,
+        # for masked density tiers, re-requests through the normal
+        # density_view path, which now honors the recorded predicate.
+        try:
+            hidden = content["hidden"]
+            if not isinstance(hidden, bool):
+                return None
+            fig.legend_toggle(
+                content["trace"],
+                hidden,
+                content.get("category"),
+            )
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
         return None
     if kind == "pick":
         # Hover/click drill: exact f64 row from canonical (§16/§17). The

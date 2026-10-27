@@ -142,6 +142,11 @@ beneath a line to show confidence or forecast ranges.
 Use `errorbar` for uncertainty attached to individual observations. It supports
 x or y uncertainty and symmetric or asymmetric values.
 
+`errorbar` is also supported inside
+[`xy.polar_chart()`](/docs/xy/charts/polar-chart/#combine-a-sector-hole-and-error-bars),
+where `xerr` is angular uncertainty and `yerr` is radial uncertainty.
+`error_band` remains Cartesian-only.
+
 ## Variants
 
 Use symmetric or asymmetric error arrays on either axis. Layer a translucent

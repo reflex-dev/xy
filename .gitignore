@@ -1,5 +1,8 @@
 target/
-.venv/
+# No trailing slash: a worktree commonly symlinks .venv at a shared
+# interpreter, and `.venv/` matches directories only — the symlink was
+# committable (and got committed twice).
+.venv
 smoke/
 dist/
 __pycache__/

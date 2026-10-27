@@ -9,6 +9,13 @@ Two encoders share one zlib-based chunk writer:
   one byte per pixel instead of four shrinks native-PNG exports several-fold.
   Falls back to truecolor otherwise.
 
+Both stage the filtered scanlines in a single NumPy buffer and hand that buffer
+straight to zlib. The image is large (4 bytes per pixel, ×4 again at scale 2),
+so every avoided intermediate is a full frame of peak RSS: building the rows as
+one array instead of a list of per-row `bytes` drops two full copies (the row
+objects and their join), and compressing the buffer directly drops a third
+(`tobytes`).
+
 This balanced/indexed path stays pure Python/stdlib. The separate latency-first
 `xy.pyplot` path fuses rasterization with the Rust PNG encoder.
 """
@@ -17,48 +24,131 @@ from __future__ import annotations
 
 import struct
 import zlib
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 
 
+def _chunk_parts(tag: bytes, data: bytes) -> tuple[bytes, bytes, bytes, bytes]:
+    """A PNG chunk as join-ready parts, without ever copying `data`.
+
+    The IDAT payload is the whole compressed image, and the obvious spelling
+    copies it repeatedly: `tag + data` is one copy, building the chunk around
+    it is a second, and each `+` in the caller's document chain is another.
+    Returning parts lets one `b"".join` at the top produce the file with a
+    single copy. CRC is accumulated over the tag and then the data, which is
+    exactly `crc32(tag + data)` without materializing the concatenation.
+    """
+    crc = zlib.crc32(data, zlib.crc32(tag))
+    return struct.pack(">I", len(data)), tag, data, struct.pack(">I", crc)
+
+
 def _chunk(tag: bytes, data: bytes) -> bytes:
-    body = tag + data
-    return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+    return b"".join(_chunk_parts(tag, data))
+
+
+def with_metadata(data: bytes, metadata: Mapping[Any, Any]) -> bytes:
+    """Insert standards-compliant PNG text chunks before IEND."""
+    chunks = []
+    for raw_key, raw_value in metadata.items():
+        key = str(raw_key)
+        value = str(raw_value)
+        if "\x00" in value:
+            raise ValueError("PNG metadata values cannot contain null characters")
+        try:
+            encoded_key = key.encode("latin-1", "strict")
+        except UnicodeEncodeError:
+            encoded_key = b""
+        invalid_keyword = (
+            not encoded_key
+            or len(encoded_key) > 79
+            or encoded_key.startswith(b" ")
+            or encoded_key.endswith(b" ")
+            or b"  " in encoded_key
+            or any(byte < 32 or 127 <= byte <= 160 for byte in encoded_key)
+        )
+        if invalid_keyword:
+            raise ValueError(
+                "PNG metadata keys must be 1-79 printable Latin-1 characters "
+                "with single interior spaces"
+            )
+        try:
+            payload = encoded_key + b"\0" + value.encode("latin-1")
+            chunks.append(_chunk(b"tEXt", payload))
+        except UnicodeEncodeError:
+            payload = encoded_key + b"\0\0\0\0\0" + value.encode("utf-8")
+            chunks.append(_chunk(b"iTXt", payload))
+    marker = data.rfind(b"\x00\x00\x00\x00IEND")
+    if marker < 0:
+        raise ValueError("invalid PNG output")
+    return data[:marker] + b"".join(chunks) + data[marker:]
 
 
 _SIG = b"\x89PNG\r\n\x1a\n"
 _COMPRESSION_LEVEL = 6
+# Row-block length for the palette-index lookup. `np.unique(return_inverse=True)`
+# would hand back one intp per pixel (8 bytes/px — twice the image itself) only
+# to be narrowed to u8; searching the ≤256-entry palette per block writes the
+# final bytes in place with a bounded temporary instead.
+_INDEX_ROW_BLOCK = 64
+
+
+def _filtered_rows(h: int, stride: int) -> np.ndarray:
+    """An `(h, stride + 1)` scanline buffer with the per-row filter byte set to
+    0 (PNG filter type "None"), ready for the pixel columns to be filled."""
+    rows = np.empty((h, stride + 1), dtype=np.uint8)
+    rows[:, 0] = 0
+    return rows
 
 
 def png_truecolor(
-    w: int, h: int, rgba: bytes, *, compression_level: int = _COMPRESSION_LEVEL
+    w: int,
+    h: int,
+    rgba: bytes | bytearray | memoryview | np.ndarray,
+    *,
+    compression_level: int = _COMPRESSION_LEVEL,
 ) -> bytes:
-    """RGBA8 PNG (color type 6). `rgba` is row-major `w*h*4` bytes, top row first."""
+    """RGBA8 PNG (color type 6). `rgba` is row-major `w*h*4` bytes, top row
+    first.
+
+    Any buffer works and none is copied: `bytes`/`bytearray`/`memoryview`, or a
+    **C-contiguous** uint8 array (pass `np.ascontiguousarray` if that is not
+    guaranteed — a strided view would be read in memory order, not row order).
+    Only the first `w * h * 4` bytes are read.
+    """
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
     stride = w * 4
-    raw = b"".join(b"\x00" + rgba[y * stride : (y + 1) * stride] for y in range(h))
-    return (
-        _SIG
-        + _chunk(b"IHDR", ihdr)
-        + _chunk(b"IDAT", zlib.compress(raw, compression_level))
-        + _chunk(b"IEND", b"")
+    rows = _filtered_rows(h, stride)
+    rows[:, 1:] = np.frombuffer(rgba, dtype=np.uint8, count=h * stride).reshape(h, stride)
+    return b"".join(
+        (
+            _SIG,
+            *_chunk_parts(b"IHDR", ihdr),
+            *_chunk_parts(b"IDAT", zlib.compress(rows, compression_level)),
+            *_chunk_parts(b"IEND", b""),
+        )
     )
 
 
-def _png_indexed(w: int, h: int, idx: np.ndarray, palette: np.ndarray) -> bytes:
-    """Indexed PNG (color type 3). `idx` is `(h, w)` uint8 palette indices;
-    `palette` is `(n, 4)` uint8 RGBA. `tRNS` carries per-entry alpha."""
+def _png_indexed(w: int, h: int, rows: np.ndarray, palette: np.ndarray) -> bytes:
+    """Indexed PNG (color type 3). `rows` is the `(h, w + 1)` filtered scanline
+    buffer holding palette indices; `palette` is `(n, 4)` uint8 RGBA. `tRNS`
+    carries per-entry alpha."""
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 3, 0, 0, 0)
     plte = palette[:, :3].astype(np.uint8).tobytes()
     trns = palette[:, 3].astype(np.uint8).tobytes()
-    rows = np.concatenate(
-        [np.zeros((h, 1), dtype=np.uint8), idx.astype(np.uint8)], axis=1
-    )  # a 0 filter byte per scanline
-    out = _SIG + _chunk(b"IHDR", ihdr) + _chunk(b"PLTE", plte)
     # tRNS may omit trailing opaque (255) entries; keep it simple and always emit.
-    out += _chunk(b"tRNS", trns)
-    out += _chunk(b"IDAT", zlib.compress(rows.tobytes(), _COMPRESSION_LEVEL)) + _chunk(b"IEND", b"")
-    return out
+    return b"".join(
+        (
+            _SIG,
+            *_chunk_parts(b"IHDR", ihdr),
+            *_chunk_parts(b"PLTE", plte),
+            *_chunk_parts(b"tRNS", trns),
+            *_chunk_parts(b"IDAT", zlib.compress(rows, _COMPRESSION_LEVEL)),
+            *_chunk_parts(b"IEND", b""),
+        )
+    )
 
 
 def encode(img: np.ndarray) -> bytes:
@@ -77,10 +167,17 @@ def encode(img: np.ndarray) -> bytes:
         # image is too, so the truecolor result is identical either way.
         probe = keys[:: keys.size // 65_536]
         if np.unique(probe).size > 256:
-            return png_truecolor(w, h, np.ascontiguousarray(img).tobytes())
-    palette_keys, inverse = np.unique(keys, return_inverse=True)
+            return png_truecolor(w, h, flat)
+    palette_keys = np.unique(keys)
     if palette_keys.size <= 256:
         palette = palette_keys.view(np.uint8).reshape(-1, 4)
-        idx = inverse.astype(np.uint8).reshape(h, w)
-        return _png_indexed(w, h, idx, palette)
-    return png_truecolor(w, h, np.ascontiguousarray(img).tobytes())
+        # `searchsorted` over the sorted palette is exactly `np.unique`'s
+        # inverse for values that are present (all of them, by construction),
+        # written straight into the scanline buffer a row-block at a time.
+        rows = _filtered_rows(h, w)
+        keyed = keys.reshape(h, w)
+        for start in range(0, h, _INDEX_ROW_BLOCK):
+            end = start + _INDEX_ROW_BLOCK
+            rows[start:end, 1:] = np.searchsorted(palette_keys, keyed[start:end]).astype(np.uint8)
+        return _png_indexed(w, h, rows, palette)
+    return png_truecolor(w, h, flat)

@@ -6,6 +6,7 @@ data= column-name resolution, event-prop wiring, and box-select (§34)."""
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 from pathlib import Path
 
 import numpy as np
@@ -427,6 +428,7 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
             fields=["feature_a", "feature_b", "segment"],
             title="{segment}",
             format={"feature_a": ".2f"},
+            labels={"feature_a": "Feature A", "feature_b": "Feature B"},
             class_name="tooltip-node",
             style={"background-color": "black"},
         ),
@@ -467,6 +469,7 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
         "fields": ["feature_a", "feature_b", "segment"],
         "title": "{segment}",
         "format": {"feature_a": ".2f"},
+        "labels": {"feature_a": "Feature A", "feature_b": "Feature B"},
         "aliases": {
             "feature_a": "x",
             "feature_b": "y",
@@ -495,13 +498,14 @@ def test_theme_background_separates_figure_and_plot():
     assert style["--chart-bg"] == "#111111"
 
 
-def test_figure_dom_class_strings_covers_every_class_carrying_surface():
+def test_figure_dom_class_strings_covers_every_dom_class_carrying_surface():
     """`Figure.dom_class_strings()` is the Tailwind scan inventory (see its
-    docstring): chart root, chrome slots, per-mark styles, annotation nodes."""
+    docstring): chart root, merged chrome slots, and annotation labels."""
     chart = xy.chart(
         xy.line([0, 1], [1, 2], class_name="mark-node"),
-        xy.line([0, 1], [2, 3], class_name="mark-node"),  # dedupe, keep order
         xy.vline(0.5, text="release", class_name="annotation-node"),
+        xy.hline(1.5, text="target", class_name="annotation-node"),  # dedupe
+        xy.marker(0.25, 1.25, class_name="shape-only-annotation"),
         xy.legend(class_name="legend-node"),
         class_name="root-node",
         class_names={"title": "title-slot"},
@@ -509,8 +513,14 @@ def test_figure_dom_class_strings_covers_every_class_carrying_surface():
 
     class_strings = chart.figure().dom_class_strings()
 
-    for class_string in ("root-node", "title-slot", "legend-node", "mark-node", "annotation-node"):
+    for class_string in ("root-node", "title-slot", "legend-node", "annotation-node"):
         assert class_string in class_strings, class_strings
+    # Mark classes remain trace metadata; WebGL/canvas marks have no DOM node
+    # that Tailwind could style.
+    assert "mark-node" not in class_strings
+    # Annotation geometry is canvas-painted. A per-annotation class reaches a
+    # DOM node only when there is label text.
+    assert "shape-only-annotation" not in class_strings
     assert len(class_strings) == len(set(class_strings)), class_strings
     assert class_strings[0] == "root-node", class_strings
 
@@ -1312,10 +1322,23 @@ def test_component_style_validation_rejects_non_serializable_values():
         xy.chart(xy.scatter(x=[1.0], y=[2.0]), style={"--bad": np.inf})
     with pytest.raises(ValueError, match="tooltip fields"):
         xy.tooltip(fields=["x", 2])
+    with pytest.raises(ValueError, match="tooltip labels"):
+        xy.tooltip(labels={"x": 2})
     with pytest.raises(TypeError, match="at most one"):
         xy.legend(FakeReflexComponent("a"), FakeReflexComponent("b"))
     with pytest.raises(TypeError, match="component child with render"):
         xy.tooltip(FakeReflexComponent("a"), render=FakeReflexComponent("b"))
+
+
+def test_tooltip_revalidates_public_dataclass_construction_and_mutation():
+    direct = xy.Tooltip(labels={"x": object()})
+    mutated = xy.tooltip(labels={"x": "X"})
+    mutated.labels["x"] = object()
+
+    for node in (direct, mutated):
+        chart = xy.scatter_chart(xy.scatter(x=[1.0], y=[2.0]), node)
+        with pytest.raises(ValueError, match="tooltip labels"):
+            chart.figure()
 
 
 def test_composition_builds_figure():
@@ -1489,6 +1512,101 @@ def test_legend_location_and_columns_are_serialized():
     assert spec["legend"] == {"loc": "upper left", "ncols": 2}
 
 
+def test_public_component_dataclasses_preserve_v003_positional_prefix():
+    released_axis_fields = (
+        "which",
+        "id",
+        "label",
+        "label_position",
+        "label_offset",
+        "label_angle",
+        "type_",
+        "constant",
+        "domain",
+        "bounds",
+        "reverse",
+        "format",
+        "tick_count",
+        "tick_values",
+        "tick_labels",
+        "tick_label_angle",
+        "tick_label_strategy",
+        "tick_label_anchor",
+        "tick_label_min_gap",
+        "side",
+        "style",
+    )
+    released_legend_fields = (
+        "show",
+        "loc",
+        "ncols",
+        "title",
+        "class_name",
+        "style",
+        "render",
+        "highlight",
+        "toggle",
+    )
+
+    axis_fields = tuple(item.name for item in fields(Axis))
+    legend_fields = tuple(item.name for item in fields(Legend))
+    assert axis_fields[: len(released_axis_fields)] == released_axis_fields
+    assert axis_fields[len(released_axis_fields)] == "margin"
+    assert legend_fields[: len(released_legend_fields)] == released_legend_fields
+    assert legend_fields[len(released_legend_fields)] == "anchor"
+
+    renderer = object()
+    axis = Axis(
+        "x",
+        "x",
+        "label",
+        None,
+        None,
+        None,
+        "linear",
+        None,
+        (0.0, 1.0),
+        (0.0, 2.0),
+        True,
+        ".1f",
+        3,
+        [0.0, 1.0],
+        ["zero", "one"],
+        15.0,
+        "rotate",
+        "end",
+        2.0,
+        "top",
+        {},
+    )
+    legend = Legend(False, "upper right", 2, "Title", "legend-class", {}, renderer, False, False)
+
+    assert axis.bounds == (0.0, 2.0)
+    assert axis.reverse is True
+    assert axis.format == ".1f"
+    assert axis.margin is None
+    assert legend.ncols == 2
+    assert legend.title == "Title"
+    assert legend.render is renderer
+    assert legend.anchor is None
+
+    anchored = xy.legend(anchor=(0.25, 0.75))
+    assert anchored.anchor == (0.25, 0.75)
+
+
+def test_component_bar_width_contracts_match_runtime_behavior():
+    widths = np.array([0.25, 0.75])
+    for mark in (
+        xy.bar(x=["a", "b"], y=[1.0, 2.0], width=widths),
+        xy.column(x=["a", "b"], y=[1.0, 2.0], width=widths),
+    ):
+        trace = xy.chart(mark).figure().traces[0]
+        np.testing.assert_allclose(trace.x1.values - trace.x0.values, widths)
+
+    with pytest.raises(ValueError, match="violin width must be a finite real number"):
+        xy.violin_chart(xy.violin(values=[[1.0, 2.0], [2.0, 3.0]], width=[0.25, 0.75])).figure()
+
+
 def test_component_axis_and_legend_validate_public_props_without_caching_failure():
     with pytest.raises(ValueError, match="axis type_"):
         xy.x_axis(type_="logg")
@@ -1577,6 +1695,32 @@ def test_component_axis_types_emit_log_domain_reverse_and_format():
     assert spec["y_axis"]["domain"] == [0.0, 1.0]
     assert spec["y_axis"]["format"] == ".1%"
     assert spec["y_axis"]["style"] == {"axis_color": "#dc2626", "label_size": 13}
+
+
+def test_component_axis_margin_controls_automatic_range():
+    chart = xy.chart(
+        xy.line(x=np.array([0.0, 10.0]), y=np.array([2.0, 4.0])),
+        xy.x_axis(margin=0.1),
+        xy.y_axis(margin=0.0),
+    )
+
+    assert chart.figure().x_range() == pytest.approx((-1.0, 11.0))
+    assert chart.figure().y_range() == pytest.approx((2.0, 4.0))
+    with pytest.raises(ValueError, match="x_axis margin"):
+        xy.x_axis(margin=-0.1)
+    with pytest.raises(ValueError, match="y_axis margin"):
+        xy.y_axis(margin=np.nan)
+
+
+def test_component_axis_margin_controls_singleton_range():
+    chart = xy.chart(
+        xy.line(x=np.array([5.0]), y=np.array([1.0])),
+        xy.x_axis(margin=0.0),
+        xy.y_axis(margin=0.1),
+    )
+
+    assert chart.figure().x_range() == pytest.approx((5.0, 6.0))
+    assert chart.figure().y_range() == pytest.approx((0.9, 2.1))
 
 
 def test_component_axis_label_position_controls_emit_to_payload():

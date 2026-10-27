@@ -92,3 +92,54 @@ def test_segment_backed_line2d_set_xdata_rebuilds_retained_logical_data() -> Non
     np.testing.assert_array_equal(trace.x1.values, [1, 2])
     np.testing.assert_array_equal(trace.y1.values, [2, 3])
     np.testing.assert_array_equal(line.get_xdata(), [3, 1, 2])
+
+
+def test_imshow_owns_source_and_render_arrays_and_set_data_reprepares_both() -> None:
+    original = np.arange(9.0).reshape(3, 3)
+    _fig, ax = plt.subplots()
+    image = ax.imshow(original, origin="upper", interpolation="bilinear")
+    logical_before = np.asarray(image.get_array()).copy()
+    render_before = np.asarray(image._entry["z"]).copy()
+
+    original[:] = -99.0
+
+    np.testing.assert_array_equal(image.get_array(), logical_before)
+    np.testing.assert_array_equal(image._entry["z"], render_before)
+    assert not np.shares_memory(np.asarray(image.get_array()), original)
+    assert not np.shares_memory(np.asarray(image._entry["z"]), np.asarray(image.get_array()))
+
+    replacement = np.arange(12.0).reshape(3, 4)
+    image.set_data(replacement)
+    expected_source = replacement.copy()
+    expected_render = np.asarray(
+        plt.figure()
+        .add_subplot(111)
+        .imshow(
+            expected_source,
+            origin="upper",
+            interpolation="bilinear",
+        )
+        ._entry["z"]
+    ).copy()
+    replacement[:] = 123.0
+
+    np.testing.assert_array_equal(image.get_array(), expected_source)
+    np.testing.assert_array_equal(image._entry["z"], expected_render)
+    assert ax.images == [image]
+
+
+def test_axes_image_set_data_xyz_recomputes_cached_extent() -> None:
+    _fig, ax = plt.subplots()
+    image = ax.imshow(np.arange(6.0).reshape(2, 3))
+    x = np.asarray([10.0, 20.0, 40.0])
+    y = np.asarray([-2.0, 2.0])
+
+    image.set_data(x, y, np.arange(6.0).reshape(2, 3))
+
+    expected = (2.5, 47.5, -4.0, 4.0)
+    assert image.get_extent() == pytest.approx(expected)
+    assert image._entry["extent"] == pytest.approx(expected)
+    x[:] = -99
+    y[:] = -99
+    np.testing.assert_array_equal(image._entry["kwargs"]["x"], [10.0, 20.0, 40.0])
+    np.testing.assert_array_equal(image._entry["kwargs"]["y"], [-2.0, 2.0])

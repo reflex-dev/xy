@@ -11,7 +11,7 @@ cyclic). This module has no runtime role — it is imported only under
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, Union
 
 from .columns import ColumnStore
 
@@ -26,6 +26,7 @@ class FigureHost(Protocol):
     axis_options: dict[str, dict[str, Any]]
     _axis_categories: dict[str, list[str]]
     title: Optional[str]
+    title_options: list[dict[str, Any]]
     width: Any
     height: Any
     padding: Any
@@ -37,6 +38,16 @@ class FigureHost(Protocol):
     colorbar_options: Optional[dict[str, Any]]
     show_modebar: bool
     show_tooltip: bool
+    palette: Union[list[str], dict[str, str], None]
+    coords: str
+
+    @property
+    def palette_cycle(self) -> Optional[list[str]]: ...
+
+    def palette_color(self, index: int, *, stacklevel: int = 3) -> str: ...
+
+    def _validate_coords(self) -> None: ...
+    def _validate_funnel_axes(self) -> None: ...
 
     # -- shared validators (static on `Figure`, aliases of `_validate`) --
     @staticmethod

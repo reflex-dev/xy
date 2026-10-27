@@ -41,6 +41,7 @@ def test_valid_view_returns_tier_update():
     assert reply is not None
     msg, buffers = reply
     assert msg["type"] == "tier_update"
+    assert msg["traces"][0]["x_range"] == [100.0, 5_000.0]
     assert msg["seq"] == 3
     assert msg["traces"]
     assert buffers

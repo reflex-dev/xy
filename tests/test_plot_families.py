@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import xy
+from xy import _paint
 from xy._figure import Figure
 
 
@@ -112,6 +113,33 @@ def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> 
     assert fig.to_png(engine=xy.Engine.default).startswith(b"\x89PNG")
 
 
+def test_triangle_mesh_stroke_channel_without_width_implies_one_pixel() -> None:
+    coordinates = (
+        [0.0, 1.0],
+        [0.0, 0.0],
+        [1.0, 2.0],
+        [0.0, 0.0],
+        [0.5, 1.5],
+        [1.0, 1.0],
+    )
+    strokes = np.array([[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]])
+    trace = Figure().triangle_mesh(*coordinates, stroke=strokes).traces[0]
+    assert trace.stroke_ch is not None
+    assert trace.style["stroke_width"] == 1.0
+
+    vector_width = (
+        Figure()
+        .triangle_mesh(
+            *coordinates,
+            stroke=strokes,
+            stroke_width=[0.0, 2.0],
+        )
+        .traces[0]
+    )
+    assert "stroke_width" not in vector_width.style
+    assert "stroke_width" in vector_width.style_channels
+
+
 def test_triangle_mesh_filters_nonfinite_geometry_and_color_rows() -> None:
     fig = Figure().triangle_mesh(
         [0.0, np.nan, 2.0],
@@ -127,6 +155,38 @@ def test_triangle_mesh_filters_nonfinite_geometry_and_color_rows() -> None:
     assert trace["n_points"] == 3
     assert trace["n_marks"] == 1
     assert spec["columns"][trace["color"]["buf"]]["len"] == 1
+
+
+@pytest.mark.parametrize("nonfinite", [np.nan, np.inf, -np.inf])
+def test_triangle_mesh_boundary_rejects_nonfinite_coordinates(nonfinite: float) -> None:
+    boundary = _paint.triangle_mesh_boundary(
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([1.0]),
+        np.array([0.0]),
+        np.array([nonfinite]),
+        np.array([1.0]),
+    )
+
+    assert boundary is None
+
+
+def test_triangle_mesh_boundary_merges_vertices_across_bucket_edges() -> None:
+    # span=1 gives tolerance=2e-5. These are two encoded copies of the same
+    # vertex on opposite sides of the old round(... / tolerance) boundary.
+    lower = 0.9999e-5
+    upper = 1.0001e-5
+    boundary = _paint.triangle_mesh_boundary(
+        np.array([lower, upper]),
+        np.array([lower, upper]),
+        np.array([1.0, 1.0]),
+        np.array([0.0, 1.0]),
+        np.array([1.0, 0.0]),
+        np.array([1.0, 1.0]),
+    )
+
+    assert boundary is not None
+    assert boundary.shape == (4, 2)
 
 
 def test_new_marks_reject_invalid_inputs_without_mutating_figure() -> None:

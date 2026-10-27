@@ -12,17 +12,82 @@ from reflex_site_shared.docs import (
 
 from xy_docs.config import DOCS_SECTIONS
 
-SIDEBAR_SECTION_GROUPS = (
-    ("Learning", "/", (*DOCS_SECTIONS[:3], DOCS_SECTIONS[7])),
-    ("Examples", "/overview/gallery/", DOCS_SECTIONS[3:5]),
-    ("Other", "/integrations/", (*DOCS_SECTIONS[5:7], *DOCS_SECTIONS[8:])),
+POLAR_DOCS_ROUTE = "/charts/polar-chart/"
+RADAR_DOCS_ROUTE = "/charts/radar-chart/"
+RADIAL_BAR_DOCS_ROUTE = "/charts/radial-bar-chart/"
+PIE_DOCS_ROUTE = "/charts/pie-chart/"
+WIND_ROSE_DOCS_ROUTE = "/charts/wind-rose/"
+POLAR_DOCS_ROUTES = (
+    ("Overview", POLAR_DOCS_ROUTE),
+    ("Radar", RADAR_DOCS_ROUTE),
+    ("Radial Bar", RADIAL_BAR_DOCS_ROUTE),
+    ("Pie & Donut", PIE_DOCS_ROUTE),
+    ("Wind Rose", WIND_ROSE_DOCS_ROUTE),
+)
+_chart_gallery = DOCS_SECTIONS[3]
+_chart_gallery_routes = dict(_chart_gallery[3])
+CHART_GALLERY_SIDEBAR_LINK = (
+    "Overview",
+    _chart_gallery[1],
+    _chart_gallery[2],
+    (),
+)
+CHART_FAMILY_SIDEBAR_SECTIONS = (
+    (
+        "Core Charts",
+        _chart_gallery_routes["Line"],
+        "chart-line",
+        tuple(
+            (title, _chart_gallery_routes[title])
+            for title in ("Line", "Area, Step & Stairs", "Scatter", "Bar and Column")
+        ),
+    ),
+    (
+        "Distributions",
+        _chart_gallery_routes["Histogram"],
+        "chart-bar-stacked",
+        tuple(
+            (title, _chart_gallery_routes[title])
+            for title in ("Histogram", "Box Plot", "Violin Plot", "ECDF")
+        ),
+    ),
+    (
+        "Density & Fields",
+        _chart_gallery_routes["Heatmap"],
+        "grid-3x3",
+        tuple((title, _chart_gallery_routes[title]) for title in ("Heatmap", "Hexbin", "Contour")),
+    ),
+    (
+        "Specialized",
+        _chart_gallery_routes["Uncertainty"],
+        "shapes",
+        tuple(
+            (title, _chart_gallery_routes[title])
+            for title in ("Uncertainty", "Stem", "Segments", "Sankey", "Funnel")
+        ),
+    ),
+)
+POLAR_SIDEBAR_SECTION = (
+    "Polar Charts",
+    POLAR_DOCS_ROUTE,
+    "radar",
+    POLAR_DOCS_ROUTES,
 )
 
-INTEGRATION_LINK_ICONS = {
-    "/integrations/reflex/": "atom",
-    "/integrations/notebooks/": "notebook-tabs",
-    "/integrations/matplotlib/": "chart-no-axes-combined",
-}
+SIDEBAR_SECTION_GROUPS = (
+    ("Learning", "/", (*DOCS_SECTIONS[:3], DOCS_SECTIONS[7])),
+    (
+        "Charts",
+        "/overview/gallery/",
+        (
+            CHART_GALLERY_SIDEBAR_LINK,
+            *CHART_FAMILY_SIDEBAR_SECTIONS,
+            POLAR_SIDEBAR_SECTION,
+            DOCS_SECTIONS[4],
+        ),
+    ),
+    ("Other", "/integrations/", (*DOCS_SECTIONS[5:7], *DOCS_SECTIONS[8:])),
+)
 
 
 def _leaf(
@@ -30,7 +95,7 @@ def _leaf(
     href: str,
     url: rx.vars.StringVar[str],
     *,
-    guide_margin_class: str = "ml-[3rem]",
+    guide_margin_class: str = "ml-[2.5rem]",
 ) -> rx.Component:
     """Render one memoized XY documentation leaf.
 
@@ -63,10 +128,9 @@ def _section_leaves(
 def _top_level_link(
     title: str,
     href: str,
-    icon: str,
     url: rx.vars.StringVar[str],
 ) -> rx.Component:
-    """Render an icon-led direct link aligned with sidebar group headings."""
+    """Render a direct link aligned with icon-free sidebar group headings."""
     active = url == href
     return rx.el.li(
         rx.el.a(
@@ -75,26 +139,25 @@ def _top_level_link(
                 rx.el.div(
                     class_name=(
                         "absolute left-0 top-1/2 -z-10 h-8 w-full "
-                        "-translate-y-1/2 rounded-lg bg-secondary-3"
+                        "-translate-y-1/2 rounded-lg bg-accent"
                     ),
                 ),
                 rx.fragment(),
             ),
             rx.box(
-                rx.icon(tag=icon, size=16, class_name="mr-4 shrink-0"),
-                rx.text(title, class_name="m-0 text-sm font-[525]"),
+                rx.text(title, class_name="m-0 text-sm font-[475]"),
                 class_name=rx.cond(
                     active,
                     (
                         "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] "
-                        "items-center justify-start text-primary-10 "
+                        "items-center justify-start text-primary-hover "
                         "xl:max-w-[14rem]"
                     ),
                     (
                         "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] "
-                        "items-center justify-start text-secondary-11 "
-                        "transition-colors group-hover:text-primary-10 "
-                        "dark:group-hover:text-primary-9 xl:max-w-[14rem]"
+                        "items-center justify-start text-muted-foreground "
+                        "transition-colors group-hover:text-primary-hover "
+                        "dark:group-hover:text-primary xl:max-w-[14rem]"
                     ),
                 ),
             ),
@@ -109,18 +172,18 @@ def _top_level_link(
 def _section_items(
     title: str,
     landing_route: str,
-    icon: str,
     leaves: tuple[tuple[str, str], ...],
     url: rx.vars.StringVar[str],
 ) -> tuple[rx.Component, ...]:
     """Render one sidebar section as a group or a set of direct links."""
+    if not leaves:
+        return (_top_level_link(title, landing_route, url),)
     section_leaves = _section_leaves(landing_route, leaves)
     if title == "Integrations":
         return tuple(
             _top_level_link(
                 title if leaf_route == landing_route else leaf_title,
                 leaf_route,
-                INTEGRATION_LINK_ICONS[leaf_route],
                 url,
             )
             for leaf_title, leaf_route in section_leaves
@@ -130,18 +193,32 @@ def _section_items(
         docs_sidebar_group(
             title,
             *(_leaf(leaf_title, leaf_route, url) for leaf_title, leaf_route in section_leaves),
-            icon=icon,
             open_=(
-                (url == "/") | url.startswith("/overview/")
+                (url == "/")
+                | (url.startswith("/overview/") & (url != CHART_GALLERY_SIDEBAR_LINK[1]))
                 if landing_route == "/"
                 else (
-                    (url == landing_route) | url.startswith("/charts/")
-                    if title == "Chart Gallery"
+                    _matches_route(
+                        url,
+                        tuple(route for _leaf_title, route in section_leaves),
+                    )
+                    if landing_route.startswith("/charts/")
                     else url.startswith(landing_route)
                 )
             ),
         ),
     )
+
+
+def _matches_route(
+    url: rx.vars.StringVar[str],
+    routes: tuple[str, ...],
+) -> rx.Var[bool]:
+    """Return a reactive condition matching one of the exact routes."""
+    matched = url == routes[0]
+    for route in routes[1:]:
+        matched = matched | (url == route)
+    return matched
 
 
 @rx.memo
@@ -190,8 +267,8 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
                 group_route,
                 *(
                     item
-                    for title, landing_route, icon, leaves in sections
-                    for item in _section_items(title, landing_route, icon, leaves, url)
+                    for title, landing_route, _icon, leaves in sections
+                    for item in _section_items(title, landing_route, leaves, url)
                 ),
                 connected_line=False,
             )
@@ -224,8 +301,16 @@ def xy_docs_sidebar(route: str) -> rx.Component:
 
 
 __all__ = [
-    "INTEGRATION_LINK_ICONS",
+    "CHART_FAMILY_SIDEBAR_SECTIONS",
+    "CHART_GALLERY_SIDEBAR_LINK",
+    "PIE_DOCS_ROUTE",
+    "POLAR_DOCS_ROUTE",
+    "POLAR_DOCS_ROUTES",
+    "POLAR_SIDEBAR_SECTION",
+    "RADAR_DOCS_ROUTE",
+    "RADIAL_BAR_DOCS_ROUTE",
     "SIDEBAR_SECTION_GROUPS",
+    "WIND_ROSE_DOCS_ROUTE",
     "xy_docs_sidebar",
     "xy_docs_sidebar_comp",
 ]

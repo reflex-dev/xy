@@ -7,6 +7,7 @@ recorded in the shipped spec, never silent (§28).
 
 from __future__ import annotations
 
+import math
 import warnings
 
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
@@ -14,7 +15,92 @@ import warnings
 # rides the spec/buffers trait update (`spec.append.seq`) with no custom send.
 # v6: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
 # density grids — an older cached client would render both silently wrong.
-PROTOCOL_VERSION = 6
+# v7: a `colormap` may now be explicit RGB stops rather than a built-in name,
+# and the spec may carry a chart `palette`. A v6 client indexes its built-in
+# table with the stop array, misses, and paints viridis without erroring — the
+# same silent-misrender case v6 itself was cut for.
+# v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
+# add wire values an older v7 client would accept but silently misrender.
+# v9: explicit minor axis ticks/styles, log nonpositive behavior, independent
+# `tick_sides`/`tick_label_sides`, scalar-normalization scale, colorbar
+# padding/explicit-axes placement, and contour-line overlays add fields a
+# cached v8 client would accept but silently misrender.
+# v10: `title_options` carries independent left/center/right title artists,
+# including axes-fraction y and pixel padding. A v9 client would ignore that
+# field and silently omit non-center slots and their placement, so it must
+# reject the payload.
+# v11 adds the chart-level `coords` key ("polar"), plus `theta_unit`,
+# `theta_zero` and `theta_direction` on the angular (x) axis spec. A v10 client
+# would ignore `coords` entirely and draw the (theta, r) columns as cartesian
+# x/y — a plausible, completely wrong picture — so it must reject the payload.
+# It also adds the `ribbon` trace kind (flow bands: six geometry columns and an
+# optional second paint channel, `color_target`). markOf() falls back to
+# scatter for unknown kinds, so a v10 client would silently draw every ribbon
+# as a point cloud of its y-corner columns.
+# v12 adds polar sector/grid-shape metadata on the angular axis and hole/origin
+# metadata on the radial axis. A v11 client would silently draw a full circular
+# grid with a centre-origin radius, so the new geometry must fail the handshake.
+# v13 adds the `funnel` trace kind. `markOf()` falls back to scatter for
+# unknown kinds, so a v12 client would silently render funnel quads as a point
+# cloud.
+PROTOCOL_VERSION = 13
+
+# Mark kinds the polar transform renders correctly today. Everything else is
+# refused by Figure._validate_coords rather than approximated: the rect, area,
+# segment and mesh shaders expand geometry in pixel space after the coordinate
+# map, so under polar they would draw chord-edged shapes where arcs belong.
+# spec/design/polar-axes.md §7 tracks the order the rest land in.
+POLAR_MARK_KINDS = frozenset(
+    {"line", "scatter", "area", "bar", "column", "heatmap", "contour", "errorbar"}
+)
+
+# Polar traces ship tier="direct" (§7): M4 decimation buckets on a monotonic
+# screen-x column, which a spiral is not, and density binning in (theta, r)
+# distorts by area near the origin. Cap the direct path explicitly rather than
+# letting an unbounded polar scatter allocate its way to a cliff.
+POLAR_DIRECT_CEILING = 200_000
+
+# Subdivisions across one FULL TURN, for the renderers that flatten arcs (the
+# raster display list has no arc opcode, and the GPU sweeps a triangle strip).
+# Mirrored by POLAR_BAR_SEGMENTS in js/src/50_chartview.ts. Sized so a wedge's
+# chord sagitta stays inside the client's XY_POLAR_AA expansion up to a
+# ~1400-device-px disc, letting the fragment SDF trim the strip to an exactly
+# round arc; the raster's coverage-scanline fill smooths the same polygon.
+POLAR_BAR_SEGMENTS = 96
+
+# Floor on the subdivision of any single wedge. Two segments keep a strip that
+# still brackets the true arc after the AA expansion, even for a hairline slice.
+POLAR_BAR_SEGMENTS_MIN = 2
+
+
+def polar_bar_segments(span: float, turn: float) -> int:
+    """Subdivisions for one wedge of angular width `span` out of `turn`.
+
+    The count used to be a flat `POLAR_BAR_SEGMENTS` per wedge, sized for the
+    worst case of a wedge sweeping the whole circle. Almost no wedge does: a
+    16-sector wind rose sweeps 22.5 degrees, so every bar paid 2*(96+1) = 194
+    vertices for an arc that needs six segments, and 50k polar bars fell off a
+    performance cliff building ~9.7M vertices per frame instead of ~700k.
+
+    Sagitta is what the constant is sized against, and it is quadratic in the
+    per-segment angle: holding `span / n` fixed holds the flattening error fixed.
+    So the honest count is exactly proportional — `POLAR_BAR_SEGMENTS * span /
+    turn` — which reproduces 96 for a full turn and preserves the error bound for
+    everything narrower. §28: the decision is a recorded formula over the
+    AUTHORED angular width, not a view-dependent choice, so all three renderers
+    reach the same count for the same figure at any zoom or export size.
+    """
+    # An unmeasurable span falls back to the full-turn count, exactly as the JS
+    # mirror does: under-subdividing a wide wedge is a visible facet, and paying
+    # for one is not. Without the finite check `math.ceil` raised ValueError on
+    # NaN and OverflowError on infinity, so the two renderers disagreed about
+    # what a degenerate wedge costs — one drew it, the other crashed.
+    if not (turn > 0.0) or not math.isfinite(span):
+        return POLAR_BAR_SEGMENTS
+    fraction = abs(float(span)) / float(turn)
+    scaled = math.ceil(POLAR_BAR_SEGMENTS * fraction)
+    return max(POLAR_BAR_SEGMENTS_MIN, min(POLAR_BAR_SEGMENTS, scaled))
+
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the
@@ -23,13 +109,17 @@ DECIMATION_THRESHOLD = 10_000
 
 # Scatter above this many points switches to Tier-2 density aggregation (§5):
 # instead of shipping/drawing every point (fill-rate + the ~1 GB single-alloc
-# cliff, §5 F3), the kernel bins the viewport into a density grid and the client
-# colormaps it. Screen-bounded transport and VRAM regardless of point count.
+# cliff, §5 F3), the kernel bins the viewport into a density grid the client
+# draws with the trace's own colors, composited at the points' own alpha
+# (LOD doc §2; count-only surfaces keep the log count ramp). Screen-bounded
+# transport and VRAM regardless of point count.
 SCATTER_DENSITY_THRESHOLD = 200_000
 
 # Absolute direct-draw ceiling; above this, density is forced even if the user
-# asked for per-point channels (they can't survive count-aggregation without the
-# §5-F5 aggregation algebra — we warn and drop them, never silently mislead).
+# asked for per-point channels. The color channel survives as the surface's
+# per-cell mean point color (LOD doc §2); the rest (size, stroke, styles) have
+# no honest per-cell aggregate yet (§5 F5) — we warn and drop them, never
+# silently mislead.
 DIRECT_SOFT_CEILING = 2_000_000
 
 # Stable-key matching retains a browser-side identity table for only bounded
@@ -61,11 +151,40 @@ DRILL_EXIT_FACTOR = 1.15
 # static and re-ship large; a few points per cell keeps drill-out continuous.
 DENSITY_TARGET_POINTS_PER_CELL = 16.0
 
-# Hybrid density overlay (§5): when scatter is aggregated, ship a small,
-# deterministic sample of real points over the density texture. This keeps
-# zoomed-out views from becoming pure heatmaps while staying payload-bounded.
+# Deterministic point sample retained with the FIRST density payload only
+# (§28/#225): interactive density_view replies ship no samples at all — the
+# density surface already wears the data's own colors (LOD doc §2), and real
+# points arrive the moment a window fits the budget. Kernel-attached clients
+# never DRAW the retained sample either (a fixed-size sample reads as
+# individual data points at zooms where real points are sub-pixel or one
+# request away); they use it CPU-side as the distribution-true estimator for
+# the points-band request gate (LOD doc T13, `lodSampleViewCount`). The
+# standalone (kernel-less) client keeps it as its re-bin worker's CPU source
+# and draws it below the resolvable-count gate, where it is the only point
+# representation that build will ever have.
 DENSITY_SAMPLE_TARGET = 8_192
 DENSITY_SAMPLE_SEED = 0
+
+# Padded drill windows (LOD doc T13): a points-tier reply ships the largest
+# ALIGNED window around the view whose exact count still fits the budget, so
+# the client's window cache answers nearby pans/zooms with zero round-trips.
+# Ladder of padded-span targets (× the view span), coarsest first; bounds snap
+# outward to a power-of-two grid over the trace's extent (lod.aligned_window),
+# making consecutive pans resolve to the SAME window.
+DRILL_PAD_TARGETS = (8.0, 4.0, 2.0)
+# Hard per-axis cap on the padded span (× the view span). Must stay well under
+# the client's §16 re-encode bound (1/256 of the window span): the shipped
+# offset encoding centers on the padded window, and a window unboundedly wider
+# than the view would let deep zooms outrun f32 precision before the re-encode
+# request re-arms.
+DRILL_PAD_SPAN_CAP = 64.0
+
+# Recent drilled subsets kept resolvable for picks (LOD doc T13): the client
+# may serve a view from a retired cached point window whose drill_seq is no
+# longer current; translating through the remembered subset keeps hover exact
+# instead of dead. Bounded — anything older resolves to None, never to a
+# wrong row (§16 exact-or-nothing).
+DRILL_HISTORY_KEEP = 8
 
 # CVD-safe default categorical palette (§20/§36 default theme). Eight slots in
 # a fixed order; charts render on unknown host surfaces, so every step sits in

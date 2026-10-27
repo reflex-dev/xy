@@ -296,13 +296,14 @@ move together across the whole chart.
 | `--chart-legend-bg` | Legend background | faint neutral fill |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | light / dark |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available edge space |
-| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | light or dark translucent (follows a `.dark` root class) / neutral |
-| `--chart-selection` / `--chart-selection-fill` | Selection outline/fill | blue outline / translucent blue |
-| `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom outline/fill | neutral outline/fill |
+| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | scheme-aware white/dark surface / `#edf1f6` light, `#121417` dark |
+| `--chart-modebar-focus` | Toolbar keyboard focus ring | `--chart-focus`, else `#1b212a` light, `#e2e5e9` dark |
+| `--chart-selection` / `--chart-selection-fill` | Selection outline/fill | neutral grey matching the toolbar (follows a `.dark` root class) |
+| `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom outline/fill | same neutral grey as selection |
 | `--chart-crosshair` | Crosshair lines | translucent dark |
 | `--chart-annotation-text` | Annotation labels | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursors | `crosshair` / `grab` |
-| `--chart-focus` | Keyboard focus outline | blue |
+| `--chart-focus` | Keyboard focus ring on the plot canvas, and on toolbar buttons unless `--chart-modebar-focus` is set | `#aa99ec` |
 
 You can define application-specific variables such as `--chart-accent` and use
 them from mark styles. XY validates the `var(...)` shape, then the browser
@@ -465,23 +466,36 @@ chart = xy.area_chart(
 )
 ~~~
 
-Tailwind users can apply a configured font utility through `class_name` in the
-same way. XY does not download, register, or rewrite font files itself.
+Tailwind users can apply configured `font-*`, `text-*`, and `leading-*`
+utilities through `class_name` in the same way. XY's default root typography
+lives in the low-priority browser chrome stylesheet, so those utilities win
+through the normal cascade. XY does not download, register, or rewrite font
+files itself.
 
 Standalone HTML and Chromium PNG accept the font declaration through
 `custom_css`. Embed the font as a data URL when the HTML file must remain fully
 portable; an ordinary URL still depends on that resource being reachable.
 
+Declare the face in `custom_css` and select it with
+`xy.theme(font_family=...)`. The theme writes explicit chart style as inline
+author intent, so it remains the most reliable option for portable exports and
+intentionally outranks a normal class.
+
 ~~~python
 from xy import Engine
+import xy
 
 font_css = """
   @font-face {
     font-family: "Acme Sans";
     src: url("data:font/woff2;base64,...") format("woff2");
   }
-  .xy { font-family: "Acme Sans", system-ui, sans-serif; }
 """
+
+chart = xy.line_chart(
+    xy.line([1, 2, 3], [2, 5, 3]),
+    xy.theme(font_family='"Acme Sans", system-ui, sans-serif'),
+)
 
 chart.to_html("chart.html", custom_css=font_css)
 chart.to_png(
@@ -512,11 +526,16 @@ color already follows the inherited text color, so the toolbar stays readable in
 both modes with no configuration. An explicit `.light` class (or no class at
 all) keeps the light palette.
 
-That is only the built-in default. A `--chart-modebar-bg` or
-`--chart-modebar-active` value you set — through `theme()`, chart `style=`, or a
-host stylesheet — still wins in either mode, so mapping the toolbar onto your
-own adaptive design tokens (for example Radix's `--secondary-2`) replaces the
-automatic palette entirely.
+These neutral colors are built into every toolbar; an app does not need to map
+them to its own secondary palette. A `--chart-modebar-bg`,
+`--chart-modebar-active`, or `--chart-modebar-focus` value you set through
+`theme()`, chart `style=`, or a host stylesheet still wins in either mode.
+
+The toolbar's focus ring resolves in three steps: `--chart-modebar-focus`
+first, then `--chart-focus`, then the built-in scheme-aware neutral. So an app
+that themes focus once with `--chart-focus` gets one ring color across the plot
+canvas *and* the toolbar, and `--chart-modebar-focus` exists to break that tie
+when the toolbar needs its own.
 
 ## Dark mode in a standalone export
 

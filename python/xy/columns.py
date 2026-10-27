@@ -21,7 +21,7 @@ from __future__ import annotations
 import datetime as dt
 import os as _os
 import struct as _struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
@@ -201,9 +201,24 @@ class Column:
     kind: str  # "float" | "time_ms"
     _zone: ZoneMaps | None
     ingest_copies: int  # copies paid at ingest (§29 accounting)
+    # Last full-payload encode offset (§4). Sticky across streaming appends so
+    # consecutive append payloads keep byte-identical prefixes — the client's
+    # tail-only GPU upload depends on it (wire-protocol §4).
+    _ship_offset: float | None = field(default=None, init=False, repr=False, compare=False)
 
     def __len__(self) -> int:
         return len(self.values)
+
+    @property
+    def capacity_bytes(self) -> int:
+        """Bytes this column actually holds, slack included.
+
+        `append` keeps values as a prefix view of a capacity-doubling buffer, so
+        after a stream of appends the allocation can be up to twice
+        `values.nbytes`. The memory report needs the real number (§27).
+        """
+        grow = getattr(self, "_grow", None)
+        return int(grow.nbytes if grow is not None else self.values.nbytes)
 
     @property
     def zone(self) -> ZoneMaps:
@@ -225,11 +240,26 @@ class Column:
     def suggest_offset(self) -> float:
         """Midpoint offset for relative-f32 encoding (design dossier §4).
         Re-centering on deep zoom (§16 there) picks a new offset at the
-        viewport center instead."""
+        viewport center instead.
+
+        The offset is sticky across domain growth: once shipped, it is kept
+        while every value stays within one full span of it, i.e. at most one
+        f32 mantissa bit worse than a fresh midpoint (a right-growing stream
+        never exceeds that bound). A stable offset keeps consecutive append
+        payload prefixes byte-identical, which is what lets the client upload
+        only the appended tail instead of re-uploading the whole column.
+        """
         lo, hi = self.min, self.max
         if np.isnan(lo) or np.isnan(hi):
             return 0.0
-        return (lo + hi) / 2.0
+        mid = (lo + hi) / 2.0
+        prev = self._ship_offset
+        if prev is not None and np.isfinite(prev):
+            span = hi - lo
+            if max(abs(lo - prev), abs(hi - prev)) <= (span if span > 0 else 0.0):
+                return prev
+        self._ship_offset = mid
+        return mid
 
     def append(self, data: Any) -> None:
         """Streaming append (design dossier §5, Phase-0 Python-side).
@@ -437,23 +467,36 @@ class ColumnStore:
         OS as a reclaimable cache, so they do not sit in the process's resident
         set the way an in-RAM column does. ``canonical_bytes`` therefore stays
         the honest RAM-resident canonical figure (unchanged for all-RAM
-        figures, where ``canonical_mapped_bytes`` is 0)."""
+        figures, where ``canonical_mapped_bytes`` is 0).
+
+        A streamed column's values are a prefix *view* of its capacity-doubling
+        growth buffer (`Column.append`), so up to half of what it holds is slack
+        that `values.nbytes` cannot see. That slack is resident RAM like any
+        other allocation, so each column also reports ``capacity_bytes`` and the
+        report totals them as ``canonical_capacity_bytes`` — equal to
+        ``canonical_bytes`` for every never-appended figure, and the number the
+        resident total is built from (channels already report their own growth
+        buffers this way)."""
         resident = 0
+        resident_capacity = 0
         mapped = 0
         columns = []
         for c in self._columns:
             nbytes = int(c.values.nbytes)
+            capacity = int(c.capacity_bytes)
             memmapped = _ooc.is_memmapped(c.values)
             if memmapped:
                 mapped += nbytes
             else:
                 resident += nbytes
+                resident_capacity += capacity
             columns.append(
                 {
                     "id": c.id,
                     "kind": c.kind,
                     "len": len(c),
                     "bytes": nbytes,
+                    "capacity_bytes": capacity,
                     "backing": "memmap" if memmapped else "ram",
                     "ingest_copies": c.ingest_copies,
                     "null_count": c.zone.null_count,
@@ -461,6 +504,7 @@ class ColumnStore:
             )
         return {
             "canonical_bytes": resident,
+            "canonical_capacity_bytes": resident_capacity,
             "canonical_mapped_bytes": mapped,
             "columns": columns,
         }

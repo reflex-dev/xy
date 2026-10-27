@@ -2,10 +2,17 @@ FROM rust:1.97.0-slim-bookworm AS rust-toolchain
 
 FROM python:3.13-slim-bookworm AS builder
 
+# `.dockerignore` excludes `.git`, so the build context cannot derive the xy
+# version from tags the way every other build does. CI passes the version it
+# resolved on the runner; a local `docker build` gets the same `0.0.0` fallback
+# a tagless tree would.
+ARG XY_VERSION=0.0.0
+
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:${PATH} \
     UV_LINK_MODE=copy \
+    UV_DYNAMIC_VERSIONING_BYPASS=${XY_VERSION} \
     XY_REQUIRE_CARGO=1
 
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
@@ -14,7 +21,7 @@ COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends build-essential ca-certificates git && \
     rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir uv==0.11.15
+    pip install --no-cache-dir uv==0.13.4
 
 COPY . /app
 WORKDIR /app

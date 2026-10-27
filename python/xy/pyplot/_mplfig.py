@@ -7,47 +7,329 @@ itself has no grid container; that capability lives entirely in this shim.
 
 from __future__ import annotations
 
+import inspect
 import uuid
+from contextlib import suppress
+from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
-from typing import Any, Literal, Optional, overload
+from typing import Any, Literal, Optional, cast, overload
 
 import numpy as np
 
-from ._artists import Text
-from ._axes import Axes, _plain_text
-from ._colors import resolve_color
+from .. import _textblock
+from ._artists import Legend, Text, _PatchFacade
+from ._axes import _DEFAULT_AXES_RECT, Axes, _font_size_points, _plain_text, _scale_values
+from ._colors import resolve_color, resolve_rgba
+from ._figure_tree import (
+    FigureNodeKind,
+    FigureTree,
+    FigureTreeNode,
+    NormalizedRect,
+    ResolvedFigureNode,
+    ResolvedFigureTree,
+    intersect_rect,
+)
 from ._rc import rc_figsize_px, rcParams
-from ._transforms import CoordinateTransform
+from ._transforms import Bbox, CoordinateTransform
 from ._translate import check_unsupported, not_implemented
+
+_Chrome = tuple[float, float, float, float]
+_ChromeCache = dict[tuple[int, int, int], _Chrome]
+
+
+@dataclass(frozen=True, slots=True)
+class _MeasuredFigureLayout:
+    """One tree/layout solve shared by chart building and an exporter."""
+
+    tree: ResolvedFigureTree
+    canvas_size: tuple[int, int]
+    rects: Optional[list[NormalizedRect]]
+
+
+def _relative_rect(container: NormalizedRect, child: Any) -> NormalizedRect:
+    """Map a child rectangle from container fractions into root fractions."""
+    left, bottom, width, height = (float(value) for value in child)
+    return (
+        container[0] + left * container[2],
+        container[1] + bottom * container[3],
+        width * container[2],
+        height * container[3],
+    )
+
+
+def _squeezed_object_grid(values: list[Any], nrows: int, ncols: int, squeeze: bool) -> Any:
+    array = np.asarray(values, dtype=object).reshape(nrows, ncols)
+    if not squeeze:
+        return array
+    squeezed = np.squeeze(array)
+    return squeezed.item() if squeezed.ndim == 0 else squeezed
+
+
+def _colorbar_viewport(host: Axes, options: dict[str, Any]) -> NormalizedRect:
+    """Resolve renderer-owned colorbar chrome into a figure rectangle."""
+    left, bottom, width, height = host.get_position().bounds
+    shrink = float(options.get("shrink", 1.0))
+    anchor = options.get("anchor") or [0.5, 0.5]
+    if options.get("orientation") == "horizontal":
+        bar_width = width * shrink
+        bar_left = left + (width - bar_width) * float(anchor[0])
+        return bar_left, bottom - 0.08, bar_width, 0.04
+    bar_height = height * shrink
+    bar_bottom = bottom + (height - bar_height) * float(anchor[1])
+    return left + width + 0.02, bar_bottom, 0.03, bar_height
+
+
+class _FigureText(Text):
+    """Mutable Text handle whose backing entry is owned by a Figure."""
+
+    def __init__(
+        self,
+        figure: "Figure",
+        entry: dict[str, Any],
+        *,
+        role: Optional[str] = None,
+    ) -> None:
+        self._figure = figure
+        self._role = role
+        super().__init__(None, entry)
+        self._transform = figure.transFigure
+
+    def _touch(self) -> None:
+        self._figure._invalidate()
+
+    def set_text(self, text: str) -> None:
+        super().set_text(text)
+        if self._role is not None:
+            setattr(self._figure, f"_sup{self._role}label", str(text))
+
+    def remove(self) -> None:
+        if self._role is not None:
+            setattr(self._figure, f"_sup{self._role}label", None)
+            setattr(self._figure, f"_sup{self._role}label_entry", None)
+        else:
+            with suppress(ValueError):
+                self._figure._figure_text_entries.remove(self._entry)
+            with suppress(ValueError):
+                self._figure._figure_text_handles.remove(self)
+            self._figure._tree.detach(self)
+        self._visible = False
+        self._figure._invalidate()
+
+    def set_zorder(self, level: float) -> None:
+        self._zorder = float(level)
+        self._entry["_zorder"] = self._zorder
+        self._figure._figure_text_entries.sort(key=lambda item: float(item.get("_zorder", 0.0)))
+        self._figure._invalidate()
+
+
+def _panel_chrome(
+    ax: Axes,
+    plot_w: int,
+    *,
+    cache: Optional[_ChromeCache] = None,
+) -> _Chrome:
+    """``(left, top, right, bottom)`` px of chrome around a free-form panel.
+
+    One definition for the whole absolute-placement path: `_charts` sizes the
+    panel with it, `_panel_positions` places the panel with it, and
+    `Axes._frame_padding` pins the plot rect inside the panel with it. When
+    those three disagree the plot box drifts off its gridspec cell.
+
+    The chrome includes the gutters the renderers reserve outside the padding —
+    the axes title, a top-side x axis (`matshow`), the secondary-y band — so the
+    panel is always large enough to hold them without moving the plot rect. The
+    title is the case matplotlib makes obvious: it draws above the axes without
+    changing its position.
+    """
+    figure = ax.figure
+    probe_h = 0
+    cache_key: Optional[tuple[int, int, int]] = None
+    if figure is not None:
+        _canvas_w, canvas_h = rc_figsize_px(figure._figsize, figure._dpi)
+        probe_h = max(120, round(canvas_h / max(1, figure._nrows)))
+        cache_key = (id(ax), int(plot_w), probe_h)
+        if cache is not None and cache_key in cache:
+            return cache[cache_key]
+    compact = plot_w + 54 < 520
+    left, top = (46.0, 6.0) if compact else (62.0, 10.0)
+    right, bottom = (8.0, 36.0) if compact else (14.0, 42.0)
+    y_props = ax._axis["y"]
+    y_style = y_props.get("style") or {}
+    y_labels = y_props.get("tick_labels") or ()
+    if y_labels and y_props.get("tick_label_strategy") not in {"none", "off"}:
+        tick_size = float(y_style.get("tick_label_size", y_style.get("tick_size", 11.0)))
+        tick_angle = float(y_props.get("tick_label_angle", 0.0))
+        tick_width = max(
+            _textblock.rotated_extent(_textblock.measure(label, tick_size), tick_angle)[0]
+            for label in y_labels
+        )
+        tick_length = max(0.0, float(y_style.get("tick_length", 0.0)))
+        direction = str(y_style.get("tick_direction", "out"))
+        outward = (
+            0.0 if direction == "in" else tick_length / 2.0 if direction == "inout" else tick_length
+        )
+        tick_offset = outward + max(0.0, float(y_style.get("tick_padding", 4.0)))
+        needed = 4.0 + tick_offset + tick_width
+        if y_props.get("label"):
+            label_size = float(y_style.get("label_size", 12.0))
+            needed += (
+                float(y_props.get("label_offset", 0.4 * label_size))
+                + _textblock.measure(y_props["label"], label_size).height
+            )
+        left = max(left, needed)
+    extra_top, extra_right, extra_bottom = ax._outside_padding(compact)
+    table_bottom = ax._table_bottom_points * ax._point_scale()
+    defaults = (
+        left,
+        top + extra_top,
+        right + extra_right,
+        max(bottom + extra_bottom, table_bottom),
+    )
+    if figure is None:
+        return defaults
+    measured = _measured_axis_chrome(
+        ax,
+        max(120, round(plot_w + defaults[0] + defaults[2])),
+        probe_h,
+    )
+    resolved: _Chrome = (
+        max(defaults[0], measured[0]),
+        max(defaults[1], measured[1]),
+        max(defaults[2], measured[2]),
+        max(defaults[3], measured[3]),
+    )
+    if cache is not None and cache_key is not None:
+        cache[cache_key] = resolved
+    return resolved
+
+
+def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
+    """The left gutter `_svg.layout()` will reserve for `ax`'s y-axis text.
+
+    Probes the real spec because the reservation is measured from the tick
+    labels the resolved range produces, which only exist after the payload is
+    built. The probe costs one extra payload build on the notebook display path;
+    the browser needs the number *before* the chart it renders is built, and a
+    second implementation of the measurement is the thing this must not become.
+    """
+    from .. import _svg
+
+    spec = _probe_axis_spec(ax, width, height)
+    return float(_svg.layout(spec)[3]["x"])
+
+
+def _probe_axis_spec(ax: Axes, width: int, height: int) -> dict[str, Any]:
+    """Build a provisional spec without retaining probe-dependent axis state."""
+    previous_chart = ax._chart
+    missing = object()
+    previous_plot_px = getattr(ax, "_materialize_plot_px", missing)
+    twin = ax._twin
+    previous_twin_plot_px = (
+        getattr(twin, "_materialize_plot_px", missing) if twin is not None else missing
+    )
+    # Preserve the dictionaries themselves because shared axes may alias them.
+    # `_build_chart()` can materialize equal-aspect domains from the provisional
+    # width/height; those values must not leak into the final panel build.
+    snapshots: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    seen: set[int] = set()
+    for props in ax._axis.values():
+        if id(props) not in seen:
+            snapshots.append((props, dict(props)))
+            seen.add(id(props))
+    ax._chart = None
+    try:
+        spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
+        return spec
+    finally:
+        ax._chart = previous_chart
+        for props, snapshot in snapshots:
+            props.clear()
+            props.update(snapshot)
+        if previous_plot_px is missing:
+            if hasattr(ax, "_materialize_plot_px"):
+                del ax._materialize_plot_px
+        else:
+            ax._materialize_plot_px = cast(tuple[float, float], previous_plot_px)
+        if twin is not None:
+            if previous_twin_plot_px is missing:
+                if hasattr(twin, "_materialize_plot_px"):
+                    del twin._materialize_plot_px
+            else:
+                twin._materialize_plot_px = cast(tuple[float, float], previous_twin_plot_px)
+
+
+def _measured_axis_chrome(ax: Axes, width: int, height: int) -> tuple[float, float, float, float]:
+    """Intrinsic ``(left, top, right, bottom)`` chrome for final axes content.
+
+    Tight/constrained layout needs the labels after plotting and styling have
+    finished. Build one provisional payload, remove its figure-rectangle
+    padding, and ask the same layout resolver used by PNG/SVG for the actual
+    text reservation. The later layout adjustment invalidates this provisional
+    chart before any output consumes it.
+    """
+    from .. import _svg
+
+    spec = _probe_axis_spec(ax, width, height)
+    intrinsic = dict(spec)
+    intrinsic.pop("padding", None)
+    measured_width, measured_height, _compact, plot = _svg.layout(intrinsic)
+    return (
+        float(plot["x"]),
+        float(plot["y"]),
+        float(measured_width - plot["x"] - plot["w"]),
+        float(measured_height - plot["y"] - plot["h"]),
+    )
+
+
+def _contour_colorbar_lines(contour: Any, host: Axes) -> list[dict[str, Any]]:
+    """Serialize a ContourSet's visible isoline styles for colorbar chrome."""
+    from ._artists import _contour_legend_colors
+
+    levels = np.asarray(contour.levels, dtype=np.float64).reshape(-1)
+    widths = np.asarray(contour.get_linewidth(), dtype=np.float64).reshape(-1)
+    colors = _contour_legend_colors(contour._entry, len(levels))
+    return [
+        {
+            "value": float(level),
+            "color": colors[index],
+            "width": float(widths[index % len(widths)]) * host._point_scale(),
+            "dash": (
+                "dashed" if contour._entry["kwargs"].get("dash_negative") and level < 0 else None
+            ),
+        }
+        for index, level in enumerate(levels)
+    ]
+
+
+def _colorbar_tick_labels(formatter: Any, ticks: list[float]) -> list[str]:
+    """Evaluate one colorbar formatter against the exact serialized ticks."""
+
+    labels: list[str] = []
+    for position, value in enumerate(ticks):
+        if isinstance(formatter, str):
+            if "{" in formatter:
+                rendered = formatter.format(x=value, pos=position)
+            elif "%" in formatter:
+                rendered = formatter % value
+            else:
+                rendered = format(value, formatter)
+        elif callable(formatter):
+            try:
+                rendered = formatter(value, position)
+            except TypeError:
+                rendered = formatter(value)
+        else:
+            raise TypeError("colorbar() format must be a format string or callable formatter")
+        labels.append(_plain_text(str(rendered)))
+    return labels
 
 
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
     """Insert standards-compliant PNG text chunks before IEND."""
     from xy import _png
 
-    chunks = []
-    for raw_key, raw_value in metadata.items():
-        key = str(raw_key)
-        value = str(raw_value)
-        try:
-            encoded_key = key.encode("latin-1", "strict")
-        except UnicodeEncodeError:
-            encoded_key = b""
-        if not encoded_key or len(encoded_key) > 79 or "\x00" in key:
-            raise ValueError("PNG metadata keys must be 1-79 Latin-1 characters")
-        try:
-            payload = key.encode("latin-1") + b"\0" + value.encode("latin-1")
-            chunks.append(_png._chunk(b"tEXt", payload))
-        except UnicodeEncodeError:
-            # iTXt: keyword, compression flag/method, language, translated
-            # keyword, then UTF-8 text.
-            payload = key.encode("latin-1") + b"\0\0\0\0\0" + value.encode("utf-8")
-            chunks.append(_png._chunk(b"iTXt", payload))
-    marker = data.rfind(b"\x00\x00\x00\x00IEND")
-    if marker < 0:
-        raise ValueError("invalid PNG output")
-    return data[:marker] + b"".join(chunks) + data[marker:]
+    return _png.with_metadata(data, metadata)
 
 
 class Figure:
@@ -68,10 +350,19 @@ class Figure:
         # short-circuits) assumes a string.
         self._facecolor = (resolve_color(facecolor) if facecolor is not None else None) or "white"
         self._edgecolor = "white"
+        self.patch = _PatchFacade(self)
         self._suptitle: Optional[str] = None
         self._suptitle_style: dict[str, Any] = {}
         self._supxlabel: Optional[str] = None
         self._supylabel: Optional[str] = None
+        self._supxlabel_entry: Optional[dict[str, Any]] = None
+        self._supylabel_entry: Optional[dict[str, Any]] = None
+        self._figure_text_entries: list[dict[str, Any]] = []
+        self._figure_text_handles: list[_FigureText] = []
+        self._figure_legend: Optional[dict[str, Any]] = None
+        self._figure_legend_handle: Optional[Legend] = None
+        self._tree = FigureTree(self)
+        self.subfigs: list[SubFigure] = []
         self._nrows = 1
         self._ncols = 1
         self._axes: list[Axes] = []
@@ -85,6 +376,8 @@ class Figure:
         self._width_ratios: Optional[tuple[float, ...]] = None
         self._height_ratios: Optional[tuple[float, ...]] = None
         self._layout_options: dict[str, Any] = {}
+        self._layout_dirty = False
+        self._applying_layout = False
         self._subplot_adjust: dict[str, float] = {}
         self._label = ""
         self._gci: Any = None  # last color-mapped artist, for plt.colorbar()/clim()
@@ -104,53 +397,193 @@ class Figure:
 
     def _invalidate(self) -> None:
         self._html_cache = None
+        if self._layout_options.get("engine") == "tight" and not self._applying_layout:
+            self._layout_dirty = True
 
     @property
     def canvas(self) -> "_FigureCanvas":
         return _FigureCanvas(self)
 
+    @property
+    def figure_tree(self) -> ResolvedFigureTree:
+        """The measured native ownership/layout tree used by exporters."""
+        return self._measure_layout().tree
+
+    def get_figure_tree(self) -> ResolvedFigureTree:
+        """Return the same immutable tree snapshot as :attr:`figure_tree`."""
+        return self.figure_tree
+
+    def get_figure(self, root: bool | None = None) -> "Figure":
+        """A root Figure owns itself regardless of ``root``."""
+        return self
+
+    def subfigures(
+        self,
+        nrows: int = 1,
+        ncols: int = 1,
+        *,
+        squeeze: bool = True,
+        wspace: float = 0.0,
+        hspace: float = 0.0,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Create native subfigure containers partitioning this figure."""
+        return _make_subfigures(
+            self,
+            nrows,
+            ncols,
+            squeeze=squeeze,
+            wspace=wspace,
+            hspace=hspace,
+            width_ratios=width_ratios,
+            height_ratios=height_ratios,
+            kwargs=kwargs,
+        )
+
+    def add_subfigure(self, subplotspec: Any, **kwargs: Any) -> "SubFigure":
+        """Create one subfigure from a native SubplotSpec or rectangle."""
+        if isinstance(subplotspec, _SubplotSpec):
+            bounds = subplotspec.gridspec.cell_rect(subplotspec.rows, subplotspec.cols)
+        else:
+            bounds = tuple(float(value) for value in subplotspec)
+        subfigure = SubFigure(self, bounds, **kwargs)
+        self.subfigs.append(subfigure)
+        self._invalidate()
+        return subfigure
+
+    def _register_axes(
+        self,
+        ax: Axes,
+        *,
+        parent: FigureTreeNode | None = None,
+        kind: FigureNodeKind = "axes",
+        rendered: bool = True,
+    ) -> FigureTreeNode:
+        node = self._tree.attach(
+            kind,
+            ax,
+            parent=parent,
+            rendered=rendered,
+        )
+        ax._tree_node = node
+        return node
+
     def add_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        if not args:
+            args = (111,)
         if len(args) == 1 and isinstance(args[0], _SubplotSpec):
             spec = args[0]
+            subplot_key = ("grid", spec.nrows, spec.ncols, spec.index)
             if spec.is_single and not spec.gridspec.has_custom_geometry:
                 self._ensure_grid(spec.nrows, spec.ncols)
-                ax = self._axes_at(spec.index)
+                ax = self._claim_or_create_subplot(subplot_key, spec.index)
             else:
                 # Spans and custom spacing become explicit figure rectangles.
                 # The spec is kept so subplots_adjust() can re-resolve them.
                 ax = self.add_axes(spec.gridspec.cell_rect(spec.rows, spec.cols))
+                # add_axes() models unrelated free-form panels as a 1×N row.
+                # A GridSpec-backed span still belongs to its original grid;
+                # retain that geometry for tight_layout/subplots_adjust.
+                self._nrows, self._ncols = spec.nrows, spec.ncols
                 ax._subplot_spec = spec
-        elif args and args != (1, 1, 1) and args != (111,):
+                ax._subplot_key = (
+                    "gridspec",
+                    id(spec.gridspec),
+                    spec.rows,
+                    spec.cols,
+                )
+                ax._subplot_claimed = True
+        else:
             nrows, ncols, index = _parse_subplot_args(args)
+            subplot_key = ("grid", nrows, ncols, index - 1)
             if any(a._figure_rect is not None for a in self._axes):
                 # matplotlib mixes numbered subplots into figures that already
                 # hold free-form axes; keep the figure free-form via the cell
-                # rectangle (and return the existing axes for a repeat spec).
+                # rectangle. Figure.add_subplot() deliberately does not reuse
+                # an existing match; pyplot.subplot() owns activation/reuse.
                 row, col = divmod(index - 1, ncols)
                 grid = _GridSpec(self, nrows, ncols)
                 rect = grid.cell_rect((row, row + 1), (col, col + 1))
-                existing = next((a for a in self._axes if a._figure_rect == rect), None)
-                if existing is not None:
-                    ax = existing
-                else:
-                    ax = self.add_axes(rect)
-                    ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax = self.add_axes(rect)
+                ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax._subplot_key = subplot_key
+                ax._subplot_claimed = True
             else:
                 self._ensure_grid(nrows, ncols)
-                ax = self._axes_at(index - 1)
-        else:
-            self._ensure_grid(1, 1)
-            ax = self._axes_at(0)
+                ax = self._claim_or_create_subplot(subplot_key, index - 1)
         self._current_ax = ax  # matplotlib: add_subplot activates the axes
+        projection = kwargs.pop("projection", None)
+        if kwargs.pop("polar", False):
+            projection = "polar"
+        if projection is not None:
+            ax._set_projection(projection)
         sharex = kwargs.pop("sharex", None)
         sharey = kwargs.pop("sharey", None)
+        self._share_subplot_axes(ax, sharex=sharex, sharey=sharey)
+        if kwargs:
+            ax.set(**kwargs)
+        return ax
+
+    @staticmethod
+    def _share_subplot_axes(ax: Axes, *, sharex: Any = None, sharey: Any = None) -> None:
+        """Wire construction-only subplot sharing without routing it through ``Axes.set``."""
         if sharex is not None:
             ax._axis["x"] = sharex._axis_props("x")  # static share, as in twiny()
         if sharey is not None:
             ax._axis["y"] = sharey._axis_props("y")
-        if kwargs:
-            ax.set(**kwargs)
+        if sharex is not None or sharey is not None:
+            ax._invalidate()
+
+    def _claim_or_create_subplot(self, key: tuple[Any, ...], index: int) -> Axes:
+        """Claim a grid placeholder or append a same-spec overlay axes."""
+        for candidate in self._axes:
+            if candidate._subplot_key == key and not candidate._subplot_claimed:
+                candidate._subplot_claimed = True
+                return candidate
+        ax = Axes(self)
+        ax._subplot_index = index
+        ax._subplot_key = key
+        ax._subplot_claimed = True
+        self._axes.append(ax)
+        self._register_axes(ax)
         return ax
+
+    def activate_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        """Activate a matching subplot, creating it only when absent."""
+        if not args:
+            args = (111,)
+        if len(args) == 1 and isinstance(args[0], _SubplotSpec):
+            spec = args[0]
+            if spec.is_single and not spec.gridspec.has_custom_geometry:
+                key: tuple[Any, ...] = ("grid", spec.nrows, spec.ncols, spec.index)
+            else:
+                key = ("gridspec", id(spec.gridspec), spec.rows, spec.cols)
+        else:
+            nrows, ncols, index = _parse_subplot_args(args)
+            key = ("grid", nrows, ncols, index - 1)
+        existing = next(
+            (ax for ax in self._axes if ax._subplot_claimed and ax._subplot_key == key),
+            None,
+        )
+        if existing is None:
+            return self.add_subplot(*args, **kwargs)
+        self._current_ax = existing
+        projection = kwargs.pop("projection", None)
+        if kwargs.pop("polar", False):
+            projection = "polar"
+        if projection is not None:
+            # Same handling as add_subplot: re-requesting a claimed slot with
+            # a projection reconfigures it rather than bouncing off the
+            # generic Axes.set path.
+            existing._set_projection(projection)
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        self._share_subplot_axes(existing, sharex=sharex, sharey=sharey)
+        if kwargs:
+            existing.set(**kwargs)
+        return existing
 
     def add_axes(self, rect: Any, **kwargs: Any) -> Axes:
         parsed = tuple(float(value) for value in rect)
@@ -158,9 +591,14 @@ class Figure:
             raise ValueError("add_axes rect must be [left, bottom, width, height]")
         ax = Axes(self)
         self._axes.append(ax)
+        self._register_axes(ax)
         ax._figure_rect = parsed
-        self._nrows, self._ncols = 1, len(self._axes)
         self._current_ax = ax
+        projection = kwargs.pop("projection", None)
+        if kwargs.pop("polar", False):
+            projection = "polar"
+        if projection is not None:
+            ax._set_projection(projection)
         if kwargs:
             ax.set(**kwargs)
         return ax
@@ -216,13 +654,37 @@ class Figure:
         This mirrors the axes-returning half of ``matplotlib.figure.Figure.subplots``.
         Figure creation and pyplot registration belong to the state module.
         """
+        subplot_kw = dict(kwargs.pop("subplot_kw", None) or {})
         del kwargs
-        gridspec_kw = gridspec_kw or {}
-        width_ratios = gridspec_kw.get("width_ratios", width_ratios)
-        height_ratios = gridspec_kw.get("height_ratios", height_ratios)
+        grid_options = dict(gridspec_kw or {})
+        width_ratios = grid_options.pop("width_ratios", width_ratios)
+        height_ratios = grid_options.pop("height_ratios", height_ratios)
+        grid = _GridSpec(
+            self,
+            int(nrows),
+            int(ncols),
+            width_ratios=width_ratios,
+            height_ratios=height_ratios,
+            **grid_options,
+        )
         axes = make_axes_grid(self, int(nrows), int(ncols), squeeze=squeeze)
-        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
-        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        self._width_ratios = grid._width_ratios
+        self._height_ratios = grid._height_ratios
+        if grid.has_custom_geometry:
+            for index, ax in enumerate(self._axes):
+                row, col = divmod(index, int(ncols))
+                spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax._subplot_spec = spec
+                ax._figure_rect = grid.cell_rect(spec.rows, spec.cols)
+        if subplot_kw:
+            projection = subplot_kw.pop("projection", None)
+            if subplot_kw.pop("polar", False):
+                projection = "polar"
+            for ax in np.asarray(axes, dtype=object).reshape(-1):
+                if projection is not None:
+                    ax._set_projection(projection)
+                if subplot_kw:
+                    ax.set(**subplot_kw)
         apply_sharing(self, _share_mode(sharex, "sharex"), _share_mode(sharey, "sharey"))
         self._hide_inner_tick_labels(int(nrows), int(ncols))
         self._invalidate()
@@ -233,9 +695,9 @@ class Figure:
         for index, ax in enumerate(self._axes):
             row, col = index // ncols, index % ncols
             if self._sharex in ("all", "col") and row < nrows - 1:
-                ax._axis_props("x")["tick_label_strategy"] = "off"
+                ax._apply_tick_label_side_visibility("x", {"labelbottom": False})
             if self._sharey in ("all", "row") and col > 0:
-                ax._axis_props("y")["tick_label_strategy"] = "off"
+                ax._apply_tick_label_side_visibility("y", {"labelleft": False})
 
     def add_gridspec(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> "_GridSpec":
         """Return a lightweight GridSpec facade backed by the current grid.
@@ -263,21 +725,32 @@ class Figure:
         )
 
     def _ensure_grid(self, nrows: int, ncols: int) -> None:
-        if (
-            (nrows, ncols) != (self._nrows, self._ncols)
-            and self._axes
-            and any(ax._entries for ax in self._axes)
-        ):
+        reshaping = (nrows, ncols) != (self._nrows, self._ncols)
+        if reshaping and self._axes and any(ax._entries for ax in self._axes):
             raise ValueError("cannot reshape a figure that already has plotted axes")
         self._nrows, self._ncols = nrows, ncols
-        while len(self._axes) < nrows * ncols:
-            self._axes.append(Axes(self))
+        if reshaping:
+            for index, ax in enumerate(self._axes):
+                if ax._figure_rect is None:
+                    ax._subplot_index = index
+                    ax._subplot_key = ("grid", nrows, ncols, index)
+        for index in range(nrows * ncols):
+            key = ("grid", nrows, ncols, index)
+            if any(ax._subplot_key == key for ax in self._axes):
+                continue
+            ax = Axes(self)
+            ax._subplot_index = index
+            ax._subplot_key = key
+            self._axes.append(ax)
+            self._register_axes(ax)
 
     def _axes_at(self, index: int) -> Axes:
         self._ensure_grid(self._nrows, self._ncols)
-        if not self._axes:
-            self._axes.append(Axes(self))
-        return self._axes[index]
+        key = ("grid", self._nrows, self._ncols, index)
+        for ax in self._axes:
+            if ax._subplot_key == key:
+                return ax
+        raise IndexError(index)
 
     @property
     def axes(self) -> list[Axes]:
@@ -285,6 +758,11 @@ class Figure:
 
     def get_axes(self) -> list[Axes]:
         return self.axes
+
+    @property
+    def texts(self) -> list[Text]:
+        """Figure-owned text artists, without manufacturing an Axes."""
+        return list(self._figure_text_handles)
 
     def gca(self) -> Axes:
         if self._current_ax is not None and self._current_ax in self._axes:
@@ -301,9 +779,21 @@ class Figure:
         if ax not in self._axes:
             raise ValueError("Axes must belong to this figure")
         index = self._axes.index(ax)
-        self._axes.remove(ax)
-        ax.figure = None
-        if self._current_ax is ax:
+        node = self._tree.node_for(ax)
+        owned_axes: list[Axes] = []
+        if node is not None:
+            pending = list(node.children)
+            while pending:
+                child = pending.pop()
+                pending.extend(child.children)
+                if isinstance(child.owner, Axes):
+                    owned_axes.append(child.owner)
+        removed = {id(candidate) for candidate in (ax, *owned_axes)}
+        self._axes = [candidate for candidate in self._axes if id(candidate) not in removed]
+        for candidate in (ax, *owned_axes):
+            candidate.figure = None
+        self._tree.detach(ax)
+        if self._current_ax is not None and id(self._current_ax) in removed:
             self._current_ax = self._axes[min(index, len(self._axes) - 1)] if self._axes else None
         if not self._axes:
             self._nrows, self._ncols = 1, 1
@@ -314,16 +804,26 @@ class Figure:
         for ax in self._axes:
             ax.figure = None
         self._axes = []
+        self._tree.clear()
+        self.subfigs = []
         self._current_ax = None
         self._nrows, self._ncols = 1, 1
         self._suptitle = None
         self._supxlabel = None
         self._supylabel = None
+        self._supxlabel_entry = None
+        self._supylabel_entry = None
+        self._figure_text_entries = []
+        self._figure_text_handles = []
+        self._figure_legend = None
+        self._figure_legend_handle = None
         self._shared_colorbar = None
         self._gci = None
         self._width_ratios = None
         self._height_ratios = None
         self._layout_options = {}
+        self._layout_dirty = False
+        self._applying_layout = False
         self._subplot_adjust = {}
         self._invalidate()
 
@@ -332,10 +832,15 @@ class Figure:
     # -- chrome ---------------------------------------------------------------
 
     def suptitle(self, title: str, **kwargs: Any) -> None:
-        size = kwargs.pop("fontsize", kwargs.pop("size", 16.0))
+        size = kwargs.pop("fontsize", kwargs.pop("size", "large"))
         weight = kwargs.pop("fontweight", kwargs.pop("weight", "normal"))
         family = kwargs.pop("fontfamily", kwargs.pop("family", "system-ui, sans-serif"))
-        color = kwargs.pop("color", "#262626")
+        # Figure titles are Text artists in Matplotlib: snapshot the active
+        # text default when authored, rather than hard-coding the light-theme
+        # paint or consulting rcParams later during export.
+        color = kwargs.pop("color", None)
+        if color is None:
+            color = rcParams["text.color"]
         x = kwargs.pop("x", 0.5)
         y = kwargs.pop("y", 0.98)
         ha = kwargs.pop("ha", kwargs.pop("horizontalalignment", "center"))
@@ -344,7 +849,7 @@ class Figure:
             raise TypeError(f"suptitle() got unsupported keyword argument {next(iter(kwargs))!r}")
         self._suptitle = _plain_text(title)
         self._suptitle_style = {
-            "size": float(size),
+            "size": _font_size_points(size, rcParams["font.size"]),
             "weight": str(weight),
             "family": str(family),
             "color": str(color),
@@ -353,22 +858,134 @@ class Figure:
             "ha": str(ha),
             "va": str(va),
         }
+        if self._layout_options.get("engine") == "tight":
+            # Constrained/tight figures compose the suptitle outside the
+            # per-panel chart chrome. Reserve a title row in the same pass
+            # that already reserves tick and Axes-title chrome; otherwise a
+            # one-row gallery places all three titles on the same baseline.
+            prior = self._layout_options
+            if prior.get("rect") is None:
+                prior["rect"] = (0.0, 0.0, 1.0, 0.9)
+                prior["suptitle_rect_reserved"] = True
         self._invalidate()
 
+    def _resolved_suptitle_style(self) -> dict[str, Any]:
+        """Resolve Matplotlib's point-sized title style for this output DPI."""
+        style = dict(self._suptitle_style)
+        style["size"] = float(style.get("size", 12.0)) * self.get_dpi() / 72.0
+        return style
+
     def supxlabel(self, label: str, **kwargs: Any) -> Text:
+        x = float(kwargs.pop("x", 0.5))
+        y = float(kwargs.pop("y", 0.01))
+        entry = self._figure_label_entry(
+            x,
+            y,
+            label,
+            ha=kwargs.pop("ha", kwargs.pop("horizontalalignment", "center")),
+            va=kwargs.pop("va", kwargs.pop("verticalalignment", "bottom")),
+            rotation=kwargs.pop("rotation", 0.0),
+            kwargs=kwargs,
+        )
         self._supxlabel = str(label)
-        return self.text(0.5, 0.01, label, ha=kwargs.pop("ha", "center"), **kwargs)
+        self._supxlabel_entry = entry
+        self._invalidate()
+        return _FigureText(self, entry, role="x")
 
     def supylabel(self, label: str, **kwargs: Any) -> Text:
-        self._supylabel = str(label)
-        return self.text(
-            0.01,
-            0.5,
+        x = float(kwargs.pop("x", 0.02))
+        y = float(kwargs.pop("y", 0.5))
+        entry = self._figure_label_entry(
+            x,
+            y,
             label,
-            va=kwargs.pop("va", "center"),
-            rotation=kwargs.pop("rotation", "vertical"),
-            **kwargs,
+            ha=kwargs.pop("ha", kwargs.pop("horizontalalignment", "left")),
+            va=kwargs.pop("va", kwargs.pop("verticalalignment", "center")),
+            rotation=kwargs.pop("rotation", 90.0),
+            kwargs=kwargs,
         )
+        self._supylabel = str(label)
+        self._supylabel_entry = entry
+        self._invalidate()
+        return _FigureText(self, entry, role="y")
+
+    def _figure_label_entry(
+        self,
+        x: float,
+        y: float,
+        label: str,
+        *,
+        ha: Any,
+        va: Any,
+        rotation: Any,
+        kwargs: dict[str, Any],
+        default_size: Any = None,
+        default_weight: Any = None,
+    ) -> dict[str, Any]:
+        if default_size is None:
+            default_size = rcParams["figure.labelsize"]
+        if default_weight is None:
+            default_weight = rcParams["figure.labelweight"]
+        size = kwargs.pop("fontsize", kwargs.pop("size", default_size))
+        weight = kwargs.pop("fontweight", kwargs.pop("weight", default_weight))
+        family = kwargs.pop("fontfamily", kwargs.pop("family", "system-ui, sans-serif"))
+        color = kwargs.pop("color", rcParams["text.color"])
+        fontstyle = kwargs.pop("fontstyle", kwargs.pop("style", "normal"))
+        if kwargs:
+            raise TypeError(f"figure label got unsupported keyword argument {next(iter(kwargs))!r}")
+        angle = 90.0 if rotation == "vertical" else float(rotation)
+        return {
+            "kind": "@text",
+            "args": (x, y, _plain_text(label)),
+            "kwargs": {
+                "anchor": {"left": "start", "center": "middle", "right": "end"}.get(
+                    str(ha), "middle"
+                ),
+                "color": resolve_color(color) or "black",
+                "style": {
+                    "coordinate_space": "figure_fraction",
+                    "vertical_align": str(va),
+                    "font_size": _font_size_points(size, rcParams["font.size"]),
+                    "font_weight": str(weight),
+                    "font_family": str(family),
+                    "font_style": str(fontstyle),
+                    "rotation": angle,
+                },
+            },
+        }
+
+    def _resolved_figure_labels(self) -> list[dict[str, Any]]:
+        labels = []
+        point_scale = self.get_dpi() / 72.0
+        entries = [
+            *((f"text-{index}", entry) for index, entry in enumerate(self._figure_text_entries)),
+            ("x", self._supxlabel_entry),
+            ("y", self._supylabel_entry),
+        ]
+        for role, entry in entries:
+            if entry is None:
+                continue
+            x, y, text = entry["args"]
+            kwargs = entry["kwargs"]
+            style = kwargs.get("style") or {}
+            labels.append(
+                {
+                    "role": role,
+                    "text": str(text),
+                    "x": float(x),
+                    "y": float(y),
+                    "anchor": kwargs.get("anchor", "middle"),
+                    "vertical_align": style.get("vertical_align", "center"),
+                    "rotation": float(style.get("rotation", 0.0)),
+                    "size": float(style.get("font_size", rcParams["font.size"])) * point_scale,
+                    "weight": str(style.get("font_weight", "normal")),
+                    "family": str(style.get("font_family", "system-ui, sans-serif")),
+                    "font_style": str(style.get("font_style", "normal")),
+                    "color": str(kwargs.get("color", "black")),
+                    "opacity": float(kwargs.get("opacity", 1.0)),
+                }
+            )
+        return labels
 
     def text(
         self,
@@ -378,20 +995,102 @@ class Figure:
         fontdict: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Text:
-        return self.gca().text(x, y, s, fontdict=fontdict, transform=self.transFigure, **kwargs)
+        if fontdict:
+            kwargs = {**fontdict, **kwargs}
+        transform = kwargs.pop("transform", self.transFigure)
+        if transform not in {self.transFigure, "figure fraction"}:
+            raise not_implemented(
+                "Figure.text(transform=...)",
+                "the default figure-fraction transform",
+            )
+        fontproperties = kwargs.pop("fontproperties", None)
+        if fontproperties is not None:
+            getters = {
+                "fontsize": "get_size_in_points",
+                "fontfamily": "get_family",
+                "fontstyle": "get_style",
+                "fontweight": "get_weight",
+            }
+            for keyword, getter_name in getters.items():
+                getter = getattr(fontproperties, getter_name, None)
+                if keyword not in kwargs and callable(getter):
+                    value = getter()
+                    if keyword == "fontfamily" and isinstance(value, (list, tuple)):
+                        value = value[0] if value else "sans-serif"
+                    kwargs[keyword] = value
+        alpha = kwargs.pop("alpha", None)
+        zorder = float(kwargs.pop("zorder", 3.0))
+        variant = kwargs.pop("fontvariant", kwargs.pop("variant", None))
+        if variant not in (None, "normal"):
+            raise not_implemented("Figure.text(fontvariant=...)", "fontvariant='normal'")
+        usetex = kwargs.pop("usetex", None)
+        if usetex not in (None, False):
+            raise not_implemented(
+                "Figure.text(usetex=True)",
+                "compat mode with a configured TeX environment",
+            )
+        entry = self._figure_label_entry(
+            float(x),
+            float(y),
+            s,
+            ha=kwargs.pop("ha", kwargs.pop("horizontalalignment", "left")),
+            va=kwargs.pop("va", kwargs.pop("verticalalignment", "baseline")),
+            rotation=kwargs.pop("rotation", 0.0),
+            kwargs=kwargs,
+            default_size=rcParams["font.size"],
+            default_weight="normal",
+        )
+        if alpha is not None:
+            entry["kwargs"]["opacity"] = float(alpha)
+        entry["_zorder"] = zorder
+        self._figure_text_entries.append(entry)
+        self._figure_text_entries.sort(key=lambda item: float(item.get("_zorder", 0.0)))
+        handle = _FigureText(self, entry)
+        self._figure_text_handles.append(handle)
+        self._tree.attach(
+            "figure_text",
+            handle,
+            rendered=False,
+            metadata={"entry": entry},
+        )
+        self._invalidate()
+        return handle
 
-    def legend(self, *args: Any, **kwargs: Any) -> None:
+    def legend(self, *args: Any, **kwargs: Any) -> Legend:
+        """Create one figure-level legend aggregated across all axes."""
+        if len(args) > 2:
+            raise TypeError("Figure.legend() accepts at most handles and labels")
         axes = self.axes or [self.gca()]
-        labels = args[1] if len(args) >= 2 else kwargs.get("labels")
-        if labels is not None:
-            axes[0].legend(args[0] if args else [], labels, **kwargs)
-            return None
+        detected_handles: list[Any] = []
+        detected_labels: list[str] = []
         for ax in axes:
-            if any(entry.get("kwargs", {}).get("name") for entry in ax._entries):
-                ax.legend(*args, **kwargs)
-        if not any(ax._legend for ax in axes):
-            axes[0].legend(*args, **kwargs)
-        return None
+            handles, labels = ax.get_legend_handles_labels()
+            detected_handles.extend(handles)
+            detected_labels.extend(labels)
+        if len(args) >= 2:
+            handles, labels = list(args[0]), list(args[1])
+        elif len(args) == 1:
+            handles, labels = detected_handles, list(args[0])
+        else:
+            handles = list(kwargs.pop("handles", detected_handles))
+            labels = list(kwargs.pop("labels", detected_labels))
+        loc = kwargs.pop("loc", "upper right")
+        figure_loc = str(loc)
+        if figure_loc.startswith("outside "):
+            if figure_loc != "outside right upper":
+                raise not_implemented(
+                    f"Figure.legend(loc={figure_loc!r})",
+                    "loc='outside right upper'",
+                )
+            loc = "upper left"
+        legend = Legend(axes[0], handles, labels, loc=loc, **kwargs)
+        self._figure_legend_handle = legend
+        self._figure_legend = {
+            **legend.spec(),
+            "figure_loc": figure_loc,
+        }
+        self._invalidate()
+        return legend
 
     def tight_layout(self, **kwargs: Any) -> None:
         pad = kwargs.pop("pad", None)
@@ -409,7 +1108,172 @@ class Figure:
             "w_pad": w_pad,
             "rect": rect,
         }
+        # Defer the solve until geometry is queried or an output is built.
+        # Figure factories receive layout= before callers add marks/labels;
+        # solving there permanently bakes an empty-axes rectangle.
+        self._layout_dirty = True
         self._invalidate()
+        # Preserve Matplotlib's observable call semantics for code that reads
+        # axes positions immediately. Later content/style mutations mark the
+        # request dirty again, so factory-authored tight/constrained layout is
+        # still re-solved from final content at render time.
+        self._ensure_layout()
+
+    def _ensure_layout(self, chrome_cache: Optional[_ChromeCache] = None) -> None:
+        if not self._layout_dirty or self._applying_layout:
+            return
+        self._applying_layout = True
+        try:
+            self._apply_tight_layout(chrome_cache)
+        finally:
+            self._applying_layout = False
+
+    def _apply_tight_layout(self, chrome_cache: Optional[_ChromeCache] = None) -> None:
+        options = self._layout_options
+        pad = options.get("pad")
+        h_pad = options.get("h_pad")
+        w_pad = options.get("w_pad")
+        rect = options.get("rect")
+        # The native panels carry their own tick/title chrome, while the
+        # GridSpec rectangles describe plot boxes only.  Reserve enough
+        # figure-edge and inter-panel room for that chrome so adjacent panels
+        # do not overlap.  This is the same job Matplotlib's tight-layout
+        # engine performs from artist extents; the shim uses its deterministic
+        # renderer margins instead of a second text-layout engine.
+        if self._axes and not any(
+            ax._figure_rect is not None and ax._subplot_spec is None and ax._subplot_index is None
+            for ax in self._axes
+        ):
+            canvas_w, canvas_h = rc_figsize_px(self._figsize, self._dpi)
+            compact = canvas_w / max(1, self._ncols) < 520
+            nominal_plot_w = max(40, round(canvas_w / max(1, self._ncols)))
+            chrome = [_panel_chrome(ax, nominal_plot_w, cache=chrome_cache) for ax in self._axes]
+            # A lone row/column lets `_charts()` steal automatic-colorbar room
+            # from the source axes. In a grid, the same chrome must instead
+            # participate in the inter-panel solve or neighboring colorbars
+            # overlap. `_tight_layout_colorbar_reservations()` detects that
+            # pre-reserved grid geometry and prevents a second subtraction.
+            resolved_chrome = []
+            for ax, (left, top, right, bottom) in zip(self._axes, chrome, strict=True):
+                automatic = ax._colorbar is not None and ax._colorbar.get("placement") != "axes"
+                colorbar_right, colorbar_bottom = (
+                    ax._colorbar_outside_room(compact) if automatic else (0.0, 0.0)
+                )
+                resolved_chrome.append(
+                    (
+                        left,
+                        top,
+                        right if self._ncols > 1 else max(0.0, right - colorbar_right),
+                        bottom if self._nrows > 1 else max(0.0, bottom - colorbar_bottom),
+                    )
+                )
+            chrome = resolved_chrome
+            left_px = max((item[0] for item in chrome), default=46.0 if compact else 62.0)
+            right_px = max(
+                20.0 if compact else 26.0,
+                max((item[2] for item in chrome), default=0.0),
+            )
+            bottom_px = max((item[3] for item in chrome), default=36.0 if compact else 42.0)
+            top_px = max(20.0, max((item[1] for item in chrome), default=0.0))
+
+            horizontal_gap = 58.0 if compact else 76.0
+            vertical_gap = 44.0 if compact else 56.0
+            for index, (ax, item) in enumerate(zip(self._axes, chrome, strict=True)):
+                spec = ax._subplot_spec
+                if spec is None:
+                    row, col = divmod(index, max(1, self._ncols))
+                    rows, cols = (row, row + 1), (col, col + 1)
+                else:
+                    rows, cols = spec.rows, spec.cols
+                for other_index, other_ax in enumerate(self._axes):
+                    if index == other_index:
+                        continue
+                    other_spec = other_ax._subplot_spec
+                    if other_spec is None:
+                        other_row, other_col = divmod(other_index, max(1, self._ncols))
+                        other_rows = (other_row, other_row + 1)
+                        other_cols = (other_col, other_col + 1)
+                    else:
+                        other_rows, other_cols = other_spec.rows, other_spec.cols
+                    rows_overlap = max(rows[0], other_rows[0]) < min(rows[1], other_rows[1])
+                    cols_overlap = max(cols[0], other_cols[0]) < min(cols[1], other_cols[1])
+                    if rows_overlap and cols[1] == other_cols[0]:
+                        horizontal_gap = max(
+                            horizontal_gap,
+                            item[2] + chrome[other_index][0],
+                        )
+                    if cols_overlap and rows[1] == other_rows[0]:
+                        vertical_gap = max(
+                            vertical_gap,
+                            item[3] + chrome[other_index][1],
+                        )
+
+            if self._suptitle and not options.get("suptitle_rect_reserved"):
+                style = self._resolved_suptitle_style()
+                block = _textblock.measure(self._suptitle, float(style.get("size", 16.0)))
+                y = float(style.get("y", 0.98))
+                suptitle_bottom = max(0.0, (1.0 - y) * canvas_h) + block.height
+                top_px += suptitle_bottom + 6.0
+            for label in self._resolved_figure_labels():
+                if label["role"] == "x":
+                    bottom_px += float(label["size"]) + 8.0
+                else:
+                    left_px += float(label["size"]) + 8.0
+            if (
+                self._figure_legend
+                and self._figure_legend.get("items")
+                and self._figure_legend.get("figure_loc") == "outside right upper"
+            ):
+                from .._svg import _legend_layout
+
+                measured = _legend_layout(
+                    list(self._figure_legend.get("items") or []),
+                    {"x": 0.0, "y": 0.0, "w": float(canvas_w), "h": float(canvas_h)},
+                    {**self._figure_legend, "loc": "upper left"},
+                )
+                right_px += float(measured["box_w"]) + 12.0
+            # Explicit *_pad values are font-size multiples in Matplotlib.
+            point_px = float(rcParams["font.size"]) * float(self._dpi or 100.0) / 72.0
+            base_pad = 1.08 if pad is None else float(pad)
+            if w_pad is not None:
+                horizontal_gap += (float(w_pad) - base_pad) * point_px
+            if h_pad is not None:
+                vertical_gap += (float(h_pad) - base_pad) * point_px
+            if pad is not None:
+                extra = (float(pad) - 1.08) * point_px
+                left_px += extra
+                right_px += extra
+                bottom_px += extra
+                top_px += extra
+
+            frame = (0.0, 0.0, 1.0, 1.0) if rect is None else tuple(map(float, rect))
+            if len(frame) != 4:
+                raise ValueError("tight_layout(rect=...) must be [left, bottom, right, top]")
+            frame_left, frame_bottom, frame_right, frame_top = frame
+            left = frame_left + max(0.0, left_px) / canvas_w
+            right = frame_right - max(0.0, right_px) / canvas_w
+            bottom = frame_bottom + max(0.0, bottom_px) / canvas_h
+            top = frame_top - max(0.0, top_px) / canvas_h
+            inner_w = max(1.0, (right - left) * canvas_w)
+            inner_h = max(1.0, (top - bottom) * canvas_h)
+            cell_w = max(
+                1.0,
+                (inner_w - horizontal_gap * max(0, self._ncols - 1)) / max(1, self._ncols),
+            )
+            cell_h = max(
+                1.0,
+                (inner_h - vertical_gap * max(0, self._nrows - 1)) / max(1, self._nrows),
+            )
+            self.subplots_adjust(
+                left=left,
+                right=right,
+                bottom=bottom,
+                top=top,
+                wspace=horizontal_gap / cell_w,
+                hspace=vertical_gap / cell_h,
+            )
+        self._layout_dirty = False
+        self._html_cache = None
 
     def subplots_adjust(
         self,
@@ -442,12 +1306,24 @@ class Figure:
         if merged["bottom"] >= merged["top"]:
             raise ValueError("bottom cannot be >= top")
         self._subplot_adjust.update(material)
+        grid = _GridSpec(
+            self,
+            self._nrows,
+            self._ncols,
+            width_ratios=self._width_ratios,
+            height_ratios=self._height_ratios,
+        )
         for ax in self._axes:
             if ax._subplot_spec is not None:
                 # Gridspec-derived rectangles track the moved SubplotParams
                 # frame (matplotlib re-resolves subplot positions on draw).
                 spec = ax._subplot_spec
                 ax._figure_rect = spec.gridspec.cell_rect(spec.rows, spec.cols)
+            elif ax._subplot_index is not None:
+                # Matplotlib's subplots_adjust() restores a subplot whose
+                # position was set explicitly to its SubplotSpec cell.
+                row, col = divmod(ax._subplot_index, self._ncols)
+                ax._figure_rect = grid.cell_rect((row, row + 1), (col, col + 1))
             ax._invalidate()
         self._invalidate()
 
@@ -507,12 +1383,13 @@ class Figure:
         return self._edgecolor
 
     def colorbar(self, mappable: Any = None, cax: Any = None, ax: Any = None, **kwargs: Any) -> Any:
-        if cax is not None:
-            raise not_implemented("colorbar(cax=...)", "the automatic colorbar placement")
         if mappable is None:
             mappable = self._gci
         axes_arg = ax
-        axes = getattr(mappable, "_axes", None) or self.gca()
+        source_axes = getattr(mappable, "_axes", None) or self.gca()
+        axes = cax if cax is not None else source_axes
+        if cax is not None and cax not in self._axes:
+            raise ValueError("colorbar cax must belong to this figure")
         entry = getattr(mappable, "_entry", {})
         props = entry.get("kwargs", {})
         mapped_values = entry.get("source_z", props.get("color", entry.get("z")))
@@ -523,11 +1400,40 @@ class Figure:
             cmap_obj = mappable.get_cmap()
             colormap = getattr(cmap_obj, "name", cmap_obj)
         try:
-            numeric = np.asarray(mapped_values, dtype=np.float64)
-            finite = numeric[np.isfinite(numeric)]
+            numeric = np.ma.asarray(mapped_values, dtype=np.float64)
+            finite = np.asarray(numeric.compressed(), dtype=np.float64)
+            finite = finite[np.isfinite(finite)]
         except (TypeError, ValueError):
             finite = np.asarray([], dtype=np.float64)
-        explicit_domain = entry.get("domain", props.get("domain"))
+        explicit_domain = entry.get("_mpl_domain", entry.get("domain", props.get("domain")))
+        norm_scale = str(entry.get("_mpl_norm_scale", props.get("_mpl_norm_scale", "linear")))
+        orientation_arg = kwargs.pop("orientation", None)
+        location = kwargs.pop("location", None)
+        if location is not None:
+            location = str(location).lower()
+            if location not in {"right", "bottom"}:
+                raise not_implemented(
+                    f"colorbar(location={location!r})",
+                    "right or bottom colorbar placement",
+                )
+            located_orientation = "vertical" if location == "right" else "horizontal"
+            if orientation_arg is not None and str(orientation_arg) != located_orientation:
+                raise ValueError("location and orientation select incompatible colorbar sides")
+            orientation_arg = located_orientation
+        orientation = str(orientation_arg or "vertical")
+        if orientation not in {"vertical", "horizontal"}:
+            raise ValueError("colorbar() orientation must be 'vertical' or 'horizontal'")
+        spacing = str(kwargs.pop("spacing", "uniform")).lower()
+        if spacing not in {"uniform", "proportional"}:
+            raise ValueError("colorbar() spacing must be 'uniform' or 'proportional'")
+        formatter = kwargs.pop("format", None)
+        shrink = float(kwargs.pop("shrink", 1.0))
+        if not np.isfinite(shrink) or not 0.0 < shrink <= 1.0:
+            raise ValueError("colorbar() shrink must be finite and in (0, 1]")
+        anchor_arg = kwargs.pop("anchor", (0.5, 0.5))
+        anchor_values = np.asarray(anchor_arg, dtype=np.float64).reshape(-1)
+        if len(anchor_values) != 2 or not np.all(np.isfinite(anchor_values)):
+            raise ValueError("colorbar() anchor must be a finite (x, y) pair")
         options = {
             "colormap": colormap or "viridis",
             "domain": (
@@ -536,8 +1442,30 @@ class Figure:
                 else ([float(finite.min()), float(finite.max())] if finite.size else [0.0, 1.0])
             ),
             "label": _plain_text(kwargs.pop("label", "")),
-            "orientation": str(kwargs.pop("orientation", "vertical")),
+            "orientation": orientation,
         }
+        if spacing != "uniform":
+            options["spacing"] = spacing
+        line_contour = entry.get("factory") == "contour" and not props.get("filled", False)
+        if line_contour:
+            # Matplotlib's line-contour colorbar is an empty bar crossed by the
+            # ContourSet's own styled isolines; it is not a filled scalar ramp.
+            options["line_only"] = True
+            options["lines"] = _contour_colorbar_lines(mappable, source_axes)
+        if norm_scale != "linear":
+            options["scale"] = norm_scale
+        pad = kwargs.pop("pad", None)
+        if pad is not None:
+            pad_value = float(pad)
+            if not np.isfinite(pad_value) or pad_value < 0.0:
+                raise ValueError("colorbar() pad must be a finite nonnegative number")
+            options["pad"] = pad_value
+        if cax is not None:
+            options["placement"] = "axes"
+        if shrink != 1.0:
+            options["shrink"] = shrink
+        if not np.array_equal(anchor_values, [0.5, 0.5]):
+            options["anchor"] = [float(anchor_values[0]), float(anchor_values[1])]
         # When the mappable's value domain is not knowable at colorbar() time
         # (e.g. hexbin counts are binned inside the mark), defer to the compiled
         # figure's color domain at render time instead of the 0..1 placeholder.
@@ -553,6 +1481,17 @@ class Figure:
         ticks = kwargs.pop("ticks", None)
         if ticks is not None:
             options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+        elif line_contour:
+            locations = np.asarray(mappable.levels, dtype=np.float64).reshape(-1)
+            step = max(1, int(np.ceil(len(locations) / 10)))
+            candidates = [locations[offset::step] for offset in range(step)]
+            selected = min(candidates, key=lambda values: np.min(np.abs(values)))
+            zero_tolerance = (
+                np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(locations)))) * 8
+            )
+            options["ticks"] = [
+                0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
+            ]
         elif levels is not None and entry.get("discrete_boundaries") is not None:
             # Matplotlib uses a FixedLocator capped at roughly ten bins for a
             # contour colorbar. Match its offset selection so zero (or the
@@ -567,14 +1506,100 @@ class Figure:
             options["ticks"] = [
                 0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
             ]
+        if formatter is not None:
+            if "ticks" not in options:
+                raise not_implemented(
+                    "colorbar(format=...) without fixed ticks",
+                    "format= together with ticks= or a discrete mappable",
+                )
+            options["tick_labels"] = _colorbar_tick_labels(
+                formatter, cast(list[float], options["ticks"])
+            )
         extend = kwargs.pop("extend", None)
+        if extend is None:
+            # A contour set owns its extend state. Matplotlib colorbars inherit
+            # it unless the caller explicitly overrides ``extend=``; losing it
+            # drops the triangular end caps and misstates the mapped domain.
+            extend = props.get("extend", entry.get("extend", "neither"))
         if extend is not None:
             if extend not in ("neither", "min", "max", "both"):
                 raise ValueError("colorbar() extend must be 'neither', 'min', 'max', or 'both'")
             if extend != "neither":
                 options["extend"] = str(extend)
+
+        def rgb255(value: Any) -> list[int]:
+            rgba = np.asarray(resolve_rgba(value), dtype=np.float64)
+            return [int(round(255.0 * channel)) for channel in rgba[:3]]
+
+        # Listed contour fills already carry their exact per-band RGBA table.
+        # Keep that table on the colorbar instead of replacing it with samples
+        # from the nominal fallback colormap. Extended rows own the cap colors.
+        color_table = props.get("color")
+        discrete_colors = entry.get("discrete_colors")
+        if levels is not None and discrete_colors is not None:
+            band_rows = np.asarray(discrete_colors, dtype=np.uint8)
+            if band_rows.shape == (int(levels), 3):
+                options["band_colors"] = band_rows.tolist()
+        if levels is not None and color_table is not None and not isinstance(color_table, str):
+            table = np.asarray(color_table, dtype=np.float64)
+            if table.ndim == 2 and table.shape[1] in (3, 4) and len(table):
+                rgb_table = np.rint(np.clip(table[:, :3], 0.0, 1.0) * 255.0).astype(int)
+                extend_min = extend in ("min", "both")
+                extend_max = extend in ("max", "both")
+                band_count = int(levels)
+                start = int(extend_min and len(rgb_table) >= band_count + 1 + int(extend_max))
+                band_rows = rgb_table[start : start + band_count]
+                if len(band_rows) == band_count:
+                    options["band_colors"] = band_rows.tolist()
+                if extend_min:
+                    options["under_color"] = rgb_table[0].tolist()
+                if extend_max:
+                    options["over_color"] = rgb_table[-1].tolist()
+        if extend in ("min", "both") and entry.get("cmap_under") is not None:
+            options["under_color"] = rgb255(entry["cmap_under"])
+        if extend in ("max", "both") and entry.get("cmap_over") is not None:
+            options["over_color"] = rgb255(entry["cmap_over"])
+
         check_unsupported(kwargs, "colorbar()")
-        if isinstance(axes_arg, (list, tuple, np.ndarray)):
+        if (
+            cax is None
+            and not isinstance(axes_arg, (list, tuple, np.ndarray))
+            and source_axes._colorbar is not None
+        ):
+            # The wire format intentionally keeps one colorbar per chart. A
+            # second Matplotlib colorbar therefore becomes an ordinary
+            # explicit colorbar axes, a path every renderer already supports.
+            # This preserves both bars without widening the core chart schema.
+            left, bottom, parent_width, parent_height = source_axes.get_position().bounds
+            canvas_width, canvas_height = rc_figsize_px(self._figsize, self._dpi)
+            anchor_x, anchor_y = map(float, anchor_values)
+            if orientation == "horizontal":
+                bar_width = parent_width * shrink
+                bar_left = left + (parent_width - bar_width) * anchor_x
+                bar_height = max(18.0 / canvas_height, 0.025)
+                bar_bottom = max(0.01, bottom - bar_height)
+                rect = (bar_left, bar_bottom, bar_width, bar_height)
+            else:
+                bar_height = parent_height * shrink
+                bar_bottom = bottom + (parent_height - bar_height) * anchor_y
+                bar_width = max(18.0 / canvas_width, 0.025)
+                rect = (
+                    min(0.99 - bar_width, left + parent_width + 24.0 / canvas_width),
+                    bar_bottom,
+                    bar_width,
+                    bar_height,
+                )
+            cax = self.add_axes(rect)
+            self._current_ax = source_axes
+            axes = cax
+            options["placement"] = "axes"
+        if cax is not None:
+            axes.set_axis_off()
+            axes.spines[:].set_visible(False)
+            axes._colorbar = options
+            axes._colorbar_source = entry if entry else None
+            axes._invalidate()
+        elif isinstance(axes_arg, (list, tuple, np.ndarray)):
             self._shared_colorbar = options
             self._invalidate()
         else:
@@ -582,18 +1607,89 @@ class Figure:
             axes._colorbar_source = entry if entry else None
             axes._invalidate()
 
-        class _Colorbar:
-            def __init__(self, ax: Any, colorbar_options: dict[str, Any]) -> None:
-                self.ax = ax
+        class _ColorbarAxes:
+            """Minimal colorbar-axes facade backed by the chrome options.
+
+            A colorbar is renderer chrome in xy rather than a data-bearing
+            Axes. Exposing the host axes here made ``cbar.ax.set_ylabel`` rename
+            the plot's y axis and could invalidate away the reserved colorbar
+            strip during constrained-layout export.
+            """
+
+            def __init__(self, host: Any, colorbar_options: dict[str, Any]) -> None:
+                self._host = host
                 self._options = colorbar_options
 
-            def add_lines(self, *args: Any, **kwargs: Any) -> None:
-                del args, kwargs
+            def set_ylabel(self, label: str, **kwargs: Any) -> None:
+                del kwargs
+                self._options["label"] = _plain_text(label)
+                self._host._invalidate()
+
+            def set_xlabel(self, label: str, **kwargs: Any) -> None:
+                self.set_ylabel(label, **kwargs)
+
+            def get_position(self, original: bool = False) -> Bbox:
+                # compat-noop: virtual colorbar chrome has no independently
+                # aspect-adjusted axes box, so its active and original boxes
+                # are identical by construction.
+                del original  # compat-noop: active/original virtual chrome boxes are identical
+                return Bbox.from_bounds(*_colorbar_viewport(self._host, self._options))
+
+            def set_position(self, position: Any) -> None:
+                values = np.asarray(
+                    getattr(position, "bounds", position), dtype=np.float64
+                ).reshape(-1)
+                if len(values) != 4 or not np.isfinite(values).all():
+                    raise ValueError(
+                        "colorbar position must be a finite (left, bottom, width, height)"
+                    )
+                parent_left, parent_bottom, parent_width, parent_height = (
+                    self._host.get_position().bounds
+                )
+                left, bottom, width, height = map(float, values)
+                if self._options.get("orientation") == "horizontal":
+                    shrink_value = float(np.clip(width / max(parent_width, 1e-12), 0.01, 1.0))
+                    remainder = max(parent_width - width, 1e-12)
+                    anchor = float(np.clip((left - parent_left) / remainder, 0.0, 1.0))
+                    self._options["anchor"] = [anchor, 0.5]
+                else:
+                    shrink_value = float(np.clip(height / max(parent_height, 1e-12), 0.01, 1.0))
+                    remainder = max(parent_height - height, 1e-12)
+                    anchor = float(np.clip((bottom - parent_bottom) / remainder, 0.0, 1.0))
+                    self._options["anchor"] = [0.5, anchor]
+                self._options["shrink"] = shrink_value
+                self._host._invalidate()
+
+        class _Colorbar:
+            def __init__(self, ax: Any, colorbar_options: dict[str, Any]) -> None:
+                self._options = colorbar_options
+                self._host = ax
+                self._tree_node: Any = None
+                self.ax = (
+                    ax
+                    if colorbar_options.get("placement") == "axes"
+                    else _ColorbarAxes(ax, colorbar_options)
+                )
+
+            def add_lines(self, contour: Any, *, erase: bool = True) -> None:
+                from ._artists import ContourSet
+
+                if not isinstance(contour, ContourSet):
+                    raise not_implemented(
+                        "Colorbar.add_lines(levels, colors, linewidths)",
+                        "Colorbar.add_lines(ContourSet)",
+                    )
+                lines = _contour_colorbar_lines(contour, self._host)
+                if erase:
+                    self._options["lines"] = lines
+                else:
+                    self._options.setdefault("lines", []).extend(lines)
+                self._host._invalidate()
 
             def set_label(self, label: str, **kwargs: Any) -> None:
                 del kwargs
                 self._options["label"] = _plain_text(label)
-                self.ax._invalidate()
+                self._host._invalidate()
 
             def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
                 if labels is not None:
@@ -602,9 +1698,37 @@ class Figure:
                     )
                 check_unsupported(kwargs, "Colorbar.set_ticks()")
                 self._options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
-                self.ax._invalidate()
+                self._host._invalidate()
 
-        return _Colorbar(axes, options)
+            def minorticks_on(self) -> None:
+                self._options["minor_ticks"] = True
+                self._host._invalidate()
+
+            def minorticks_off(self) -> None:
+                self._options["minor_ticks"] = False
+                self._host._invalidate()
+
+        colorbar = _Colorbar(axes, options)
+        source_node = self._tree.node_for(source_axes)
+        if options.get("placement") == "axes":
+            node = self._tree.attach(
+                "colorbar_axes",
+                axes,
+                parent=source_node,
+                metadata={"host": source_axes, "options": options},
+            )
+            axes._tree_node = node
+            colorbar._tree_node = node
+        else:
+            colorbar._tree_node = self._tree.attach(
+                "colorbar_chrome",
+                colorbar,
+                parent=source_node,
+                rendered=False,
+                metadata={"host": source_axes, "options": options},
+            )
+        self._invalidate()
+        return colorbar
 
     def figimage(
         self,
@@ -642,15 +1766,119 @@ class Figure:
             axes.set_axis_off()
         return result
 
-    def subplot_mosaic(self, mosaic: Any, **kwargs: Any) -> dict[Any, Axes]:
-        rows = [list(row) for row in mosaic]
-        labels: list[Any] = []
-        for row in rows:
-            for label in row:
-                if label != "." and label not in labels:
-                    labels.append(label)
-        self._ensure_grid(max(1, len(rows)), max(1, max(map(len, rows))))
-        return {label: self._axes_at(index) for index, label in enumerate(labels)}
+    def subplot_mosaic(
+        self,
+        mosaic: Any,
+        *,
+        sharex: bool = False,
+        sharey: bool = False,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        empty_sentinel: Any = ".",
+        subplot_kw: Optional[dict[str, Any]] = None,
+        per_subplot_kw: Optional[dict[Any, dict[str, Any]]] = None,
+        gridspec_kw: Optional[dict[str, Any]] = None,
+    ) -> dict[Any, Axes]:
+        """Create one axes for each rectangular label region in ``mosaic``.
+
+        Unlike a dense ``subplots`` grid, a mosaic may contain holes and one
+        label may span several cells.  Resolve every region through the same
+        ``_GridSpec.cell_rect`` path as an explicit GridSpec span, but do not
+        call ``_ensure_grid``: that helper intentionally materializes every
+        dense-grid cell and would turn holes and repeated labels into phantom
+        axes.
+        """
+        if not isinstance(sharex, bool) or not isinstance(sharey, bool):
+            raise TypeError("sharex and sharey must be bool")
+        if isinstance(mosaic, str):
+            if "\n" in mosaic:
+                cleaned = inspect.cleandoc(mosaic).strip("\n")
+                rows = [list(row.strip()) for row in cleaned.split("\n")]
+            else:
+                rows = [list(row.strip()) for row in mosaic.split(";")]
+        else:
+            try:
+                rows = [list(row) for row in mosaic]
+            except TypeError as error:
+                raise ValueError("mosaic must be a string or a 2-D row sequence") from error
+        if not rows or not rows[0]:
+            raise ValueError("mosaic must contain at least one row and one column")
+        ncols = len(rows[0])
+        if any(len(row) != ncols for row in rows):
+            raise ValueError("all mosaic rows must have the same length")
+        nrows = len(rows)
+
+        grid_options = dict(gridspec_kw or {})
+        for name, value in (
+            ("width_ratios", width_ratios),
+            ("height_ratios", height_ratios),
+        ):
+            if value is None:
+                continue
+            if name in grid_options:
+                raise ValueError(f"{name!r} must not be defined both directly and in gridspec_kw")
+            grid_options[name] = value
+        grid = _GridSpec(self, nrows, ncols, **grid_options)
+
+        positions: dict[Any, list[tuple[int, int]]] = {}
+        for row_index, row in enumerate(rows):
+            for col_index, label in enumerate(row):
+                if label == empty_sentinel:
+                    continue
+                try:
+                    hash(label)
+                except TypeError as error:
+                    raise TypeError("mosaic labels must be hashable scalar values") from error
+                positions.setdefault(label, []).append((row_index, col_index))
+        if not positions:
+            raise ValueError("mosaic must contain at least one non-empty label")
+
+        regions: list[tuple[Any, _SubplotSpec]] = []
+        for label, cells in positions.items():
+            row0 = min(row for row, _col in cells)
+            row1 = max(row for row, _col in cells) + 1
+            col0 = min(col for _row, col in cells)
+            col1 = max(col for _row, col in cells) + 1
+            if any(
+                rows[row][col] != label for row in range(row0, row1) for col in range(col0, col1)
+            ):
+                raise ValueError(
+                    f"mosaic label {label!r} specifies a non-rectangular or non-contiguous area"
+                )
+            regions.append((label, _SubplotSpec(grid, (row0, row1), (col0, col1))))
+
+        common_options = dict(subplot_kw or {})
+        per_label_options = dict(per_subplot_kw or {})
+        unknown_labels = set(per_label_options) - set(positions)
+        if unknown_labels:
+            raise ValueError(
+                f"per_subplot_kw contains labels absent from the mosaic: "
+                f"{sorted(map(repr, unknown_labels))}"
+            )
+
+        self._nrows, self._ncols = nrows, ncols
+        self._width_ratios = grid._width_ratios
+        self._height_ratios = grid._height_ratios
+        axes: dict[Any, Axes] = {}
+        for label, spec in regions:
+            options = {**common_options, **per_label_options.get(label, {})}
+            ax = self.add_axes(grid.cell_rect(spec.rows, spec.cols), **options)
+            ax._subplot_spec = spec
+            ax._subplot_claimed = True
+            axes[label] = ax
+
+        apply_sharing(self, sharex, sharey)
+        if sharex or sharey:
+            for ax in axes.values():
+                spec = ax._subplot_spec
+                assert spec is not None
+                if sharex and spec.rows[1] < nrows:
+                    ax._apply_tick_label_side_visibility("x", {"labelbottom": False})
+                if sharey and spec.cols[0] > 0:
+                    ax._apply_tick_label_side_visibility("y", {"labelleft": False})
+        self._current_ax = next(reversed(axes.values()))
+        self._invalidate()
+        return axes
 
     # -- panel sizing -----------------------------------------------------------
 
@@ -658,7 +1886,76 @@ class Figure:
         w, h = rc_figsize_px(self._figsize, self._dpi)
         return max(120, w // self._ncols), max(120, h // self._nrows)
 
-    def _effective_rects(self) -> Optional[list[tuple[float, float, float, float]]]:
+    def _resolve_figure_tree(
+        self,
+        chrome_cache: Optional[_ChromeCache] = None,
+    ) -> ResolvedFigureTree:
+        """Measure every native ownership node in root-figure coordinates."""
+        self._ensure_layout(chrome_cache)
+
+        def container_clip(node: FigureTreeNode) -> NormalizedRect:
+            candidate = node.parent
+            while candidate is not None and candidate.kind not in {"figure", "subfigure"}:
+                candidate = candidate.parent
+            return (0.0, 0.0, 1.0, 1.0) if candidate is None else candidate.clip
+
+        def resolve(
+            node: FigureTreeNode,
+            parent: ResolvedFigureNode | None,
+        ) -> tuple[NormalizedRect, NormalizedRect]:
+            if node.kind == "figure":
+                viewport = (0.0, 0.0, 1.0, 1.0)
+                return viewport, viewport
+            if node.kind == "subfigure":
+                viewport = node.owner._absolute_bounds()
+                parent_clip = (0.0, 0.0, 1.0, 1.0) if parent is None else parent.clip
+                return viewport, intersect_rect(viewport, parent_clip)
+            if node.kind == "figure_text":
+                entry = node.metadata.get("entry") or {}
+                args = entry.get("args") or (0.0, 0.0)
+                viewport = (float(args[0]), float(args[1]), 0.0, 0.0)
+                return viewport, container_clip(node)
+            if node.kind == "colorbar_chrome":
+                viewport = _colorbar_viewport(
+                    node.metadata["host"],
+                    node.metadata["options"],
+                )
+            elif node.kind == "twin_axes" and parent is not None:
+                viewport = parent.viewport
+            else:
+                viewport = self._axes_rect(node.owner) or _DEFAULT_AXES_RECT
+            return viewport, intersect_rect(viewport, container_clip(node))
+
+        return self._tree.resolve(resolve)
+
+    def _measure_layout(
+        self,
+        chrome_cache: Optional[_ChromeCache] = None,
+    ) -> _MeasuredFigureLayout:
+        """Return the single resolved tree snapshot consumed by one export."""
+        tree = self._resolve_figure_tree(chrome_cache)
+        canvas_size = rc_figsize_px(self._figsize, self._dpi)
+        if not self._axes:
+            rects: Optional[list[NormalizedRect]] = None
+        elif (
+            all(ax._figure_rect is None for ax in self._axes)
+            and not self._subplot_adjust
+            and len(self._axes) <= 1
+            and self._supxlabel_entry is None
+            and self._supylabel_entry is None
+            and not self._figure_text_entries
+            and self._figure_legend is None
+        ):
+            rects = None
+        else:
+            resolved = {id(node.owner): node for node in tree.axes}
+            rects = [resolved[id(ax)].viewport for ax in self._axes]
+        return _MeasuredFigureLayout(tree=tree, canvas_size=canvas_size, rects=rects)
+
+    def _effective_rects(
+        self,
+        chrome_cache: Optional[_ChromeCache] = None,
+    ) -> Optional[list[tuple[float, float, float, float]]]:
         """Per-axes figure rects when the figure needs free-form placement, else None.
 
         A figure is free-form when any axes carries an explicit rect (the
@@ -671,20 +1968,51 @@ class Figure:
         default axes mixed with an inset keeps its full-size position instead
         of dragging every axes back onto the uniform grid.
         """
-        if not self._axes:
-            return None
-        rects = [ax._figure_rect for ax in self._axes]
-        if any(rect is not None for rect in rects):
-            default = (
-                _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
-                if self._subplot_adjust
-                else (0.125, 0.11, 0.775, 0.77)
+        return self._measure_layout(chrome_cache).rects
+
+    def _axes_rect(self, ax: Axes) -> Optional[tuple[float, float, float, float]]:
+        """One axes' matplotlib rectangle (figure fractions), or None if foreign.
+
+        The single resolver behind both `_effective_rects` (what the exporters
+        place) and `Axes.get_position` (what scripts read), so the reported box
+        and the rendered box cannot drift apart.
+        """
+        self._ensure_layout()
+        if ax._twin_parent is not None:
+            return self._axes_rect(ax._twin_parent)
+        if ax._inset_parent is not None and ax._inset_bounds is not None:
+            # Insets use the displayed parent box, after adjustable="box"
+            # aspect correction, rather than its original subplot allocation.
+            parent = ax._inset_parent.get_position().bounds
+            left, bottom, width, height = ax._inset_bounds
+            return (
+                parent[0] + left * parent[2],
+                parent[1] + bottom * parent[3],
+                width * parent[2],
+                height * parent[3],
             )
-            return [rect if rect is not None else default for rect in rects]
-        if not self._subplot_adjust and len(self._axes) <= 1:
+        if ax._figure_rect is not None:
+            return ax._figure_rect
+        if ax not in self._axes:
             return None
-        # A uniform grid (adjusted or default SubplotParams): every panel
+        if any(other._figure_rect is not None for other in self._axes):
+            # Free-form figure (add_axes/insets): matplotlib leaves a rect-less
+            # axes at the SubplotParams frame instead of dragging it onto the
+            # panel grid, which `add_axes` has already redefined as 1 x n.
+            if not self._subplot_adjust:
+                return _DEFAULT_AXES_RECT
+            return _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
+        if len(self._axes) == 1 and self._nrows == self._ncols == 1 and not self._subplot_adjust:
+            # The overwhelmingly common single-subplot case is exactly the
+            # Matplotlib default frame. Avoid rebuilding a one-cell GridSpec
+            # every time layout asks for the axes rectangle.
+            return _DEFAULT_AXES_RECT
+        # A uniform grid (adjusted or default SubplotParams): the panel
         # resolves to its gridspec cell rectangle under the frame and spacing.
+        index = ax._subplot_index
+        if index is None:
+            index = self._axes.index(ax)
+        row, col = divmod(index, self._ncols)
         grid = _GridSpec(
             self,
             self._nrows,
@@ -693,13 +2021,7 @@ class Figure:
             height_ratios=self._height_ratios,
             **self._subplot_adjust,
         )
-        return [
-            grid.cell_rect(
-                (index // self._ncols, index // self._ncols + 1),
-                (index % self._ncols, index % self._ncols + 1),
-            )
-            for index in range(len(self._axes))
-        ]
+        return grid.cell_rect((row, row + 1), (col, col + 1))
 
     def _grid_cell_sizes(self) -> tuple[list[int], list[int]]:
         """Per-column widths and per-row heights of the CSS-grid panel layout.
@@ -717,53 +2039,208 @@ class Figure:
         heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
         return widths, heights
 
-    def _charts(self) -> list[Any]:
-        total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
-        rects = self._effective_rects()
+    def _tight_layout_colorbar_reservations(
+        self,
+        rects: list[tuple[float, float, float, float]],
+        canvas_size: tuple[int, int],
+        chrome_cache: Optional[_ChromeCache] = None,
+    ) -> set[int]:
+        """Return automatic colorbars whose chrome already fits the layout.
+
+        A tight/constrained solve may run either before or after ``colorbar()``.
+        The engine name therefore cannot tell `_charts()` whether the solved
+        rectangles include the colorbar.  Instead, test the resulting geometry:
+        a vertical bar is reserved when the panel's full right chrome fits
+        before the canvas edge or the next panel's left chrome; a horizontal
+        bar uses the analogous clearance below the panel.
+        """
+        if self._layout_options.get("engine") != "tight":
+            return set()
+
+        canvas_w, canvas_h = canvas_size
+        chromes = [
+            _panel_chrome(ax, max(1, round(canvas_w * rect[2])), cache=chrome_cache)
+            for ax, rect in zip(self._axes, rects, strict=True)
+        ]
+        reserved: set[int] = set()
+        tolerance = 0.5
+        for index, (ax, rect, chrome) in enumerate(zip(self._axes, rects, chromes, strict=True)):
+            options = ax._colorbar
+            if options is None or options.get("placement") == "axes":
+                continue
+
+            left, bottom, width, height = rect
+            right = left + width
+            top = bottom + height
+            if options.get("orientation") == "horizontal":
+                boundary = 0.0
+                for other_index, other_rect in enumerate(rects):
+                    if other_index == index:
+                        continue
+                    other_left, other_bottom, other_width, other_height = other_rect
+                    other_right = other_left + other_width
+                    other_top = other_bottom + other_height
+                    columns_overlap = max(left, other_left) < min(right, other_right)
+                    if columns_overlap and other_top <= bottom + tolerance / canvas_h:
+                        boundary = max(
+                            boundary,
+                            other_top + chromes[other_index][1] / canvas_h,
+                        )
+                panel_bottom = bottom - chrome[3] / canvas_h
+                if panel_bottom >= boundary - tolerance / canvas_h:
+                    reserved.add(index)
+                continue
+
+            boundary = 1.0
+            for other_index, other_rect in enumerate(rects):
+                if other_index == index:
+                    continue
+                other_left, other_bottom, _other_width, other_height = other_rect
+                other_top = other_bottom + other_height
+                rows_overlap = max(bottom, other_bottom) < min(top, other_top)
+                if rows_overlap and other_left >= right - tolerance / canvas_w:
+                    boundary = min(
+                        boundary,
+                        other_left - chromes[other_index][0] / canvas_w,
+                    )
+            panel_right = right + chrome[2] / canvas_w
+            if panel_right <= boundary + tolerance / canvas_w:
+                reserved.add(index)
+        return reserved
+
+    def _charts(
+        self,
+        chrome_cache: Optional[_ChromeCache] = None,
+        layout: Optional[_MeasuredFigureLayout] = None,
+    ) -> list[Any]:
+        measured = layout or self._measure_layout(chrome_cache)
+        total_w, total_h = measured.canvas_size
+        rects = measured.rects
+        chart_sizes: list[tuple[int, int]] = []
         if rects is not None:
             charts = []
-            for ax, rect in zip(self._axes, rects, strict=True):
-                plot_w = max(1, round(total_w * rect[2]))
-                plot_h = max(1, round(total_h * rect[3]))
+            reserved_colorbars = self._tight_layout_colorbar_reservations(
+                rects,
+                (total_w, total_h),
+                chrome_cache,
+            )
+            for index, (ax, rect) in enumerate(zip(self._axes, rects, strict=True)):
+                allocated_plot_w = max(1, round(total_w * rect[2]))
+                allocated_plot_h = max(1, round(total_h * rect[3]))
+                compact = allocated_plot_w + 54 < 520
+                colorbar_right, colorbar_bottom = ax._colorbar_outside_room(compact)
+                automatic_colorbar = (
+                    ax._colorbar is not None
+                    and ax._colorbar.get("placement") != "axes"
+                    and index not in reserved_colorbars
+                )
+                # Matplotlib steals an automatic colorbar from the source
+                # subplot's allocation. Shrink here unless the actual
+                # tight/constrained geometry already contains the complete
+                # colorbar-bearing panel.
+                plot_w = max(
+                    40,
+                    round(allocated_plot_w - colorbar_right)
+                    if automatic_colorbar
+                    else allocated_plot_w,
+                )
+                plot_h = max(
+                    40,
+                    round(allocated_plot_h - colorbar_bottom)
+                    if automatic_colorbar
+                    else allocated_plot_h,
+                )
                 # Absolute axes rectangles describe the plot box.  Export
                 # chrome lives outside that rectangle in the surrounding
                 # figure buffer, matching Matplotlib add_axes semantics —
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
-                compact = plot_w + 54 < 520
-                margin_w, margin_h = (54, 42) if compact else (76, 52)
-                if ax._title:
-                    margin_h += 26 if compact else 30
-                ax._absolute_plot_ratio = plot_w / plot_h
-                charts.append(ax._build_chart(plot_w + margin_w, plot_h + margin_h))
+                left, top, right, bottom = _panel_chrome(ax, plot_w, cache=chrome_cache)
+                plot_ratio = plot_w / plot_h
+                plot_box = (left, top, plot_w, plot_h)
+                # Pin the plot rect inside the panel: the exporters place the
+                # panel assuming its plot box sits at exactly this inset, so
+                # the renderers must not pick their own label-aware margins.
+                #
+                # A chart may already be cached from when this was the figure's
+                # only axes. Adding an overlapping axes switches the figure to
+                # absolute composition, where the same Matplotlib axes rectangle
+                # needs a smaller chrome-inclusive panel. Reusing the old chart
+                # offsets its ticks and labels even though the plot boxes overlap.
+                if ax._plot_box_px != plot_box or ax._absolute_plot_ratio != plot_ratio:
+                    ax._plot_box_px = plot_box
+                    ax._absolute_plot_ratio = plot_ratio
+                    ax._chart = None
+                chart_sizes.append((round(plot_w + left + right), round(plot_h + top + bottom)))
+                charts.append(ax._build_chart(*chart_sizes[-1]))
         else:
             widths, heights = self._grid_cell_sizes()
-            charts = [
-                ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
-                for index, ax in enumerate(self._axes)
-            ]
+            charts = []
+            for index, ax in enumerate(self._axes):
+                # Removing an overlay can return a one-axes figure to ordinary
+                # (non-absolute) composition. Drop the absolute geometry and
+                # its cached chart together so the remaining axes expands back
+                # to the figure canvas.
+                if ax._plot_box_px is not None or ax._absolute_plot_ratio is not None:
+                    ax._plot_box_px = None
+                    ax._absolute_plot_ratio = None
+                    ax._chart = None
+                chart_sizes.append((widths[index % self._ncols], heights[index // self._ncols]))
+                charts.append(ax._build_chart(*chart_sizes[-1]))
         if charts and (self._sharex or self._sharey):
             figures = [chart.figure() for chart in charts]
             linked: list[str] = []
+            shared_domains: list[dict[str, tuple[float, float]]] = [{} for _figure in figures]
             for dim, shared in (("x", self._sharex), ("y", self._sharey)):
                 if not shared:
                     continue
                 linked.append(dim)
                 for group in self._share_groups(shared, len(figures)):
                     members = [figures[i] for i in group]
-                    # matplotlib shared limits autoscale over the group's data;
-                    # dataless panels follow the group instead of contributing
-                    # their (0, 1) default view to the union.
-                    sources = [figure for figure in members if figure.traces] or members
-                    ranges = [
-                        figure.x_range() if dim == "x" else figure.y_range() for figure in sources
-                    ]
-                    domain = (
-                        min(min(pair) for pair in ranges),
-                        max(max(pair) for pair in ranges),
+                    source_ax = self._axes[group[0]]
+                    if dim in source_ax._explicit_domains:
+                        raw_domain = source_ax._axis[dim]["domain"]
+                        domain = float(raw_domain[0]), float(raw_domain[1])
+                    else:
+                        # Matplotlib shared limits autoscale over the group's
+                        # data; dataless panels follow the group instead of
+                        # contributing their (0, 1) default view to the union.
+                        sources = [figure for figure in members if figure.traces] or members
+                        ranges = [
+                            figure.x_range() if dim == "x" else figure.y_range()
+                            for figure in sources
+                        ]
+                        domain = (
+                            min(min(pair) for pair in ranges),
+                            max(max(pair) for pair in ranges),
+                        )
+                    for index in group:
+                        shared_domains[index][dim] = domain
+
+            # Matplotlib's AxLine reads the live shared viewLim at draw time.
+            # Our wire format needs finite endpoints, so materialize only axes
+            # containing axlines one more time when their group's finalized
+            # domain differs from the view used by the cached chart.
+            for index, (ax, domains) in enumerate(zip(self._axes, shared_domains, strict=True)):
+                if not any(entry["kind"] == "@axline" for entry in ax._entries):
+                    continue
+                data_domains: dict[str, tuple[float, float]] = {}
+                for dim, domain in domains.items():
+                    spec = ax._scale_specs[dim]
+                    transformed = _scale_values(np.asarray(domain), spec, inverse=True)
+                    data_domains[dim] = (
+                        float(transformed[0]),
+                        float(transformed[1]),
                     )
-                    for figure in members:
-                        figure._set_axis_domain(dim, domain)
+                if getattr(ax, "_shared_render_domains", {}) != data_domains:
+                    ax._shared_render_domains = data_domains
+                    ax._chart = None
+                    charts[index] = ax._build_chart(*chart_sizes[index])
+
+            figures = [chart.figure() for chart in charts]
+            for figure, domains in zip(figures, shared_domains, strict=True):
+                for dim, domain in domains.items():
+                    figure._set_axis_domain(dim, domain)
             for figure in figures:
                 figure.set_interaction(link_group=self._link_group, link_axes=tuple(linked))
         return charts
@@ -782,13 +2259,21 @@ class Figure:
             ]
         return [list(range(count))]
 
-    def _single(self) -> Optional[Any]:
-        charts = self._charts()
+    def _single(
+        self,
+        chrome_cache: Optional[_ChromeCache] = None,
+        layout: Optional[_MeasuredFigureLayout] = None,
+    ) -> Optional[Any]:
+        charts = self._charts(chrome_cache, layout)
         if (
             self._nrows == self._ncols == 1
             and len(charts) == 1
             and self._axes[0]._figure_rect is None
             and not self._subplot_adjust
+            and self._supxlabel_entry is None
+            and self._supylabel_entry is None
+            and not self._figure_text_entries
+            and self._figure_legend is None
         ):
             return charts[0]
         return None
@@ -797,6 +2282,7 @@ class Figure:
         self,
         rects: list[tuple[float, float, float, float]],
         canvas_size: tuple[int, int],
+        chrome_cache: Optional[_ChromeCache] = None,
     ) -> list[tuple[float, float, float, float]]:
         """Expand plot-box rects into whole-panel rects including chart chrome.
 
@@ -806,25 +2292,27 @@ class Figure:
         """
         positions = []
         for ax, rect in zip(self._axes, rects, strict=True):
-            compact = round(canvas_size[0] * rect[2]) + 54 < 520
-            left, bottom = (46, 36) if compact else (62, 42)
-            width, height = (54, 42) if compact else (76, 52)
-            if ax._title:
-                # The panel was built taller for its title (`_charts`); grow
-                # the placement upward so the plot box stays on the rect.
-                height += 26 if compact else 30
+            # The same chrome `_charts` built the panel with — including the
+            # axes title, which grows the panel upward so the plot box stays
+            # on the rect.
+            left, top, right, bottom = _panel_chrome(
+                ax,
+                max(1, round(canvas_size[0] * rect[2])),
+                cache=chrome_cache,
+            )
             positions.append(
                 (
                     rect[0] - left / canvas_size[0],
                     rect[1] - bottom / canvas_size[1],
-                    rect[2] + width / canvas_size[0],
-                    rect[3] + height / canvas_size[1],
+                    rect[2] + (left + right) / canvas_size[0],
+                    rect[3] + (top + bottom) / canvas_size[1],
                 )
             )
         return positions
 
     # -- output -----------------------------------------------------------------
 
+    @_textblock.cached_measurements
     def savefig(
         self, fname: Any, dpi: Any = None, format: Optional[str] = None, **kwargs: Any
     ) -> None:
@@ -879,22 +2367,33 @@ class Figure:
                 if metadata:
                     data = _png_with_metadata(data, metadata)
             elif suffix == "svg":
-                single = self._single()
+                chrome_cache: _ChromeCache = {}
+                measured = self._measure_layout(chrome_cache)
+                single = self._single(chrome_cache, measured)
                 if single is None or self._suptitle is not None:
                     from ._grid import compose_svg
 
-                    canvas_size = rc_figsize_px(self._figsize, self._dpi)
-                    rects = self._effective_rects()
+                    canvas_size = measured.canvas_size
+                    rects = measured.rects
+                    positions = (
+                        []
+                        if not self._axes
+                        else (
+                            None
+                            if rects is None
+                            else self._panel_positions(rects, canvas_size, chrome_cache)
+                        )
+                    )
                     data = compose_svg(
-                        self._charts(),
+                        self._charts(chrome_cache, measured),
                         self._nrows,
                         self._ncols,
                         self._suptitle,
-                        self._suptitle_style,
-                        positions=(
-                            None if rects is None else self._panel_positions(rects, canvas_size)
-                        ),
-                        canvas_size=None if rects is None else canvas_size,
+                        self._resolved_suptitle_style(),
+                        figure_labels=self._resolved_figure_labels(),
+                        figure_legend=self._figure_legend,
+                        positions=positions,
+                        canvas_size=None if positions is None else canvas_size,
                     ).encode()
                 else:
                     data = single.to_svg().encode()
@@ -932,50 +2431,74 @@ class Figure:
         else:
             fname.write(data)  # file-like
 
+    @_textblock.cached_measurements
     def _to_png(self, *, bbox_tight: bool = False, pad_inches: float = 0.1) -> bytes:
         from ._grid import stitch_png
 
-        canvas_size = rc_figsize_px(self._figsize, self._dpi)
-        rects = self._effective_rects()
-        positions = None if rects is None else self._panel_positions(rects, canvas_size)
+        chrome_cache: _ChromeCache = {}
+        measured = self._measure_layout(chrome_cache)
+        canvas_size = measured.canvas_size
+        rects = measured.rects
+        positions = (
+            []
+            if not self._axes
+            else (
+                None if rects is None else self._panel_positions(rects, canvas_size, chrome_cache)
+            )
+        )
 
         return stitch_png(
-            self._charts(),
+            self._charts(chrome_cache, measured),
             self._nrows,
             self._ncols,
             self._suptitle,
             self._shared_colorbar,
-            suptitle_style=self._suptitle_style,
+            suptitle_style=self._resolved_suptitle_style(),
+            figure_labels=self._resolved_figure_labels(),
+            figure_legend=self._figure_legend,
             positions=positions,
             canvas_size=canvas_size if positions is not None else None,
             facecolor=self._facecolor,
             bbox_tight=bbox_tight,
-            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0) * 2.0)),
+            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0))),
         )
 
+    @_textblock.cached_measurements
     def _to_html(self) -> str:
         if self._html_cache is None:
-            single = self._single()
+            chrome_cache: _ChromeCache = {}
+            measured = self._measure_layout(chrome_cache)
+            single = self._single(chrome_cache, measured)
             if single is not None and self._suptitle is None:
                 self._html_cache = single.to_html()
             else:
                 from ._grid import compose_html
 
-                canvas_size = rc_figsize_px(self._figsize, self._dpi)
-                rects = self._effective_rects()
+                canvas_size = measured.canvas_size
+                rects = measured.rects
+                positions = (
+                    []
+                    if not self._axes
+                    else (
+                        None
+                        if rects is None
+                        else self._panel_positions(rects, canvas_size, chrome_cache)
+                    )
+                )
                 self._html_cache = compose_html(
-                    self._charts(),
+                    self._charts(chrome_cache, measured),
                     self._nrows,
                     self._ncols,
                     self._suptitle,
-                    self._suptitle_style,
-                    positions=(
-                        None if rects is None else self._panel_positions(rects, canvas_size)
-                    ),
-                    canvas_size=None if rects is None else canvas_size,
+                    self._resolved_suptitle_style(),
+                    figure_labels=self._resolved_figure_labels(),
+                    figure_legend=self._figure_legend,
+                    positions=positions,
+                    canvas_size=None if positions is None else canvas_size,
                 )
         return self._html_cache
 
+    @_textblock.cached_measurements
     def _to_notebook_html(self) -> tuple[str, int, int]:
         """Notebook-only tight layout matching Matplotlib's inline backend."""
         width, height = rc_figsize_px(self._figsize, self._dpi)
@@ -986,6 +2509,10 @@ class Figure:
             and self._axes[0]._figure_rect is None
             and not self._subplot_adjust
             and self._suptitle is None
+            and self._supxlabel_entry is None
+            and self._supylabel_entry is None
+            and not self._figure_text_entries
+            and self._figure_legend is None
         ):
             # Matplotlib's inline backend displays figures with
             # bbox_inches="tight" and pad_inches=.1.  For the ordinary default
@@ -1023,6 +2550,23 @@ class Figure:
                     )
                     tight_width = max(120, min(tight_width, round(aspect_width)))
                 ax._padding = notebook_padding
+                # Matplotlib's inline bbox is derived from the ink, so the y
+                # title can never land on the tick labels there — but pinning a
+                # padding also pins the browser's gutter, and 41 px does not
+                # hold this shim's 13.89 px tick labels under a rotated title.
+                # Ask the shared static-layout path what the axis text measures
+                # (`_svg.layout` is the single authority for that reservation,
+                # so browser, SVG, and PNG stay on one number) and, when the pin
+                # is short, widen the *canvas* by the shortfall so the plot box
+                # keeps Matplotlib's 0.775 fraction instead of losing width.
+                measured_left = _measured_left_gutter(ax, tight_width, tight_height)
+                if measured_left > notebook_padding[3]:
+                    tight_width = max(
+                        120, tight_width + int(round(measured_left - notebook_padding[3]))
+                    )
+                    notebook_padding[3] = measured_left
+                    ax._chart = None
+                    ax._padding = notebook_padding
                 doc = ax._build_chart(tight_width, tight_height).to_html()
             finally:
                 ax._chart = old_chart
@@ -1044,7 +2588,7 @@ class Figure:
             content_w = sum(widths[:cols_used]) + 4 * (self._ncols - 1) + 8
             content_h = sum(heights[:rows_used]) + 4 * (rows_used - 1) + 8
             if self._suptitle:
-                size = float((self._suptitle_style or {}).get("size", 16))
+                size = float(self._resolved_suptitle_style()["size"])
                 content_h += round(size * 1.4) + 8  # h2 line box + top margin
             return doc, content_w, content_h
         return doc, width, height
@@ -1077,6 +2621,400 @@ class Figure:
         with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
             f.write(self._facecolor_wrapped(self._to_html()))
         webbrowser.open(f"file://{f.name}")
+
+
+class SubFigure:
+    """Native subfigure container with a normalized parent-relative viewport.
+
+    Axes created here remain ordinary native :class:`Axes` objects and join
+    the root figure's draw-order list, while their ownership and clipping stay
+    attached to this container in the figure tree.
+    """
+
+    def __init__(self, parent: Figure | "SubFigure", bounds: Any, **kwargs: Any) -> None:
+        parsed = tuple(float(value) for value in bounds)
+        if len(parsed) != 4 or any(value < 0 for value in parsed[2:]):
+            raise ValueError("subfigure bounds must be [left, bottom, width, height]")
+        self._parent = parent
+        self.figure = cast(Figure, parent.get_figure(root=True))
+        self._bounds: NormalizedRect = parsed
+        self._subplot_adjust: dict[str, float] = {}
+        self._nrows = 1
+        self._ncols = 1
+        self._width_ratios: Optional[tuple[float, ...]] = None
+        self._height_ratios: Optional[tuple[float, ...]] = None
+        self._sharex: Any = False
+        self._sharey: Any = False
+        self._local_axes: list[Axes] = []
+        self.subfigs: list[SubFigure] = []
+        self.transSubfigure = CoordinateTransform("figure_fraction")
+        self.transFigure = self.transSubfigure
+        self._facecolor = resolve_color(kwargs.pop("facecolor", "none")) or "none"
+        self._edgecolor = resolve_color(kwargs.pop("edgecolor", "none")) or "none"
+        kwargs.pop("frameon", None)
+        if kwargs:
+            raise TypeError(f"SubFigure got unsupported keyword argument {next(iter(kwargs))!r}")
+        parent_node = self.figure._tree.node_for(parent)
+        if parent_node is None:
+            raise RuntimeError("subfigure parent is missing from the figure tree")
+        self._tree_node = self.figure._tree.attach("subfigure", self, parent=parent_node)
+
+    @property
+    def number(self) -> int:
+        return self.figure.number
+
+    @property
+    def canvas(self) -> "_FigureCanvas":
+        return self.figure.canvas
+
+    @property
+    def _dpi(self) -> Optional[float]:
+        return self.figure._dpi
+
+    @property
+    def _figsize(self) -> tuple[float, float]:
+        # Axes positions are stored in root-figure fractions, so plotting
+        # geometry that multiplies ``figure._figsize`` by ``get_position()``
+        # must see the root canvas size. Public SubFigure sizing remains local
+        # through ``get_size_inches`` and ``_panel_px`` below.
+        figsize = self.figure._figsize
+        if figsize is not None:
+            return figsize
+        width, height = rcParams["figure.figsize"]
+        return float(width), float(height)
+
+    @property
+    def _toolbar(self) -> Optional[bool]:
+        return self.figure._toolbar
+
+    @property
+    def _layout_options(self) -> dict[str, Any]:
+        return self.figure._layout_options
+
+    @property
+    def _axes(self) -> list[Axes]:
+        # Axes lifecycle code expects the root mutable draw-order list.
+        return self.figure._axes
+
+    @property
+    def _current_ax(self) -> Optional[Axes]:
+        current = self.figure._current_ax
+        return current if current in self.axes else (self.axes[-1] if self.axes else None)
+
+    @_current_ax.setter
+    def _current_ax(self, ax: Optional[Axes]) -> None:
+        self.figure._current_ax = ax
+
+    @property
+    def axes(self) -> list[Axes]:
+        def nearest_container(ax: Axes) -> FigureTreeNode | None:
+            node = self.figure._tree.node_for(ax)
+            candidate = None if node is None else node.parent
+            while candidate is not None and candidate.kind not in {"figure", "subfigure"}:
+                candidate = candidate.parent
+            return candidate
+
+        return [ax for ax in self.figure._axes if nearest_container(ax) is self._tree_node]
+
+    def get_axes(self) -> list[Axes]:
+        return self.axes
+
+    def get_figure(self, root: bool | None = None) -> Figure | "SubFigure":
+        # Matplotlib 3.11 defaults SubFigure.get_figure() to the root; root=False
+        # opts into the direct-parent behavior that becomes the later default.
+        return self.figure if root is not False else self._parent
+
+    def _absolute_bounds(self) -> NormalizedRect:
+        container = (
+            (0.0, 0.0, 1.0, 1.0)
+            if isinstance(self._parent, Figure)
+            else self._parent._absolute_bounds()
+        )
+        return _relative_rect(container, self._bounds)
+
+    def get_position(self) -> Bbox:
+        return Bbox.from_bounds(*self._absolute_bounds())
+
+    def get_size_inches(self) -> np.ndarray:
+        root_width, root_height = self.figure.get_size_inches()
+        _left, _bottom, width, height = self._absolute_bounds()
+        return np.asarray((root_width * width, root_height * height), dtype=float)
+
+    def get_dpi(self) -> float:
+        return self.figure.get_dpi()
+
+    def _show_toolbar(self) -> bool:
+        return self.figure._show_toolbar()
+
+    def _invalidate(self) -> None:
+        self.figure._invalidate()
+
+    def _axes_rect(self, ax: Axes) -> Optional[NormalizedRect]:
+        return self.figure._axes_rect(ax)
+
+    def _panel_px(self) -> tuple[int, int]:
+        # Native Axes positions are root-normalized even when their direct
+        # owner is a SubFigure. Aspect and point-size geometry therefore use
+        # the root canvas here; multiplying by the subfigure size would apply
+        # the container fraction twice.
+        return rc_figsize_px(self.figure._figsize, self._dpi)
+
+    def _effective_rects(
+        self,
+        chrome_cache: Optional[_ChromeCache] = None,
+    ) -> Optional[list[NormalizedRect]]:
+        return self.figure._effective_rects(chrome_cache)
+
+    def _share_subplot_axes(self, ax: Axes, *, sharex: Any = None, sharey: Any = None) -> None:
+        self.figure._share_subplot_axes(ax, sharex=sharex, sharey=sharey)
+
+    def add_axes(self, rect: Any, **kwargs: Any) -> Axes:
+        parsed = tuple(float(value) for value in rect)
+        if len(parsed) != 4 or any(value < 0 for value in parsed[2:]):
+            raise ValueError("add_axes rect must be [left, bottom, width, height]")
+        return self._add_axes_absolute(_relative_rect(self._absolute_bounds(), parsed), **kwargs)
+
+    def _add_axes_absolute(self, rect: NormalizedRect, **kwargs: Any) -> Axes:
+        """Create an axes at an already-root-relative rectangle."""
+        ax = Axes(self)
+        ax._figure_rect = rect
+        self.figure._axes.append(ax)
+        self._local_axes.append(ax)
+        self.figure._register_axes(ax, parent=self._tree_node)
+        self.figure._current_ax = ax
+        projection = kwargs.pop("projection", None)
+        if kwargs.pop("polar", False):
+            projection = "polar"
+        if projection is not None:
+            ax._set_projection(projection)
+        if kwargs:
+            ax.set(**kwargs)
+        self._invalidate()
+        return ax
+
+    def add_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        if not args:
+            args = (111,)
+        if len(args) == 1 and isinstance(args[0], _SubplotSpec):
+            spec = args[0]
+            rect = spec.gridspec.cell_rect(spec.rows, spec.cols)
+        else:
+            nrows, ncols, index = _parse_subplot_args(args)
+            grid = _GridSpec(self, nrows, ncols)
+            row, column = divmod(index - 1, ncols)
+            rect = grid.cell_rect((row, row + 1), (column, column + 1))
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        ax = self.add_axes(rect, **kwargs)
+        self._share_subplot_axes(ax, sharex=sharex, sharey=sharey)
+        return ax
+
+    def subplots(
+        self,
+        nrows: int = 1,
+        ncols: int = 1,
+        *,
+        sharex: Any = False,
+        sharey: Any = False,
+        squeeze: bool = True,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        gridspec_kw: Optional[dict[str, Any]] = None,
+        subplot_kw: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        if kwargs:
+            raise TypeError(f"subplots() got unsupported keyword argument {next(iter(kwargs))!r}")
+        self._nrows, self._ncols = int(nrows), int(ncols)
+        options = dict(gridspec_kw or {})
+        options["width_ratios"] = options.pop("width_ratios", width_ratios)
+        options["height_ratios"] = options.pop("height_ratios", height_ratios)
+        grid = _GridSpec(self, self._nrows, self._ncols, **options)
+        self._width_ratios = grid._width_ratios
+        self._height_ratios = grid._height_ratios
+        axes: list[Axes] = []
+        for row in range(self._nrows):
+            for column in range(self._ncols):
+                axes.append(
+                    self.add_axes(
+                        grid.cell_rect((row, row + 1), (column, column + 1)),
+                        **dict(subplot_kw or {}),
+                    )
+                )
+        self._sharex = _share_mode(sharex, "sharex")
+        self._sharey = _share_mode(sharey, "sharey")
+        for axis, mode in (("x", self._sharex), ("y", self._sharey)):
+            if not mode:
+                continue
+            groups = self._share_groups(mode, len(axes))
+            for group in groups:
+                source = axes[group[0]]
+                for index in group:
+                    axes[index]._axis[axis] = source._axis_props(axis)
+                    axes[index]._shared_axis_sources[axis] = source
+        for index, ax in enumerate(axes):
+            row, column = divmod(index, self._ncols)
+            if self._sharex in ("all", "col") and row < self._nrows - 1:
+                ax._apply_tick_label_side_visibility("x", {"labelbottom": False})
+            if self._sharey in ("all", "row") and column > 0:
+                ax._apply_tick_label_side_visibility("y", {"labelleft": False})
+        return _squeezed_object_grid(axes, self._nrows, self._ncols, squeeze)
+
+    def _share_groups(self, mode: Any, count: int) -> list[list[int]]:
+        if mode == "col":
+            return [
+                [row * self._ncols + column for row in range(self._nrows)]
+                for column in range(self._ncols)
+            ]
+        if mode == "row":
+            return [
+                [row * self._ncols + column for column in range(self._ncols)]
+                for row in range(self._nrows)
+            ]
+        return [list(range(count))]
+
+    def add_gridspec(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> "_GridSpec":
+        return _GridSpec(self, nrows, ncols, **kwargs)
+
+    def subfigures(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> Any:
+        squeeze = bool(kwargs.pop("squeeze", True))
+        return _make_subfigures(
+            self,
+            nrows,
+            ncols,
+            squeeze=squeeze,
+            wspace=float(kwargs.pop("wspace", 0.0)),
+            hspace=float(kwargs.pop("hspace", 0.0)),
+            width_ratios=kwargs.pop("width_ratios", None),
+            height_ratios=kwargs.pop("height_ratios", None),
+            kwargs=kwargs,
+        )
+
+    def add_subfigure(self, subplotspec: Any, **kwargs: Any) -> "SubFigure":
+        if isinstance(subplotspec, _SubplotSpec):
+            bounds = subplotspec.gridspec.cell_rect(subplotspec.rows, subplotspec.cols)
+        else:
+            bounds = tuple(float(value) for value in subplotspec)
+        subfigure = SubFigure(self, bounds, **kwargs)
+        self.subfigs.append(subfigure)
+        self._invalidate()
+        return subfigure
+
+    def gca(self) -> Axes:
+        return self._current_ax or self.add_subplot(111)
+
+    def sca(self, ax: Axes) -> Axes:
+        if ax not in self.axes:
+            raise ValueError("Axes must belong to this subfigure")
+        self.figure._current_ax = ax
+        return ax
+
+    def delaxes(self, ax: Axes) -> None:
+        if ax not in self.axes:
+            raise ValueError("Axes must belong to this subfigure")
+        self.figure.delaxes(ax)
+        with suppress(ValueError):
+            self._local_axes.remove(ax)
+
+    def clear(self) -> None:
+        owned_text: list[_FigureText] = []
+        pending = list(self._tree_node.children)
+        while pending:
+            child = pending.pop()
+            pending.extend(child.children)
+            if child.kind == "figure_text" and isinstance(child.owner, _FigureText):
+                owned_text.append(child.owner)
+        for text in owned_text:
+            text.remove()
+        owned_axes = [
+            ax
+            for ax in self.figure._axes
+            if (node := self.figure._tree.node_for(ax)) is not None
+            and node.is_descendant_of(self._tree_node)
+        ]
+        for ax in owned_axes:
+            if ax in self.figure._axes:
+                self.figure.delaxes(ax)
+        for subfigure in list(self.subfigs):
+            self.figure._tree.detach(subfigure)
+        self.subfigs = []
+        self._local_axes = []
+        self._invalidate()
+
+    clf = clear
+
+    def colorbar(self, mappable: Any = None, cax: Any = None, ax: Any = None, **kwargs: Any) -> Any:
+        target = ax if ax is not None else self.gca()
+        return self.figure.colorbar(mappable, cax=cax, ax=target, **kwargs)
+
+    def text(self, x: Any, y: Any, s: str, **kwargs: Any) -> Text:
+        absolute = _relative_rect(self._absolute_bounds(), (float(x), float(y), 0.0, 0.0))
+        handle = self.figure.text(absolute[0], absolute[1], s, **kwargs)
+        node = self.figure._tree.node_for(handle)
+        if node is not None:
+            self.figure._tree.reparent(node, self._tree_node)
+        return handle
+
+    def suptitle(self, title: str, **kwargs: Any) -> Text:
+        x = float(kwargs.pop("x", 0.5))
+        y = float(kwargs.pop("y", 0.98))
+        kwargs.setdefault("ha", "center")
+        kwargs.setdefault("va", "top")
+        kwargs.setdefault("fontsize", "large")
+        kwargs.setdefault("fontweight", "normal")
+        return self.text(x, y, title, **kwargs)
+
+
+def _make_subfigures(
+    parent: Figure | SubFigure,
+    nrows: int,
+    ncols: int,
+    *,
+    squeeze: bool = True,
+    wspace: float = 0.0,
+    hspace: float = 0.0,
+    width_ratios: Any = None,
+    height_ratios: Any = None,
+    kwargs: Optional[dict[str, Any]] = None,
+) -> Any:
+    """Partition a parent into subfigures without creating an axes."""
+    nrows, ncols = int(nrows), int(ncols)
+    if nrows < 1 or ncols < 1:
+        raise ValueError("subfigures must have at least one row and one column")
+    width_values = np.asarray(
+        (1.0,) * ncols if width_ratios is None else width_ratios,
+        dtype=float,
+    ).reshape(-1)
+    height_values = np.asarray(
+        (1.0,) * nrows if height_ratios is None else height_ratios,
+        dtype=float,
+    ).reshape(-1)
+    if (
+        len(width_values) != ncols
+        or len(height_values) != nrows
+        or not np.isfinite(width_values).all()
+        or not np.isfinite(height_values).all()
+        or np.any(width_values <= 0)
+        or np.any(height_values <= 0)
+    ):
+        raise ValueError("subfigure ratios must be positive, finite, and match the grid")
+    wspace, hspace = float(wspace), float(hspace)
+    if not np.isfinite([wspace, hspace]).all() or wspace < 0 or hspace < 0:
+        raise ValueError("subfigure spacing must be finite and nonnegative")
+    available_width = 1.0 / (1.0 + wspace * (ncols - 1) / ncols)
+    available_height = 1.0 / (1.0 + hspace * (nrows - 1) / nrows)
+    gap_width = (1.0 - available_width) / (ncols - 1) if ncols > 1 else 0.0
+    gap_height = (1.0 - available_height) / (nrows - 1) if nrows > 1 else 0.0
+    widths = available_width * width_values / width_values.sum()
+    heights = available_height * height_values / height_values.sum()
+    subfigures: list[SubFigure] = []
+    for row in range(nrows):
+        for column in range(ncols):
+            left = float(widths[:column].sum()) + column * gap_width
+            top = 1.0 - float(heights[:row].sum()) - row * gap_height
+            rect = (left, top - float(heights[row]), float(widths[column]), float(heights[row]))
+            subfigures.append(parent.add_subfigure(rect, **dict(kwargs or {})))
+    return _squeezed_object_grid(subfigures, nrows, ncols, squeeze)
 
 
 class _FigureCanvas:
@@ -1128,7 +3066,13 @@ class _GridSpec:
     (the add_axes path), which every exporter already positions.
     """
 
-    def __init__(self, figure: Optional[Figure], nrows: int, ncols: int, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        figure: Optional[Figure | SubFigure],
+        nrows: int,
+        ncols: int,
+        **kwargs: Any,
+    ) -> None:
         self.figure = figure
         self.nrows = int(nrows)
         self.ncols = int(ncols)
@@ -1224,7 +3168,11 @@ class GridSpec(_GridSpec):
     """plt.GridSpec: figure-optional grid geometry with span support."""
 
     def __init__(
-        self, nrows: int, ncols: int, figure: Optional[Figure] = None, **kwargs: Any
+        self,
+        nrows: int,
+        ncols: int,
+        figure: Optional[Figure | SubFigure] = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__(figure, nrows, ncols, **kwargs)
 
@@ -1241,18 +3189,22 @@ def _parse_subplot_args(args: tuple) -> tuple[int, int, int]:
 def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) -> Any:
     """The plt.subplots() return contract: Axes, 1-D, or 2-D ndarray."""
     fig._ensure_grid(nrows, ncols)
+    if squeeze and nrows == ncols == 1:
+        # Avoid allocating and populating an object ndarray for the dominant
+        # plt.subplots() case whose public return value is a bare Axes.
+        fig._current_ax = fig._axes[0]
+        fig._axes[0]._subplot_claimed = True
+        return fig._axes[0]
     axes = np.empty((nrows, ncols), dtype=object)
     for r in range(nrows):
         for c in range(ncols):
             axes[r, c] = fig._axes_at(r * ncols + c)
+            axes[r, c]._subplot_claimed = True
     # Matplotlib's subplots() constructs axes in row-major order and leaves
     # the final one active for subsequent stateful ``plt.*`` calls.
     fig._current_ax = axes[-1, -1]
-    if squeeze:
-        if nrows == ncols == 1:
-            return axes[0, 0]
-        if nrows == 1 or ncols == 1:
-            return axes.ravel()
+    if squeeze and (nrows == 1 or ncols == 1):
+        return axes.ravel()
     return axes
 
 
@@ -1268,6 +3220,17 @@ def _share_mode(value: Any, label: str) -> Any:
 
 
 def apply_sharing(fig: Figure, sharex: Any, sharey: Any) -> None:
-    """Share static domains and live pan/zoom ranges across subplot panels."""
+    """Share domains, authored ticker state, and live ranges across panels."""
     fig._sharex = _share_mode(sharex, "sharex")
     fig._sharey = _share_mode(sharey, "sharey")
+    for axis, mode in (("x", fig._sharex), ("y", fig._sharey)):
+        for ax in fig._axes:
+            ax._shared_axis_sources.pop(axis, None)
+        if not mode:
+            continue
+        for group in fig._share_groups(mode, len(fig._axes)):
+            if not group:
+                continue
+            source = fig._axes[group[0]]
+            for index in group:
+                fig._axes[index]._shared_axis_sources[axis] = source

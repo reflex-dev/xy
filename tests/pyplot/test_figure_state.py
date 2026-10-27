@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import struct
+from io import BytesIO
+
 import numpy as np
 import pytest
 
@@ -56,7 +59,7 @@ def test_figure_text_legend_and_super_labels_use_figure_transform() -> None:
     text = fig.text(0.25, 0.75, "figure note", color="red")
     xlabel = fig.supxlabel("shared x")
     ylabel = fig.supylabel("shared y")
-    fig.legend()
+    legend = fig.legend()
 
     assert text._entry["args"] == (0.25, 0.75, "figure note")
     assert text._entry["kwargs"]["style"]["coordinate_space"] == "figure_fraction"
@@ -64,8 +67,34 @@ def test_figure_text_legend_and_super_labels_use_figure_transform() -> None:
     assert ylabel._entry["kwargs"]["style"]["coordinate_space"] == "figure_fraction"
     assert fig._supxlabel == "shared x"
     assert fig._supylabel == "shared y"
-    assert ax._legend is True
+    assert fig.axes == [ax]
+    assert fig.texts == [text]
+    assert all(entry is not text._entry for entry in ax._entries)
+    assert all(entry is not xlabel._entry for entry in ax._entries)
+    assert all(entry is not ylabel._entry for entry in ax._entries)
+    assert legend is fig._figure_legend_handle
+    assert [item["name"] for item in fig._figure_legend["items"]] == ["line label"]
+    assert ax._legend is False
     assert "figure note" in fig._repr_html_()
+
+
+def test_text_only_figure_keeps_canvas_dimensions_without_creating_axes() -> None:
+    fig = Figure(1, figsize=(5.25, 0.75), dpi=100)
+    text = fig.text(0.5, 0.3, r"\dfrac: $\dfrac{a}{b}$", ha="center", fontsize=20)
+    fig.text(0.5, 0.7, r"\frac: $\frac{a}{b}$", ha="center", fontsize=20)
+
+    assert fig.axes == []
+    assert fig.texts[0] is text
+    assert len(fig._resolved_figure_labels()) == 2
+
+    png = BytesIO()
+    fig.savefig(png, format="png")
+    assert struct.unpack(">II", png.getvalue()[16:24]) == (525, 75)
+
+    svg = BytesIO()
+    fig.savefig(svg, format="svg")
+    assert b'width="525" height="75"' in svg.getvalue()
+    assert "dfrac" in fig._to_html()
 
 
 def test_figure_size_dpi_and_color_getters_setters() -> None:
@@ -117,14 +146,29 @@ def test_add_gridspec_supports_single_cell_specs() -> None:
 
     gs = fig.add_gridspec(2, 2, width_ratios=[1, 2])
     ax = fig.add_subplot(gs[1, 0])
-    same = fig.add_subplot(gs[2])
+    overlay = fig.add_subplot(gs[2])
 
-    assert ax is same
+    assert ax is not overlay
+    assert ax._subplot_index == overlay._subplot_index == 2
     assert fig._width_ratios == (1.0, 2.0)
-    assert fig.gca() is ax
+    assert fig.gca() is overlay
 
     span = gs[0:2, 0]
     assert span.rows == (0, 2)
     assert span.cols == (0, 1)
     with pytest.raises(NotImplementedError):
         _ = gs[0:2:2, 0]  # step slicing stays out of the span contract
+
+
+def test_figure_add_subplot_creates_same_spec_overlay() -> None:
+    fig = Figure(1)
+
+    first = fig.add_subplot(111)
+    second = fig.add_subplot(111)
+
+    assert first is not second
+    assert fig.axes == [first, second]
+    assert first._subplot_index == second._subplot_index == 0
+    assert first.get_subplotspec() is not None
+    assert second.get_subplotspec() is not None
+    assert fig.gca() is second

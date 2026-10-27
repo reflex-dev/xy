@@ -127,7 +127,16 @@ def test_fastapi_app_serves_live_charts_and_code() -> None:
         },
     )
     assert drill.status_code == 200
-    assert "density_update" in drill.text
+    # The round-trip reply is an XYBF binary frame (no base64), decoded by the
+    # same seam the browser's xy.decodeFrame uses; density grids ride as raw
+    # buffers beside the compact JSON metadata.
+    assert drill.headers["content-type"] == "application/octet-stream"
+    from xy.channel import decode_frame
+
+    frame = decode_frame(drill.content)
+    assert frame.message["type"] == "density_update"
+    assert frame.message["seq"] == 1
+    assert frame.buffers  # the density grid rides raw, not base64 in JSON
 
 
 # --- Reflex app structure (source text, no reflex import) -------------------
@@ -136,11 +145,24 @@ def test_fastapi_app_serves_live_charts_and_code() -> None:
 def test_reflex_app_shows_every_linking_method_and_event() -> None:
     src = REFLEX_APP.read_text(encoding="utf-8")
     required = [
-        "@reflex_xy.figure",  # live figure var
-        "reflex_xy.chart(",  # the component
+        "@reflex_xy.data",  # data-bound columns (§1/§4/§8/§9)
+        "data=Demo.cloud",  # composed chart bound to a data var (§1)
+        "reflex_xy.scatter_chart(",  # flat data-bound factory (§8)
+        "rx.cond(Demo.split",  # conditional chart rendering (§9)
+        "rx.foreach(",  # chart-per-handle rendering (§9)
+        "data=rx.cond(",  # conditional data source under one fixed plan (§10)
+        "list[DataHandle[SensorCols]]",  # the typed handle collection (R7)
+        "@reflex_xy.figure",  # escape hatch: chart structure from state (§2)
+        "reflex_xy.chart(",  # the component / composed factory
         "reflex_xy.append(",  # streaming
         "reflex_xy.inline(",  # inline() token tier
-        "sparkline_chart()",  # static Chart tier passed directly
+        'data={"t": t',  # static tier: concrete columns -> payload asset (§5)
+        "legend_series_chart()",  # static Chart tier passed directly (§7)
+        # the FastAPI 100M drilldown, served adapter-natively (§6); both apps
+        # honor the same point-count override for side-by-side comparison.
+        "def drilldown_chart",
+        "reflex_xy.inline(drilldown_chart())",
+        "XY_LIVE_POINTS",
         "on_point_hover=",
         "on_point_click=",
         "on_select_end=",
@@ -169,17 +191,35 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     pytest.importorskip("reflex_xy")
     # A static chart compiles a payload asset into cwd/assets/xy; keep it in tmp.
     monkeypatch.chdir(tmp_path)
+    # The §6 drilldown builds its columns at import; keep the test-time build
+    # cheap (same override the fastapi app test uses).
+    monkeypatch.setenv("XY_LIVE_POINTS", "50000")
     sys.path.insert(0, str(REFLEX_DIR))
     module = _load(REFLEX_APP, "xy_reflex_demo_under_test")
 
-    # The Code accordion reads live source: figure vars unwrap to their builder,
-    # event handlers to their function — both include the decorator line.
-    assert "@reflex_xy.figure" in module._source(module.Demo.cloud)
+    # The Code accordion reads live source: figure/data vars unwrap to their
+    # builder, event handlers to their function — both include the decorator.
+    assert "@reflex_xy.data" in module._source(module.Demo.cloud)
     assert "def cloud" in module._source(module.Demo.cloud)
+    assert "@reflex_xy.figure" in module._source(module.Demo.histogram)
     assert "def on_view" in module._source(module.Demo.on_view)
-    # The page composes without error and mints an inline() token at import.
-    assert module.ORBITS_TOKEN.startswith("xyin-")
+    assert "@reflex_xy.data" in module._source(module.Demo.bound_cloud)
+    # The page composes without error and mints inline() handles at import.
+    assert module.ORBITS.token.startswith("xyin-")
+    assert module.DRILLDOWN.token.startswith("xyin-")
+    assert module.DRILLDOWN_POINTS == 50000
     assert module.index() is not None
+    # The /kinds page: all 20 data-bound kind plans compile (zero-row under
+    # the structural probe), the composite kinds build on the static tier,
+    # and one data var legally carries mixed-length plus 2-D columns.
+    kinds_page = module.kinds()
+    assert kinds_page is not None
+    assert "kind-funnel" in str(kinds_page)
+    columns = module._kind_columns()
+    assert columns["grid"].ndim == 2
+    assert len(columns["edges"]) == len(columns["counts"]) + 1
+    assert columns["funnel_stage"].tolist() == ["Visit", "Signup", "Activate", "Pay"]
+    assert len(columns["funnel_stage"]) == len(columns["funnel_value"])
 
 
 # --- retargeted browser smokes: import cleanly, pure helpers unit-tested -----

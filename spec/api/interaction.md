@@ -15,7 +15,7 @@ Implementation: `python/xy/components.py` (`interaction_config`, `Chart`,
 `_interaction_spec`), `python/xy/channel.py` (kernel-side dispatch),
 `js/src/53_interaction.ts` (gestures, modebar, view state machine),
 `js/src/50_chartview.ts` (flag resolution, link channel),
-`python/reflex-xy/reflex_xy/` (Reflex event props).
+`python/reflex_xy/` (Reflex event props).
 
 ## 1. How a switch resolves
 
@@ -53,13 +53,13 @@ the switch is never set. The non-boolean viewport keys — `default_drag_action`
 | `select` | on | Suppresses the `xy:select` event and the `select_clear` message, removes the modebar Selection menu, and (with `brush`) disables shift-drag. |
 | `brush` | on | Same conjunction: `canBrush = brush && select` (`53_interaction.ts:115`) gates every selection drag and the modebar Selection menu. |
 | `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.ts:80`). Not togglable after mount. |
-| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, pan-mode dblclick reset, and every modebar viewport control. Selection-mode double-click clear is a selection action and is unaffected. |
+| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, dblclick reset, and every modebar viewport control. Selection-mode double-click clear is a selection action and is unaffected. |
 | `pan` | on | Plain-drag pan is ignored, the modebar Pan button is not built, and every zoom-enabled axis is contained (§2.2). Requires `navigation`. Pans `pan_axes` (§2.1). |
 | `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the zoom actions inside the modebar menu are all ignored. The same dropdown can remain for view history when `history` is on. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
 | `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.ts:271-273`). |
 | `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.ts:112-113`, `50_chartview.ts:419`). |
 | `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.ts:883`). |
-| `double_click_reset` | on | Pan-mode double-click no longer resets the view. The modebar Reset View button and selection-mode double-click clear are unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts`). |
+| `double_click_reset` | on | Double-click (in `pan` or `zoom` mode) no longer resets the view. The modebar Reset View button and selection-mode double-click clear are unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts`). |
 | `history` | on | Removes Back/Next from the modebar zoom menu and stops durable-state snapshotting entirely (`57_viewstate.ts`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
 | `link_group` | unset | See §4. |
 | `link_axes` | all declared axes | See §4. |
@@ -108,7 +108,7 @@ including per-source semantics and the shared clamp pipeline, is
 
 | Key | Type | Default | Role |
 | --- | --- | --- | --- |
-| `default_drag_action` | `"auto" \| "none" \| "pan" \| "zoom" \| "select" \| "select-x" \| "select-y" \| "select-lasso"` | `"auto"` | Initial tool for an unmodified primary-button drag. `"auto"` resolves pan → box zoom → rectangular select → none. `"zoom"` means **box zoom for drag only**; it does not touch wheel or button zoom. The modebar can change the live tool without mutating this configured default. |
+| `default_drag_action` | `"auto" \| "none" \| "pan" \| "zoom" \| "select" \| "select-x" \| "select-y" \| "select-lasso"` | `"auto"` | Initial tool for an unmodified primary-button drag. `"auto"` resolves pan → box zoom → rectangular select → none. `"zoom"` means **box zoom for drag only**; it does not touch wheel, button zoom, or double-click reset. `"none"` additionally releases the wheel to the page (embedded charts must not trap page scroll) and disables double-click reset. The modebar can change the live tool without mutating this configured default. |
 | `pan_axes` | axis-ID tuple | all declared axes | Concrete axis IDs a pan gesture may translate freely. An axis excluded here while zoom can navigate it is **contained** (§2.2). |
 | `zoom_axes` | axis-ID tuple | all declared axes | Concrete axis IDs wheel, box, and button zoom may scale. Selecting `"y"` never implies `"y2"`. |
 | `reset_axes` | axis-ID tuple | enabled `pan_axes` ∪ enabled `zoom_axes` | Axis IDs restored by reset. Resolved client-side; the modebar Reset button hides when it resolves empty. |
@@ -126,6 +126,17 @@ Cursor-anchored zoom is a scaling composed with a translation
 the pan *gesture* would leave its position reachable through zoom: a zoom-in /
 zoom-out chain at two cursor positions is an exact pan. Exclusion from pan
 therefore means containment, not gesture removal.
+
+Polar radial zoom is the deliberate exception to cursor anchoring: it always
+uses anchor `0`, preserving `r_min` and scaling only `r_max`. An interior radial
+anchor would lift the minimum and turn an ordinary disc zoom into an annulus.
+It is also the exception to `zoom` defaulting on: because the centre is a fixed
+point, zooming a constant-rim composition (pie, radial bar, gauge, radar) crops
+it instead of navigating it, so `coords="polar"` resolves `zoom` to `False` and
+ships the flag explicitly. `wind_rose` — whose radius is a frequency count —
+ships `True`, and `interaction_config(zoom=…)` overrides either. Theta pan/zoom,
+box gestures, selection, brush, and crosshair are disabled for polar; see
+`spec/design/polar-axes.md` §8.
 
 An axis is **contained** when zoom navigation can change it but pan cannot:
 `navigation` and `zoom` are enabled, the axis is in `zoom_axes`, and either
@@ -214,7 +225,7 @@ Kernel-side callbacks (`python/xy/channel.py`), wired through
   `on_brush` always fires before `on_select` for the same gesture; that
   ordering is an invariant and is tested.
 
-Reflex props (`python/reflex-xy/reflex_xy/component.py`) are the live-mode
+Reflex props (`python/reflex_xy/component.py`) are the live-mode
 mirror: `on_point_hover(row)`, `on_point_click(row)`,
 `on_select_end({total, x0, x1, y0, y1, polygon, cleared})`, and
 `on_view_change(msg)`. `on_view_change` is resolved in the browser and never
@@ -278,8 +289,8 @@ renderer reads anywhere in `js/src/`.
 | **Shift**-drag | Box select, overriding the current drag mode (`53_interaction.ts:117`) | `brush`, `select`, `_pickable` |
 | Drag in `select` / `select-lasso` / `select-x` / `select-y` mode | That selection shape | `brush`, `select`, `_pickable` |
 | Drag in `zoom` mode | Box zoom, fitting `zoom_axes` on release | `navigation`, `zoom`, and `box_zoom` |
-| Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault` | `navigation`, `zoom`, and `wheel_zoom` |
-| Double click in `pan` mode | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
+| Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault`. Polar instead scales only `r_max` about fixed `r_min`. The active drag tool never disables it — box-zoom and select tools are drag-only — except `none`, which releases the wheel to the page | `navigation`, `zoom`, and `wheel_zoom` |
+| Double click in `pan` or `zoom` mode | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
 | Double click in `select` / `select-lasso` / `select-x` / `select-y` mode | Clear the active selection and, for lasso, its editable polygon; no-op when no selection exists | active selection |
 | Click without drag | Pick; a drag past threshold sets `_ignoreNextClick` and swallows the click | `click` |
 | Pointer down on a lasso vertex handle | Drag that vertex; re-runs the selection on release | an existing lasso |
@@ -298,6 +309,17 @@ least 3 sampled vertices, sampled at 3 px spacing and capped at 2048. In
 An existing lasso remains rendered until a replacement selection gesture
 crosses that movement threshold; a plain click or sub-threshold pointer jitter
 does not temporarily hide or replace it.
+
+Pointer capture is scoped to one browsing context, so a gesture whose button is
+released outside an embedding iframe may never deliver `pointerup` to the
+chart. Every capture-owning gesture still terminates deterministically: a pan
+finalizes at its last in-frame view and emits its one `end` event, and a
+gesture that needs a release coordinate it never received rolls back to its
+last committed state — selection and box-zoom restore the previous selection,
+a lasso-handle edit restores the prior vertex, and modebar dragging ends at its
+last in-frame position. Re-entering the chart never resumes the gesture. The
+detection mechanism and its scope are in
+[`../design/pan-and-zoom-configuration.md`](../design/pan-and-zoom-configuration.md).
 
 Axis bands are geometric scopes, not new state: secondary axes get their band
 on their own side (`y` left, `y2` right, top-side x axes on top), so scoping
@@ -383,3 +405,132 @@ round-trip on hover; keyboard point traversal and the live-region readout;
 lasso vertex editing on an existing lasso; selection overlay rendering;
 modebar presence (subject only to the fit check); and view clamping to axis
 bounds. Everything in the §2 and §2.1 tables is configurable; nothing else is.
+
+## 9. Legend hover emphasis
+
+Hovering a legend row emphasizes the series it stands for: every other
+series drops to 20% of its computed opacity (`LEGEND_DIM_OPACITY`,
+`50_chartview.ts`), the other rows in the same legend box fade to 40%
+(`LEGEND_DIM_ROW`), and both restore on pointer-leave. Purely client-side —
+no kernel message, no view change — and the redraw runs with `keepPick`
+because only the color pass changes (dossier §17).
+
+Gating: `xy.legend(highlight=False)`. This is legend chrome, not an
+`interaction_config` switch: it rides `legend.highlight` in the spec's legend
+options, is **on by default**, and only the opt-out (`false`) crosses the
+wire. Hard-disabled rows: entries of `extra_legends` (manual Legend artists
+carry no trace linkage) are always inert.
+
+Mechanics per entry kind:
+
+- **Named / constant-color rows** emphasize their one backing trace via a
+  per-trace `_legendDim` factor folded into every mark family's opacity
+  uniform (points, simple points, lines, segments, areas, rects, bars,
+  meshes, heatmaps — and whole density-tier traces through `_drawDensity`'s
+  uniform).
+- **Continuous (gradient) rows** may back *several* traces: identical
+  unnamed encodings (same label, same colormap) collapse into one row, and
+  hovering it emphasizes all of them.
+- **Categorical rows** emphasize one category: the trace keeps full opacity
+  and swaps its palette LUT for a variant whose other entries are blended
+  toward `--chart-bg`. RGB-blend, not alpha: the mark shaders read
+  `texture(u_lut, …).rgb` and force alpha to 1, so an alpha fade would be a
+  silent no-op. The original LUT is restored on leave. An aggregated
+  density plane cannot dim sibling categories *exactly* (one texture,
+  §28), but its mean-color cells carry the categories' own drawn colors,
+  so the LUT-dim rule applies at CELL granularity: each occupied cell is
+  classified by nearest palette color, sibling-class cells blend toward
+  the background by the same factor, the hovered category's cells keep
+  their full color, and cell alpha (the physical compositing of the
+  cell's own points, LOD doc §2) is untouched. Mixed boundary cells dim
+  by their nearest class — the recorded (§28) approximation of the exact
+  per-point dim. The retained sample overlay dims its sibling points
+  through the same palette LUT. All of it restores on leave (the dimmed
+  plane is a temporary texture; the original is put back), and the whole
+  trace still dims when some other row is hovered.
+
+Legend entry labels (same build, `_buildLegend`): a continuous row is titled
+by `t.name`, else the encoding's declarative `color.label` (the
+`color="column"` idiom, attached by `Chart.figure()` to
+`ColorChannel.label`). There is no generic fallback: a trace with neither a
+name nor a label contributes no legend row, and a chart whose traces are all
+unnamed renders no legend box — the same rule the static SVG/raster exports
+follow (name-bearing entries only). Exports additionally have no hover state;
+this section is live-client behavior.
+
+Click-to-toggle (hiding a series) is a separate contract: §10.
+
+## 10. Legend click-to-toggle
+
+Clicking a legend row hides — click again, shows — what the row stands for.
+This is the first shipped §34 filter predicate: a hidden series is out of
+*every* pipeline (drawing, picking, selections, decimation, aggregation),
+not merely transparent. Gating: `xy.legend(toggle=False)`; on by default,
+opt-out only on the wire. `extra_legends` rows stay inert (no trace
+linkage). A toggled-off row fades (35%, grayscale, `data-xy-legend-off`
+attribute for author styling) and is inert for §9 hover emphasis. The DOM
+event `xy:legendtoggle` fires with `{name, hidden, traces, category?}`.
+
+**State sync.** Every toggle sends `legend_toggle {trace, category?,
+hidden}` — fire-and-forget, no reply. The kernel records `Trace.hidden` /
+`Trace.hidden_categories`; from then on `select`/`select_polygon` exclude
+hidden rows, `decimate_view` skips hidden traces, and `density_view`
+narrows rows before any aggregation. Malformed toggles (unknown category,
+non-bool hidden) are dropped without mutating state.
+
+**Per entry kind:**
+
+- **Whole-trace rows** (named / constant / continuous — a deduped
+  continuous row hides *all* its backing traces): pure client hide. Vertex
+  buffers and density grids are per-trace, so nothing needs re-aggregation;
+  the trace skips the draw loop, the pick pass, and the reduction badges.
+- **Category rows on a direct-tier trace**: the client re-filters its
+  vertex buffers from the CPU columns retained at build — 0 wire bytes
+  (§37's filter-toggle row). Per-point style/stroke buffers, which keep no
+  CPU copy, are read back once (`getBufferSubData`) and cached. `_visMap`
+  translates drawn vertices back to shipped rows so hover readouts and
+  kernel picks stay exact; `_visInv` maps the kernel's shipped-space
+  selection indices onto the filtered buffers.
+- **Category rows on a density-tier trace** (the rows exist because the
+  first-paint density entry ships a slim categorical `color` spec —
+  categories + palette, no per-point buffer; wire-protocol doc): local
+  aggregates were computed unfiltered and are stale under the predicate
+  (§34) — worse, a cached window that still "covers" the view would elide
+  the kernel request entirely, and so would the *standing home aggregate*
+  at an unzoomed view. The client drops its density and point-window
+  caches, filters the retained sample overlays locally (the pre-reply
+  frame stops showing the category immediately), marks the trace
+  **filter-dirty** — request planning skips aggregate-stands elision until
+  a reply stamped with the current hidden set lands an *aggregate*; a
+  stamped points-mode reply (masked drill) is admitted but leaves the flag
+  set, since it bins no grid under the mask and the standing aggregate is
+  still the previous predicate's — and re-requests
+  through the normal `density_view` path. Density textures are keyed by
+  the hidden set they were binned under: the display stands-rule (T13
+  facts-only landing) holds only between same-key textures, so a reply
+  carrying a different key repaints the standing surface — in either
+  direction, mask applied or lifted. The T13 duplicate-request memo carries
+  the same key: a sub-texel twin window under a different hidden set is a
+  new request, never an answered duplicate. The kernel bypasses the unfiltered pyramid (the
+  §34 point: static aggregates are wrong under any dynamic predicate),
+  re-bins the visible rows (Tier B), tags the reply's `binning` with
+  `-masked`, and stamps it with `filter: {hidden_categories}`. The client
+  compares that stamp against its current hidden set and drops
+  stale-predicate replies; drills ship only visible rows with canonical
+  `shipped_sel`.
+
+**Accessibility compatibility exception.** Legend-hidden ordinary point-series
+rows remain in keyboard traversal in their full retained CPU order, so a screen
+reader can still inspect them and the announced `Point N of total` denominator
+does not change under a visual toggle. Funnel `stageNav` is geometry-semantic:
+it follows the currently visible stage/category geometry, and a whole hidden
+funnel contributes no stages to that walk.
+
+**Deliberate limits (recorded, not silent — §28):** toggles never rescale
+axes (the view is the user's; Fit Data is the re-fit tool). Toggle state
+does not enter durable view state or gesture history yet — a context-loss
+restore re-applies it from the live view object, but a full page reload
+starts all-visible. On a kernel-less standalone page, whole-trace and
+direct-tier category toggles are exact; a density-tier category toggle
+filters the sample overlays but the standalone worker's re-binned grid is
+not masked — kernel-connected sessions are exact.

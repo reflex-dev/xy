@@ -1,18 +1,26 @@
 """End-to-end probe for the Reflex integration (reflex-integration.md §1/§2).
 
-Drives headless Chromium at a *running* reflex-xy showcase app (see
+Drives headless Chromium at a *running* XY Reflex showcase app (see
 examples/reflex: `reflex run`) and asserts the load-bearing claims of the
 design:
 
 1. ONE physical websocket to the backend carries both the app plane and the
    chart data plane (socket.io namespace multiplexing) — counted via CDP.
-2. All three charts paint real pixels from binary socket payloads (screenshot
-   evidence; there are no HTTP data endpoints to fall back on).
+2. The charts paint real pixels from binary socket payloads (screenshot
+   evidence; there are no HTTP data endpoints to fall back on) — including
+   the §6 fastapi-parity drilldown chart's density surface.
 3. Deep zoom drills the 1M-point density scatter to exact points
    (density_view round-trips over the socket, §16), and hovering a drilled
    point closes the semantic loop: kernel pick -> reflex event -> state
    delta -> DOM readout.
 4. Streaming: clicking "go live" grows the live trace via `append` pushes.
+5. Composition: toggling the §9 cond swaps the composed board for
+   `rx.foreach` small multiples over a `list[DataHandle]` var — new plan
+   charts mount and subscribe live.
+6. Kind coverage: the /kinds page mounts and paints **every chart kind**
+   (20 data-bound plan charts + 7 static composites), pixel-probed per
+   `kind-<name>` cell — the compile guarantee is backed by a render
+   guarantee.
 
 Usage:
     python3 scripts/reflex_ws_smoke.py [--frontend http://localhost:3100]
@@ -241,9 +249,11 @@ def main() -> None:
     with ChromiumSession(chromium, gl="software", sandbox=False) as session:
         probe = Probe(session, args.frontend)
 
-        # 1) every chart mounts a view (six live figure vars + one static Chart)
+        # 1) every chart mounts a view (ten live sources + two static charts;
+        #    composite plan views mount as their data handles hydrate; the §9
+        #    foreach multiples mount only after the cond toggle, step 6)
         probe.wait_for(
-            "window.__xy_views && window.__xy_views.size >= 6",
+            "window.__xy_views && window.__xy_views.size >= 10",
             timeout_s=120.0,
             label="mounted chart views",
         )
@@ -256,18 +266,37 @@ def main() -> None:
         if len(ws) != 1:
             failures.append(f"expected exactly 1 backend websocket (shared transport), got {ws}")
 
-        # 2b) the direct-Chart mount is truly static: it never subscribes. The
-        #     six live sources (five figure vars + one inline() token) each sub.
+        # 2b) the static mounts (the §5 payload-asset chart and the §7 direct
+        #     Chart) never subscribe. The ten live sources — two figure vars
+        #     (§2 histogram, §3 live), three inline() tokens (orbits, §6
+        #     drilldown, legend-cats), and five data-bound plan charts (§1
+        #     cloud, §4 overview + detail, §8 bound, §9 board), whose composed
+        #     xyp1 tokens sub once their data handles hydrate — each sub.
         subs = probe.sent_ws_frames('"sub"')
         print(f"sub frames sent: {len(subs)}")
-        if len(subs) < 6:
-            failures.append(f"expected >= 6 sub frames (live sources), got {len(subs)}")
+        if len(subs) < 10:
+            failures.append(f"expected >= 10 sub frames (live sources), got {len(subs)}")
 
         # 3) pixels: every chart paints ink inside its rect (full-page shot,
-        #    rects in page coordinates so below-the-fold charts count too)
+        #    rects in page coordinates so below-the-fold charts count too).
+        #    The §6 drilldown's first payload bins its full source (100M at
+        #    the default XY_LIVE_POINTS), so wait for its trace explicitly.
+        probe.wait_for(
+            "(() => { const v = window.__xy_views.get('drilldown');"
+            " return !!(v && v.gpuTraces && v.gpuTraces[0]); })()",
+            timeout_s=120.0,
+            label="drilldown density payload",
+        )
         time.sleep(1.0)
         png = probe.screenshot()
-        checks = (("cloud", 0.02), ("hist", 0.02), ("live", 0.005), ("inline", 0.005))
+        checks = (
+            ("cloud", 0.02),
+            ("hist", 0.02),
+            ("live", 0.005),
+            ("inline", 0.005),
+            ("drilldown", 0.02),
+            ("bound", 0.02),
+        )
         for chart_id, min_ink in checks:
             frac = ink_fraction(png, probe.rect(chart_id, page_coords=True), 1.0)
             print(f"{chart_id}: ink fraction {frac:.2%}")
@@ -275,6 +304,7 @@ def main() -> None:
                 failures.append(f"{chart_id} looks blank ({frac:.2%} < {min_ink:.0%})")
 
         # 4) deep zoom drills density -> exact points (§16 over the socket) …
+        probe.scroll_to("cloud")
         rect = probe.rect("cloud")
         cx, cy = rect["x"] + rect["w"] * 0.55, rect["y"] + rect["h"] * 0.5
         probe.mouse("mouseMoved", cx, cy)
@@ -291,10 +321,23 @@ def main() -> None:
 
         # … and hovering a drilled point closes the semantic event loop:
         # GPU pick -> socket pick round-trip -> reflex event -> state delta.
-        for dx in range(-40, 200, 8):
-            probe.mouse("mouseMoved", cx + dx / 4, cy + dx / 16)
-            time.sleep(0.12)
         try:
+            point = probe.wait_for(
+                """(() => {
+                  const v = window.__xy_views.get('cloud');
+                  if (!v || v._interactionTransitionActive()) return null;
+                  const r = v.canvas.getBoundingClientRect();
+                  for (let y = 0; y < r.height; y += 2) {
+                    for (let x = 0; x < r.width; x += 2) {
+                      if (v._pickAt(x, y)) return {x: r.left + x, y: r.top + y};
+                    }
+                  }
+                  return null;
+                })()""",
+                timeout_s=15.0,
+                label="pickable drilled point",
+            )
+            probe.mouse("mouseMoved", point["x"], point["y"])
             found_row = probe.wait_for(
                 "(document.body.innerText.match(/x=-?[0-9.]+/) || [null])[0]",
                 timeout_s=15.0,
@@ -324,6 +367,92 @@ def main() -> None:
         n_after = probe.eval("window.__xy_views.get('live').gpuTraces[0].n")
         print(f"live stream: {n_before} -> {n_after} vertices (append pushes)")
 
+        # 6) §9 cond/foreach: toggling the split swaps the cond branch from
+        #    the composed board to an rx.foreach grid of plan charts bound to
+        #    a list[DataHandle] var — the board unmounts, three multiples
+        #    mount and sub (net +2 views).
+        views_before = probe.eval("window.__xy_views.size")
+        probe.scroll_to("split-btn")
+        split = probe.eval(
+            "(() => { const b = document.getElementById('split-btn');"
+            " const r = b.getBoundingClientRect();"
+            " return {x: r.x + r.width / 2, y: r.y + r.height / 2}; })()"
+        )
+        probe.mouse("mouseMoved", split["x"], split["y"])
+        probe.mouse("mousePressed", split["x"], split["y"], button="left", buttons=1, clickCount=1)
+        probe.mouse("mouseReleased", split["x"], split["y"], button="left", buttons=0, clickCount=1)
+        probe.wait_for(
+            f"window.__xy_views.size >= {views_before} + 2",
+            timeout_s=30.0,
+            label="foreach small multiples mounting after the cond toggle",
+        )
+        views_after = probe.eval("window.__xy_views.size")
+        print(f"cond/foreach: {views_before} -> {views_after} mounted views after split toggle")
+
+        # 7) /kinds: every chart kind renders in the browser — 20 data-bound
+        #    plan charts plus the 7 static composites. Each `kind-<name>`
+        #    cell must hold a canvas that paints real ink (a compile-only
+        #    guarantee is not a render guarantee).
+        probe._call("Page.navigate", {"url": args.frontend.rstrip("/") + "/kinds"})
+        probe.wait_for(
+            "window.__xy_views && window.__xy_views.size >= 27",
+            timeout_s=120.0,
+            label="mounted /kinds chart views",
+        )
+        time.sleep(2.0)  # let late payloads paint before the pixel probe
+        kinds_png = probe.screenshot()
+        kind_names = [
+            "scatter",
+            "line",
+            "area",
+            "step",
+            "stem",
+            "bar",
+            "column",
+            "histogram",
+            "errorbar",
+            "error_band",
+            "segments",
+            "funnel",
+            "box",
+            "violin",
+            "ecdf",
+            "hexbin",
+            "heatmap",
+            "contour",
+            "stairs",
+            "triangle_mesh",
+            "pie",
+            "radar",
+            "sankey",
+            "polar",
+            "polar_bar",
+            "wind_rose",
+            "facet",
+        ]
+        blank: list[str] = []
+        for name in kind_names:
+            rect_js = (
+                f"(() => {{ const cell = document.getElementById('kind-{name}');"
+                " if (!cell) return null;"
+                " const c = cell.querySelector('canvas');"
+                " if (!c) return null;"
+                " const b = c.getBoundingClientRect();"
+                " return {x: b.x + window.scrollX, y: b.y + window.scrollY,"
+                "         w: b.width, h: b.height}; })()"
+            )
+            canvas_rect = probe.eval(rect_js)
+            if not canvas_rect or not canvas_rect["w"] or not canvas_rect["h"]:
+                failures.append(f"/kinds {name}: no mounted canvas")
+                continue
+            frac = ink_fraction(kinds_png, canvas_rect, 1.0)
+            if frac < 0.003:
+                blank.append(f"{name} ({frac:.2%})")
+        if blank:
+            failures.append("/kinds charts look blank: " + ", ".join(blank))
+        else:
+            print(f"/kinds: all {len(kind_names)} kind cells painted")
+
         if args.screenshot:
             Path(args.screenshot).write_bytes(probe.screenshot())
             print(f"saved {args.screenshot}")
@@ -333,7 +462,7 @@ def main() -> None:
         for failure in failures:
             print(f"  - {failure}")
         raise SystemExit(1)
-    print("\nreflex-xy websocket smoke: all checks passed")
+    print("\nxy[reflex] websocket smoke: all checks passed")
 
 
 if __name__ == "__main__":

@@ -24,8 +24,13 @@ The public surface: what callers can build, style, export, and interact with.
   `tests/test_docs_examples.py`, so API drift fails the suite.
 - [`chart-kind-contract.md`](api/chart-kind-contract.md) — how to add a 2D chart
   type: what the shared machinery provides and what a new kind must supply.
-- [`chart-roadmap.md`](api/chart-roadmap.md) — the single 2D-first chart-type
-  coverage backlog, prioritized by popularity and primitive reuse.
+- [`capability-matrix.md`](api/capability-matrix.md) — **generated**: the
+  inventory of what can be styled and extended, per renderer, from
+  `python/xy/styling/capabilities.py`.
+  Regenerate with `scripts/gen_capability_matrix.py --write`; the test suite
+  fails if it is stale.
+- [`chart-roadmap.md`](api/chart-roadmap.md) — the staged chart-type coverage
+  backlog, from core 2D through geographic, 3D, and volume visualization.
 - [`export.md`](api/export.md) — how a figure becomes bytes: one entry point
   across five image formats, deterministic engine choice, browser-free default.
 - [`interaction.md`](api/interaction.md) — the authority on which browser
@@ -46,8 +51,8 @@ Internal architecture: how the engine is built and why.
 - [`pan-and-zoom-configuration.md`](design/pan-and-zoom-configuration.md) — the
   flat per-axis viewport-navigation contract: capability/action/axis/source
   switches, `zoom_limits`, reset, and the semantic `ranges` view events.
-- [`reflex-integration.md`](design/reflex-integration.md) — the `reflex-xy`
-  adapter design: figures as first-class Reflex components over a second
+- [`reflex-integration.md`](design/reflex-integration.md) — the bundled
+  `xy[reflex]` integration design: figures as first-class Reflex components over a second
   socket.io namespace.
 - [`reflex-shaped-api.md`](design/reflex-shaped-api.md) — how the core package
   feels Reflex-shaped while keeping no Reflex dependency.
@@ -99,6 +104,12 @@ Release bar, contribution rules, and audit trail.
   renderer churn safe.
 - [`security-audit-2026-07-06.md`](process/security-audit-2026-07-06.md) —
   scope, findings, and status of the 2026-07-06 source audit.
+- [`tailwind-customizability-audit-2026-07-26.md`](process/tailwind-customizability-audit-2026-07-26.md)
+  — Tailwind source discovery, cascade ownership, live updates, slot coverage,
+  production-browser matrix, and remaining browser boundaries.
+- [`css-tailwind-surface-audit-2026-07-30.md`](process/css-tailwind-surface-audit-2026-07-30.md)
+  — component-by-component DOM/canvas audit, granular modebar/colorbar/axis
+  slots, matched browser evidence, and the CSS/Tailwind ownership boundary.
 
 ## assets/
 

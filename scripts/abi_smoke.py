@@ -104,6 +104,18 @@ def load() -> ctypes.CDLL:
         U64P,
         ctypes.c_size_t,
     ]
+    lib.xy_transition_keys_fixed.restype = ctypes.c_int32
+    lib.xy_transition_keys_fixed.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int32,
+        U32P,
+        U32P,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
     lib.xy_remap_u8.restype = ctypes.c_int32
     lib.xy_remap_u8.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t]
     lib.xy_encode_f32.restype = ctypes.c_int32
@@ -488,6 +500,112 @@ def main() -> None:
     ok(
         swapped_count == 4 and list(unicode_codes) == [0, 1, 0, 2, 3],
         "factorize_unicode1_u8_counts swapped endian",
+    )
+    transition_low = array("I", [99, 99])
+    transition_high = array("I", [99, 99])
+    transition_first = ctypes.c_size_t(size_max)
+    transition_index = ctypes.c_size_t(size_max)
+    transition_records = array("B", b"a\0\0a\0b")
+    status = lib.xy_transition_keys_fixed(
+        _ptr(transition_records, ctypes.c_uint8),
+        2,
+        3,
+        1,
+        0,
+        _ptr(transition_low, ctypes.c_uint32),
+        _ptr(transition_high, ctypes.c_uint32),
+        ctypes.byref(transition_first),
+        ctypes.byref(transition_index),
+    )
+    ok(status == 0, "transition_keys_fixed success status")
+    ok(
+        list(transition_low) == [0x5B3B753B, 0xB1A7FF88]
+        and list(transition_high) == [0xE1379B39, 0x9D296CBA],
+        "transition_keys_fixed personalized digest words",
+    )
+    duplicate_records = array("B", b"a\0\0b\0\0a\0\0")
+    duplicate_low = array("I", [99, 99, 99])
+    duplicate_high = array("I", [99, 99, 99])
+    status = lib.xy_transition_keys_fixed(
+        _ptr(duplicate_records, ctypes.c_uint8),
+        3,
+        3,
+        1,
+        0,
+        _ptr(duplicate_low, ctypes.c_uint32),
+        _ptr(duplicate_high, ctypes.c_uint32),
+        ctypes.byref(transition_first),
+        ctypes.byref(transition_index),
+    )
+    ok(
+        status == 2 and transition_first.value == 0 and transition_index.value == 2,
+        "transition_keys_fixed duplicate rows",
+    )
+    ok(
+        lib.xy_transition_keys_fixed(
+            null_u8,
+            0,
+            1,
+            1,
+            0,
+            null_u32,
+            null_u32,
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 0,
+        "transition_keys_fixed empty/null succeeds",
+    )
+    ok(
+        lib.xy_transition_keys_fixed(
+            null_u8,
+            1,
+            1,
+            1,
+            0,
+            null_u32,
+            null_u32,
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 4,
+        "transition_keys_fixed non-empty/null is an argument error",
+    )
+    nonfinite_records = array("d", [float("inf")])
+    nonfinite_low = array("I", [99])
+    nonfinite_high = array("I", [99])
+    transition_first = ctypes.c_size_t(size_max)
+    transition_index = ctypes.c_size_t(size_max)
+    ok(
+        lib.xy_transition_keys_fixed(
+            _ptr(nonfinite_records, ctypes.c_uint8),
+            1,
+            8,
+            5,
+            0,
+            _ptr(nonfinite_low, ctypes.c_uint32),
+            _ptr(nonfinite_high, ctypes.c_uint32),
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 1
+        and transition_first.value == 0,
+        "transition_keys_fixed declines non-finite data with its row",
+    )
+    ok(
+        lib.xy_transition_keys_fixed(
+            _ptr(nonfinite_records, ctypes.c_uint8),
+            1,
+            3,
+            0,
+            0,
+            _ptr(nonfinite_low, ctypes.c_uint32),
+            _ptr(nonfinite_high, ctypes.c_uint32),
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 4,
+        "transition_keys_fixed bad layout is an argument error",
     )
     small_unique = array("I", [99] * 2)
     ok(
@@ -1392,6 +1510,196 @@ def main() -> None:
     )
     ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 1, "pyramid free")
     ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 0, "double free is an error code")
+
+    # Mean-color density (LOD doc §2): per-cell mean point color + count-only
+    # alpha. One red and one blue point per side of a 2x1 grid, then both in
+    # one cell: pure cells keep exact colors, the mixed cell averages in
+    # linear light (255,0,0)+(0,0,255) -> (188,0,188).
+    ZZ = ctypes.c_size_t
+    DD = ctypes.c_double
+    lib.xy_bin_2d_mean_color.restype = ctypes.c_int32
+    lib.xy_bin_2d_mean_color.argtypes = [
+        F64P,
+        F64P,
+        ZZ,
+        U8P,
+        U8P,
+        U8P,
+        ZZ,
+        DD,
+        DD,
+        DD,
+        DD,
+        ZZ,
+        ZZ,
+        U8P,
+    ]
+    mc_x = array("d", [0.25, 0.75])
+    mc_y = array("d", [0.5, 0.5])
+    mc_idx = array("B", [0, 1])
+    mc_lut = array("B", [255, 0, 0, 255, 0, 0, 255, 255])
+    mc_out = array("B", bytes(2 * 1 * 4))
+    ok(
+        lib.xy_bin_2d_mean_color(
+            _ptr(mc_x, ctypes.c_double),
+            _ptr(mc_y, ctypes.c_double),
+            2,
+            _ptr(mc_idx, ctypes.c_uint8),
+            U8P(),
+            _ptr(mc_lut, ctypes.c_uint8),
+            2,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            2,
+            1,
+            _ptr(mc_out, ctypes.c_uint8),
+        )
+        == 1,
+        "bin_2d_mean_color ok flag",
+    )
+    ok(list(mc_out[0:4]) == [255, 0, 0, 255], "mean color pure red cell")
+    ok(list(mc_out[4:8]) == [0, 0, 255, 255], "mean color pure blue cell")
+    mc_y_one = array("d", [0.5, 0.5])
+    mc_x_one = array("d", [0.5, 0.5])
+    mc_one = array("B", bytes(4))
+    ok(
+        lib.xy_bin_2d_mean_color(
+            _ptr(mc_x_one, ctypes.c_double),
+            _ptr(mc_y_one, ctypes.c_double),
+            2,
+            _ptr(mc_idx, ctypes.c_uint8),
+            U8P(),
+            _ptr(mc_lut, ctypes.c_uint8),
+            2,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            _ptr(mc_one, ctypes.c_uint8),
+        )
+        == 1
+        and list(mc_one) == [188, 0, 188, 255],
+        "mean color mixed cell averages in linear light",
+    )
+    ok(
+        lib.xy_bin_2d_mean_color(
+            _ptr(mc_x_one, ctypes.c_double),
+            _ptr(mc_y_one, ctypes.c_double),
+            2,
+            _ptr(mc_idx, ctypes.c_uint8),
+            _ptr(mc_lut, ctypes.c_uint8),  # both sources set: invalid
+            _ptr(mc_lut, ctypes.c_uint8),
+            2,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            _ptr(mc_one, ctypes.c_uint8),
+        )
+        == 0,
+        "mean color rejects ambiguous color source",
+    )
+
+    # Colored pyramid: same counts as the plain build, mean-color plane on
+    # compose, appends refused (colors unknown; caller rebuilds lazily).
+    lib.xy_pyramid_build_color.restype = ctypes.c_uint64
+    lib.xy_pyramid_build_color.argtypes = [
+        F64P,
+        F64P,
+        ZZ,
+        U8P,
+        U8P,
+        U8P,
+        ZZ,
+        DD,
+        DD,
+        DD,
+        DD,
+        ctypes.c_uint32,
+    ]
+    lib.xy_pyramid_compose_color.restype = ctypes.c_int32
+    lib.xy_pyramid_compose_color.argtypes = [
+        ctypes.c_uint64,
+        DD,
+        DD,
+        DD,
+        DD,
+        ZZ,
+        ZZ,
+        ZZ,  # max_upsample
+        F32P,
+        U8P,
+    ]
+    pc_idx = array("B", [1 if px[i] >= 4.0 else 0 for i in range(n_p)])
+    chandle = lib.xy_pyramid_build_color(
+        _ptr(px, ctypes.c_double),
+        _ptr(py, ctypes.c_double),
+        n_p,
+        _ptr(pc_idx, ctypes.c_uint8),
+        U8P(),
+        _ptr(mc_lut, ctypes.c_uint8),
+        2,
+        0.0,
+        8.0,
+        0.0,
+        8.0,
+        8,
+    )
+    ok(chandle != 0, "colored pyramid build returns a handle")
+    cgrid = array("f", bytes(4 * 8 * 8))
+    crgba = array("B", bytes(8 * 8 * 4))
+    ok(
+        lib.xy_pyramid_compose_color(
+            ctypes.c_uint64(chandle),
+            0.0,
+            8.0,
+            0.0,
+            8.0,
+            8,
+            8,
+            2,
+            _ptr(cgrid, ctypes.c_float),
+            _ptr(crgba, ctypes.c_uint8),
+        )
+        == 0,
+        "colored compose full window uses level 0",
+    )
+    ok(sum(cgrid) == float(n_p), "colored compose conserves the count")
+    left_ok = all(
+        list(crgba[(r * 8 + c) * 4 : (r * 8 + c) * 4 + 4]) == [255, 0, 0, 255]
+        for r in range(8)
+        for c in range(4)
+    )
+    right_ok = all(
+        list(crgba[(r * 8 + c) * 4 : (r * 8 + c) * 4 + 4]) == [0, 0, 255, 255]
+        for r in range(8)
+        for c in range(4, 8)
+    )
+    ok(left_ok and right_ok, "colored compose keeps per-side colors exact")
+    ok(
+        lib.xy_pyramid_append(
+            ctypes.c_uint64(chandle),
+            _ptr(append_x, ctypes.c_double),
+            _ptr(append_y, ctypes.c_double),
+            len(append_x),
+        )
+        == 0,
+        "colored pyramid refuses appends (rebuilds lazily)",
+    )
+    ok(
+        lib.xy_pyramid_compose(
+            ctypes.c_uint64(chandle), 0.0, 8.0, 0.0, 8.0, 8, 8, 2, _ptr(grid_p, ctypes.c_float)
+        )
+        == 0,
+        "count-only compose still serves a colored pyramid",
+    )
+    ok(lib.xy_pyramid_free(ctypes.c_uint64(chandle)) == 1, "colored pyramid free")
 
     # rasterize: caller-owned RGBA8 framebuffer; empty command buffer clears to
     # transparent, a malformed op is rejected, and a null out is refused.

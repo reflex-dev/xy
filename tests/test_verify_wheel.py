@@ -52,6 +52,19 @@ except ImportError as err:
     raise ImportError("native core required") from err
 BACKEND = "native"
 """
+REFLEX_INIT_PY = """
+from .app import XYPlugin
+from .component import chart
+from .vars import figure
+def __getattr__(name):
+    if name == "__version__":
+        return _distribution_version("xy")
+"""
+REFLEX_COMPONENT_JS = """
+// XYChart imports the render client bundled in xy.
+import { render } from "./xy_client.js";
+export function XYChart() { return render; }
+"""
 # Shaped like the real minified vite bundles: export aliases in the ESM,
 # a `var xy` IIFE namespace in the standalone build.
 INDEX_JS = (
@@ -72,6 +85,10 @@ DEFAULT_METADATA = "\n".join(
         "Requires-Python: >=3.11",
         "Requires-Dist: anywidget>=0.9",
         "Requires-Dist: numpy>=1.24",
+        "Provides-Extra: matplotlib",
+        "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'",
+        "Requires-Dist: reflex>=0.9.6; extra == 'reflex'",
+        "Provides-Extra: reflex",
     ]
 )
 
@@ -157,6 +174,10 @@ def _write_wheel(
                 data = INDEX_JS
             elif name == "xy/static/standalone.js" and name not in replacements:
                 data = STANDALONE_JS
+            elif name == "reflex_xy/__init__.py" and name not in replacements:
+                data = REFLEX_INIT_PY
+            elif name == "reflex_xy/assets/XYChart.jsx" and name not in replacements:
+                data = REFLEX_COMPONENT_JS
             write(zf, name, data)
         if native:
             write(zf, "xy/_native_lib/libxy_core.dylib", b"native")
@@ -191,6 +212,27 @@ def test_verify_native_wheel_accepts_required_artifact_shape(tmp_path: Path) -> 
     verify_wheel.verify_wheel(whl, expect_native=True)
 
 
+@pytest.mark.parametrize("metadata_local", ["06589443", "006589443", "6589443"])
+def test_metadata_accepts_normalized_numeric_commit(metadata_local: str) -> None:
+    metadata = DEFAULT_METADATA.replace("Version: 0.0.1", f"Version: 0.0.9.dev24+{metadata_local}")
+    verify_wheel._require_metadata(
+        {"xy-0.0.9.dev24+6589443.dist-info/METADATA"},
+        metadata.encode(),
+        "0.0.9.dev24+6589443",
+    )
+
+
+@pytest.mark.parametrize("metadata_version", ["0.0.9.dev24+06589444", "0.0.9.dev25+06589443"])
+def test_metadata_rejects_different_numeric_commit_version(metadata_version: str) -> None:
+    metadata = DEFAULT_METADATA.replace("Version: 0.0.1", f"Version: {metadata_version}")
+    with pytest.raises(AssertionError, match="Version:"):
+        verify_wheel._require_metadata(
+            {"xy-0.0.9.dev24+6589443.dist-info/METADATA"},
+            metadata.encode(),
+            "0.0.9.dev24+6589443",
+        )
+
+
 def test_verify_pure_wheel_accepts_required_artifact_shape(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-any.whl"
     _write_wheel(whl, tag="py3-none-any", root_is_purelib=True, native=False)
@@ -203,6 +245,16 @@ def test_verify_wheel_accepts_normalized_metadata_spacing(tmp_path: Path) -> Non
     metadata = DEFAULT_METADATA.replace(
         "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget >= 0.9"
     ).replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy >= 1.24")
+    _write_wheel(whl, metadata=metadata)
+
+    verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_accepts_zero_padded_dependency_floors(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    metadata = DEFAULT_METADATA.replace("anywidget>=0.9", "anywidget>=0.9.0").replace(
+        "numpy>=1.24", "numpy>=1.24.0"
+    )
     _write_wheel(whl, metadata=metadata)
 
     verify_wheel.verify_wheel(whl, expect_native=True)
@@ -256,8 +308,99 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
             r"numpy>=1\.24",
         ),
         (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget>=999"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=999"),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9",
+                "Requires-Dist: anywidget>=\u0660.\u0669",
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: numpy>=1.24",
+                "Requires-Dist: numpy>=\u0661.\u0662\u0664",
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget>=0.9.dev0"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24.dev0"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget[dev]>=0.9"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy[typing]>=1.24"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA + "\nRequires-Dist: numpy<2",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"),
+            "with no conflicts",
+        ),
+        (
             DEFAULT_METADATA + "\nRequires-Dist: reflex>=0.8",
-            "no Reflex runtime dependency",
+            "only xy base dependencies",
+        ),
+        (
+            DEFAULT_METADATA.replace("reflex>=0.9.6", "reflex>=0.8"),
+            r"reflex>=0\.9\.6",
+        ),
+        (
+            DEFAULT_METADATA + "\nRequires-Dist: reflex<0.9.6; extra == 'reflex'",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_METADATA + "\nRequires-Dist: reflex>=0.9.6; extra == 'reflex'",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_METADATA.replace("; extra == 'reflex'", ""),
+            "only xy base dependencies",
+        ),
+        (
+            DEFAULT_METADATA
+            + "\nRequires-Dist: plotly>=5; extra == 'bench'\nProvides-Extra: bench",
+            "only xy base dependencies",
+        ),
+        (
+            DEFAULT_METADATA + "\nProvides-Extra: dev",
+            "Provides-Extra: matplotlib and reflex",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'", ""
+            ),
+            r"matplotlib>=3\.11,<3\.12",
+        ),
+        (
+            DEFAULT_METADATA.replace("Provides-Extra: reflex", "Provides-Extra: dev"),
+            "Provides-Extra: matplotlib and reflex",
         ),
     ],
 )
@@ -277,11 +420,35 @@ def test_verify_wheel_rejects_missing_type_marker(tmp_path: Path) -> None:
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
+def test_verify_wheel_rejects_missing_reflex_integration(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"reflex_xy/assets/XYChart.jsx"})
+
+    with pytest.raises(AssertionError, match="reflex_xy"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_missing_reflex_type_marker(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"reflex_xy/py.typed"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
 def test_verify_wheel_rejects_partial_type_marker(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, replacements={"xy/py.typed": "partial\n"})
 
     with pytest.raises(AssertionError, match="full-package PEP 561 marker"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_partial_reflex_type_marker(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, replacements={"reflex_xy/py.typed": "partial\n"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
@@ -371,6 +538,53 @@ def test_verify_wheel_rejects_missing_static_bundle(tmp_path: Path) -> None:
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
+def test_verify_wheel_rejects_missing_matplotlib_loopback_host(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"xy/backends/backend_xy_host.py"})
+
+    with pytest.raises(AssertionError, match="backend_xy_host"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "xy/backends/backend_xy.py",
+        "xy/backends/display_list.py",
+        "xy/backends/raster.py",
+    ],
+)
+def test_verify_wheel_rejects_missing_text_resource_renderer(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "xy/pyplot/_compat_inventory.py",
+        "xy/pyplot/_figure_tree.py",
+        "xy/pyplot/_mode.py",
+        "xy/pyplot/typing.py",
+    ],
+)
+def test_verify_wheel_rejects_missing_pyplot_compat_runtime(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
 def test_verify_wheel_rejects_corrupt_static_bundle(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, replacements={"xy/static/standalone.js": "not the client"})
@@ -391,7 +605,7 @@ def test_verify_wheel_rejects_unexpected_native_artifact(tmp_path: Path) -> None
     "extra_name",
     [
         "spec/api/api-examples.md",
-        "tests/test_docs_examples.py",
+        "tests/test_view_state.py",
         "benchmarks/bench_vs.py",
         "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
     ],

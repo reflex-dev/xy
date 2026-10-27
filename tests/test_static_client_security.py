@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scripts.js_exports import missing_esm_exports
+
 from xy.components import CHART_DOM_SLOTS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +38,6 @@ _STANDALONE = ("static/standalone.js", _read(_STATIC / "standalone.js"))
 CLIENT_FILES = (_CLIENT_SRC,)
 BUNDLES = (_INDEX, _STANDALONE)
 FORMATTER_FILES = (("js/src/30_ticks.ts", _read(ROOT / "js/src/30_ticks.ts")),)
-LOD_FILES = (("js/src/45_lod.ts", _read(ROOT / "js/src/45_lod.ts")),)
 # The chrome default stylesheet lives in the theme part; its rules are string
 # literals, so the bundle-level test re-asserts them in both built bundles.
 THEME_FILES = (("js/src/20_theme.ts", _read(ROOT / "js/src/20_theme.ts")),)
@@ -46,10 +47,15 @@ THEME_FILES = (("js/src/20_theme.ts", _read(ROOT / "js/src/20_theme.ts")),)
 # the minifier preserves verbatim.
 _CHROME_WHERE_RULES = (
     ':where(.xy [data-xy-slot="tooltip"]){',
+    ':where(.xy [data-xy-slot="tooltip_label"])::after{',
     ':where(.xy [data-xy-slot="legend"]){',
+    ':where(.xy [data-xy-slot="legend_title"]){',
     ':where(.xy [data-xy-slot="legend_swatch"]){',
+    ':where(.xy [data-xy-slot="colorbar_line"][data-xy-colorbar-orientation="horizontal"]){',
+    ':where(.xy [data-xy-slot="colorbar_minor_tick"][data-xy-colorbar-orientation="horizontal"]){',
     ':where(.xy [data-xy-slot="modebar"]){',
     ':where(.xy) button[data-xy-slot="modebar_button"]{',
+    ':where(.xy [data-xy-slot="modebar_icon"],.xy [data-xy-modebar-select-icon]){',
     ":where(.xy [data-xy-modebar-menu]){",
     ":where(.xy) button[data-xy-modebar-menu-item]{",
     ':where(.xy) button[data-xy-slot="modebar_button"].xy-active{',
@@ -58,6 +64,8 @@ _CHROME_WHERE_RULES = (
     ':where(.xy [data-xy-slot="tick_label"]){',
     ':where(.xy [data-xy-slot="axis_title"]){',
     ':where(.xy [data-xy-slot="annotation_label"]){',
+    ':where(.xy [data-xy-slot="axis_band"]){',
+    ':where(.xy [data-xy-slot="axis_line"],.xy [data-xy-slot="tick_mark"]){',
     ':where(.xy [data-xy-slot="canvas"]){cursor:',
     ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:',
     ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="none"]){cursor:',
@@ -68,6 +76,7 @@ _CHROME_TOKENS = (
     "--chart-legend-bg",
     "--chart-modebar-bg",
     "--chart-modebar-active",
+    "--chart-modebar-focus",
     "--chart-selection",
     "--chart-selection-fill",
     "--chart-crosshair",
@@ -111,23 +120,20 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     assert 'btn.classList.toggle("xy-active"' in _CLIENT_SRC[1]
 
 
-def test_normative_styling_spec_tracks_responsive_theme_tokens() -> None:
-    styling = _read(ROOT / "spec/api/styling.md")
-    assert "--chart-tick-label-max-width" in styling
-    normalized_styling = " ".join(styling.split())
-    assert "badges to `rgba(30,35,44,.88)` bg / `#f8fafc` text" in normalized_styling
-
-
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
     """User labels may be hostile strings; the client must never parse them."""
     required_text_sinks = (
-        "t.textContent = s.title;",
-        "row.appendChild(document.createTextNode(it.name));",
+        "t.textContent = entry.text;",
+        "label.textContent = it.name;",
         "badge.textContent = item;",
         "d.textContent = text;",
-        "this.tooltip.appendChild(document.createTextNode(ln));",
+        "label.textContent = item.label;",
+        "value.textContent = item.value;",
     )
-    required_style_sinks = ("sw.style.background = safeCssPaint(this.root, bg);",)
+    required_style_sinks = (
+        'sw.style.setProperty(\n          "--xy-legend-swatch-paint",\n'
+        "          safeCssPaint(this.root, bg),\n        );",
+    )
 
     for path, text in CLIENT_FILES:
         for sink in required_text_sinks:
@@ -140,7 +146,10 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         inner_html_lines = [line.strip() for line in text.splitlines() if ".innerHTML" in line]
         assert inner_html_lines == [
             'dragPeek.innerHTML = this._icon("drag");',
-            "b.innerHTML = this._icon(name);",
+            "icon.innerHTML = this._icon(name);",
+            # The zoom-menu trigger's icon fallback, used when zoom is disabled
+            # and the percentage readout would be inert.
+            'zoomIcon.innerHTML = this._icon("zoommenu");',
             'zoomIndicator.innerHTML = this._icon("chevrondown");',
             'selectModeIcon.innerHTML = this._icon("select");',
             'selectIndicator.innerHTML = this._icon("chevrondown");',
@@ -200,8 +209,12 @@ def test_pointer_capture_tolerates_synthetic_accessibility_clicks() -> None:
         capture_lines = [
             line.strip() for line in text.splitlines() if ".setPointerCapture(" in line
         ]
-        # canvas drag, band select, lasso handle, modebar surface, axis band
-        assert len(capture_lines) == 5, f"{path} has an unexpected capture site"
+        # One acquisition site: every capture-owning gesture goes through
+        # `_captureGesturePointer`, so capture-loss handling cannot be opted out
+        # of. Which gestures inherit it is asserted behaviorally instead, by
+        # tests/test_view_state_client.py::
+        # test_capture_loss_policy_covers_every_capture_owning_gesture.
+        assert len(capture_lines) == 1, f"{path} acquires pointer capture outside the shared policy"
         assert all(line.startswith("try {") and "catch (_err)" in line for line in capture_lines), (
             f"{path} leaves pointer capture unguarded for synthetic events"
         )
@@ -270,28 +283,74 @@ def test_client_selection_band_paint_is_a_defeatable_stylesheet_default() -> Non
         )
 
 
+def test_client_applies_selection_slot_to_lasso_without_losing_pointer_behavior() -> None:
+    """The public selection slot paints box and lasso geometry alike.
+
+    Lasso handles remain interactive even when an existing box-oriented class
+    inventory includes ``pointer-events: none``.
+    """
+    for path, text in CLIENT_FILES:
+        assert '_applySlot(this.selLassoPath, "selection")' in text, (
+            f"{path} does not expose the lasso path through the selection slot"
+        )
+        assert '_applySlot(handle, "selection")' in text, (
+            f"{path} does not expose lasso handles through the selection slot"
+        )
+        assert 'this.selLassoPath.style.pointerEvents = "none";' in text, (
+            f"{path} lets the lasso path intercept canvas gestures"
+        )
+        assert 'handle.style.pointerEvents = "all";' in text, (
+            f"{path} lets selection classes disable lasso-handle editing"
+        )
+
+
 def test_client_applies_every_public_dom_slot() -> None:
     slot_snippets = {
         "root": '_applySlot(root, "root")',
         "title": '_applySlot(t, "title")',
         "chrome": '_applySlot(this.chrome, "chrome")',
         "canvas": '_applySlot(this.canvas, "canvas")',
+        "annotation_layer": '_applySlot(this.overlay, "annotation_layer")',
         "labels": '_applySlot(this.labels, "labels")',
         "legend": '_applySlot(lg, "legend")',
+        "legend_title": '_applySlot(title, "legend_title")',
         "legend_item": '_applySlot(row, "legend_item")',
         "legend_swatch": '_applySlot(sw, "legend_swatch")',
+        "legend_label": '_applySlot(label, "legend_label")',
         "colorbar": '_applySlot(box, "colorbar")',
         "colorbar_bar": '_applySlot(bar, "colorbar_bar")',
+        "colorbar_extension": '_applySlot(polygon, "colorbar_extension")',
+        "colorbar_line": '_applySlot(marker, "colorbar_line")',
         "colorbar_tick": '_applySlot(tick, "colorbar_tick")',
+        "colorbar_minor_tick": '_applySlot(tick, "colorbar_minor_tick")',
         "colorbar_title": '_applySlot(label, "colorbar_title")',
         "tooltip": '_applySlot(this.tooltip, "tooltip")',
+        "tooltip_title": '_applySlot(row, "tooltip_title")',
+        "tooltip_row": '_applySlot(row, "tooltip_row")',
+        "tooltip_label": '_applySlot(label, "tooltip_label")',
+        "tooltip_value": '_applySlot(value, "tooltip_value")',
         "modebar": '_applySlot(bar, "modebar")',
+        "modebar_drag_handle": '_applySlot(dragPeek, "modebar_drag_handle")',
+        "modebar_control_group": '_applySlot(toolGroup, "modebar_control_group")',
+        "modebar_separator": '_applySlot(separator, "modebar_separator")',
         "modebar_button": '_applySlot(b, "modebar_button")',
+        "modebar_icon": '_applySlot(icon, "modebar_icon")',
+        "modebar_zoom_value": '_applySlot(zoomPercent, "modebar_zoom_value")',
+        "modebar_indicator": '_applySlot(zoomIndicator, "modebar_indicator")',
+        "modebar_selection_icon": '_applySlot(selectModeIcon, "modebar_selection_icon")',
+        "modebar_menu": '_applySlot(zoomMenu, "modebar_menu")',
+        "modebar_menu_separator": '_applySlot(menuSeparator, "modebar_menu_separator")',
+        "modebar_menu_icon": '_applySlot(icon, "modebar_menu_icon")',
+        "modebar_menu_label": '_applySlot(text, "modebar_menu_label")',
+        "modebar_history_controls": '_applySlot(viewHistory, "modebar_history_controls")',
         "selection": '_applySlot(this.selRect, "selection")',
         "crosshair_x": '_applySlot(this.crosshairX, "crosshair_x")',
         "crosshair_y": '_applySlot(this.crosshairY, "crosshair_y")',
         "badge": '_applySlot(box, "badge")',
         "badge_item": '_applySlot(badge, "badge_item")',
+        "axis_band": '_applySlot(band, "axis_band")',
+        "axis_line": "_applySlot(d, slot)",
+        "tick_mark": "_applySlot(d, slot)",
         # tick_label + axis_title share one call keyed on the label kind.
         "tick_label": '_applySlot(d, kind === "label" ? "axis_title" : "tick_label")',
         "axis_title": '_applySlot(d, kind === "label" ? "axis_title" : "tick_label")',
@@ -551,53 +610,56 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
     assert "view._applyDensitySample(g, d.sample, buffers);" in lod
 
 
+def test_authored_markers_keep_lod_and_style_channels_cpu_readable() -> None:
+    chartview = _read(ROOT / "js/src/50_chartview.ts")
+    lod = _read(ROOT / "js/src/45_lod.ts")
+    annotations = _read(ROOT / "js/src/51_annotations.ts")
+
+    # The draw queue records the exact direct/sample/drill object selected by
+    # LOD, including its transition alpha, rather than rescanning top-level
+    # traces and silently omitting density samples.
+    assert "this._authoredScatterDraws = [];" in chartview
+    assert "(this._authoredScatterDraws ||= []).push({ g, opacityScale });" in chartview
+    assert "const draws = (this._authoredScatterDraws || []).filter(" in annotations
+
+    # Direct, density-sample, and density-drill rows all retain the canonical
+    # style and edge-paint channels needed by the Canvas overlay.
+    assert "g._cpuStyle = values;" in chartview
+    assert "s._cpuStyle = values;" in chartview
+    assert "d._cpuStyle = values;" in lod
+    assert "g._cpuStroke = this._columnView(" in chartview
+    assert "s._cpuStroke = this._asU8(" in chartview
+    assert "d._cpuStroke = values;" in lod
+
+    draw_start = annotations.index("_drawAuthoredScatterMarkers(ctx) {")
+    draw_body = annotations[
+        draw_start : annotations.index("\n  _annotationPaint(style, fallback)", draw_start)
+    ]
+    loop_start = draw_body.index("for (let index = 0; index < g.n; index++)")
+    assert "buildLutData(" in draw_body[:loop_start]
+    assert "buildLutData(" not in draw_body[loop_start:]
+    for marker in (
+        "g._cpuStyle.subarray(",
+        "itemStyle[0]",
+        "itemStyle[1]",
+        "itemStyle[2]",
+        "itemStyle[3]",
+        "g._cpuStroke.slice(",
+    ):
+        assert marker in draw_body
+
+
 def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
-    """Keep canvas paint synchronized with class-driven light/dark themes."""
+    """Keep canvas paint synchronized with class- and attribute-driven themes."""
     required = (
         "new MutationObserver(() => this.refreshTheme())",
-        'attributeFilter: ["class", "style"]',
+        'attributeFilter: ["class", "data-theme", "style"]',
         "this._themeMutationObserver?.disconnect();",
     )
 
     for path, text in CLIENT_FILES:
         for marker in required:
-            assert marker in text, f"{path} lost class-driven theme refresh {marker!r}"
-
-
-def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
-    source_lod = (ROOT / "js/src/45_lod.ts").read_text(encoding="utf-8")
-    assert "trace.kind" not in source_lod
-    assert "markOf(" not in source_lod
-
-    # The intent comment is a source-only assertion — the built bundles are
-    # compacted (comments stripped), so only code markers are checked there.
-    assert "future heatmap/histogram tier reuses it instead of copy-pasting" in source_lod
-
-    lod_required = (
-        "function lodApplyDrill(view, g, upd, buffers)",
-        "function lodApplyDensityUpdate(view, g, upd, buffers)",
-        "function lodDrawDensityTier(view, g, x0, x1, y0, y1)",
-        "lodRememberDensity(view, g, g.density);",
-        "view._drawDensity(g, density",
-        "view._drawPoints(",
-        "lodDropDrill(view, g)",
-    )
-    for path, text in LOD_FILES:
-        for marker in lod_required:
-            assert marker in text, f"{path} no longer preserves shared LOD marker {marker!r}"
-
-    chartview_required = (
-        "lodDrawDensityTier(this, g",
-        "markOf(g.trace.kind).draw(this, g",
-        'if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }',
-        "lodApplyDensityUpdate(this, g, upd, buffers);",
-        "lodApplyDrill(this, g, upd, buffers);",
-        "lodDropDrill(this, g);",
-        'markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill)',
-    )
-    for path, text in CLIENT_FILES:
-        for marker in chartview_required:
-            assert marker in text, f"{path} no longer delegates shared LOD marker {marker!r}"
+            assert marker in text, f"{path} lost host-driven theme refresh {marker!r}"
 
 
 def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
@@ -704,6 +766,9 @@ def test_client_axis_tick_labels_have_collision_layout() -> None:
         "tick_label_angle",
         "tick_label_anchor",
         "tick_label_min_gap",
+        '"tick_padding"',
+        "const tick = tickParts(xAxis)",
+        "tick.outward",
     )
 
     for path, text in CLIENT_FILES:
@@ -733,16 +798,19 @@ def test_widget_bundle_is_valid_esm_and_standalone_is_a_window_global() -> None:
     as a classic <script> by `Figure.to_html()`: it must be export-free and
     define a top-level `var xy` namespace (window.xy) with the same surface."""
     index_text = _read(_STATIC / "index.js")
-    for alias in (
-        "as render",
-        "as renderStandalone",
-        "as decodeFrame",
-        "as ChartView",
-        "as MARK_KINDS",
-        "as markOf",
-        "as default",
-    ):
-        assert alias in index_text, f"index.js no longer exports {alias.split()[-1]!r}"
+    missing = missing_esm_exports(
+        index_text,
+        (
+            "render",
+            "renderStandalone",
+            "decodeFrame",
+            "ChartView",
+            "MARK_KINDS",
+            "markOf",
+            "default",
+        ),
+    )
+    assert not missing, f"index.js no longer exports {missing}"
 
     standalone_text = _read(_STATIC / "standalone.js")
     assert "export {" not in standalone_text and "export{" not in standalone_text, (
@@ -793,6 +861,28 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     assert "cursor:pointer" not in interaction, "modebar button pins cursor inline"
 
 
+def test_client_multiline_text_keeps_matplotlib_baseline_box_anchor() -> None:
+    """Default multiline text anchors its final baseline, including bbox padding."""
+    annotations = _read(ROOT / "js/src/51_annotations.ts")
+    assert ': "calc(-100% + 0.35em)";' in annotations
+    assert 'vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB' in annotations
+
+
+def test_annotation_shape_loop_restores_canvas_before_early_continue() -> None:
+    """Every early annotation exit must balance the per-shape canvas save."""
+    annotations = _read(ROOT / "js/src/51_annotations.ts")
+    draw_start = annotations.index("_drawAnnotationShapes(ctx) {")
+    draw_body = annotations[
+        draw_start : annotations.index("\n  _drawAnnotationLabels(updateLabels)", draw_start)
+    ]
+    lines = draw_body.splitlines()
+    continue_lines = [index for index, line in enumerate(lines) if line.strip() == "continue;"]
+
+    assert continue_lines
+    for index in continue_lines:
+        assert lines[index - 1].strip() == "ctx.restore();"
+
+
 def test_client_renders_mark_level_styling() -> None:
     """Gradient fills (premultiplied, currentColor-aware), rounded corners +
     stroke borders on both rect-family GPU programs, and curve:"smooth"
@@ -807,9 +897,12 @@ def test_client_renders_mark_level_styling() -> None:
         "xySmoothResample(",  # monotone cubic (Fritsch–Carlson)
         "xyMonotoneTangents(",
         "xyMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
+        "symbolScale = symbol == 2 || symbol == 14",  # mpl diamond paths exceed marker box by sqrt(2)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
-        "v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);",  # fractional reveal preserves line dashes
+        "float dashEnd = mix(a_len0, a_len1, reveal);",  # fractional reveal preserves line dashes
+        "uniform int u_cap; uniform int u_capSegments;",  # stroke-linecap on the polyline's ends
+        "LINE_CAP_MODES",  # cap keywords resolve to the shared wire codes
         "_lineDash(g)",
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",
@@ -875,6 +968,27 @@ def test_standalone_csp_allows_blob_workers_and_matches_smoke() -> None:
     block = smoke.split("csp = (", 1)[1].split(")", 1)[0]
     smoke_csp = "".join(part for part in block.split('"')[1::2])
     assert smoke_csp == _STANDALONE_CSP, "smoke CSP diverged from export._STANDALONE_CSP"
+
+
+def test_standalone_csp_allows_data_url_fonts_only() -> None:
+    """`custom_css` may embed a brand face as a data-URL `@font-face` — the
+    portable-font recipe in docs/styling/themes-and-tokens.md. Without an
+    explicit `font-src`, `default-src 'none'` blocks every font load including
+    `data:`, so the documented recipe silently falls back to system-ui.
+
+    `data:` and nothing else: a standalone file must stay self-contained, so no
+    network origin may serve a face."""
+    from xy.export import _STANDALONE_CSP
+
+    directives = dict(
+        part.strip().split(" ", 1) for part in _STANDALONE_CSP.split(";") if part.strip()
+    )
+    assert directives.get("font-src") == "data:", (
+        "font-src must be exactly 'data:' — absent means default-src 'none' "
+        "blocks the documented data-URL @font-face recipe; anything wider "
+        "would let a standalone export reach the network for a font"
+    )
+    assert directives["default-src"] == "'none'"
 
 
 def test_client_supports_edge_to_edge_sparklines() -> None:

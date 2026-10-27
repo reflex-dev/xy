@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning>=0.11"]
 build-backend = "hatchling.build"
 
 [project]
 name = "xy"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Experimental Python charting engine with a native Rust core, binary columnar transport, and a GPU render client"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,13 +14,26 @@ dependencies = [
     "anywidget>=0.9",
 ]
 
+[project.optional-dependencies]
+# Matplotlib supplies its mature Figure/Axes/Artist semantics in pyplot's
+# opt-in compatibility mode.  The XY backend remains the renderer.
+matplotlib = [
+    "matplotlib>=3.11,<3.12",
+]
+# The adapter source ships in every xy wheel so the framework integration and
+# render client can never drift. The extra only selects the supported Reflex
+# floor; importing plain `xy` remains framework-free.
+reflex = [
+    "reflex>=0.9.6",
+]
+
 [project.urls]
 Repository = "https://github.com/reflex-dev/xy"
 Issues = "https://github.com/reflex-dev/xy/issues"
 Changelog = "https://github.com/reflex-dev/xy/blob/main/CHANGELOG.md"
 Security = "https://github.com/reflex-dev/xy/blob/main/SECURITY.md"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8",
     "ruff==0.15.8",
@@ -31,18 +44,19 @@ dev = [
     "pyarrow>=15",
     # Decode oracle for the native JPEG/WebP encoders, never a runtime
     # dependency: the image-export tests importorskip it.
-    "pillow>=10",
+    "pillow>=13.0.0",
     # The FastAPI drilldown example's live_drilldown module imports Starlette at
     # load (its callback endpoint), never a runtime dependency of xy: the
     # drilldown pan-alignment browser test importorskips it, so it lives in dev
     # where CI exercises that test.
     "starlette>=0.36",
-]
-# Plotly comparison charts. Matplotlib is deliberately not a project extra:
-# benchmark jobs that compare against it install it explicitly as an external
-# baseline, while every xy install remains independent of Matplotlib.
-bench = [
-    "plotly>=5",
+    # tests/reflex_adapter exercises the real socket data plane when the
+    # `reflex` extra is installed in the main CI job.
+    "aiohttp>=3.14.3",
+    "uvicorn>=0.23",
+    # Parses .binder/environment.yml in tests/test_binder_config.py so the
+    # Binder contract is asserted on structure, not string transcription.
+    "pyyaml>=6",
 ]
 # CodSpeed's pytest plugin is intentionally separate from the normal dev
 # environment: it is useful for performance runs, but is not needed for unit
@@ -50,6 +64,31 @@ bench = [
 codspeed = [
     "pytest-codspeed>=5,<6",
 ]
+
+# The distribution version is derived from git tags, never written down here, so
+# a tag can no longer disagree with a checked-in number (they did drift —
+# pyproject sat at 0.0.1 while v0.0.2 was live). The tag itself is no longer
+# hand-cut either: `CHANGELOG.md` is the release trigger and the pipeline tags
+# only *after* a successful upload (see `[tool.reflex-release]` below).
+# Dunamai's default tag pattern requires the `v` prefix, which is exactly what
+# keeps the docs-deploy CalVer tags (2026.WW.N, disjoint from library versions
+# by design) from being read as library releases.
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+# Builds off a tagged commit get the bare version; anything else gets
+# `<next>.devN+<commit>`, which is legible locally and unpublishable to PyPI on
+# purpose — only a tag can produce an uploadable version.
+bump = true
+# Only reached by a source tree with neither git metadata nor PKG-INFO (a
+# `git archive` tarball, say): such a build still succeeds, at an obviously
+# unreal version rather than a plausible-but-wrong one. It does *not* cover
+# unpacked sdists — those resolve from their own PKG-INFO, so `pip install
+# xy-X.Y.Z.tar.gz` keeps the published version without needing a repo.
+fallback-version = "0.0.0"
 
 [tool.hatch.build]
 # The render-client bundles are a generated artifact — built by hatch_build.py
@@ -62,7 +101,7 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/xy"]
+packages = ["python/xy", "python/reflex_xy"]
 dev-mode-dirs = ["python"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
@@ -76,14 +115,11 @@ path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    ".github/workflows/ci.yml",
-    ".github/workflows/codspeed.yml",
-    ".github/workflows/release.yml",
-    # The xy package only — python/reflex-xy is its own distributable
-    # (own pyproject, depends on reflex) and must not ride in this sdist;
-    # scripts/verify_sdist.py enforces both the no-reflex-dependency rule
-    # and the ban on its reflex.lock frontend pins.
+    # Both packages published by the xy distribution. The bundled adapter is
+    # selected by the `reflex` extra; the retired python/reflex-xy project and
+    # its independent lock/release material must not ride in this sdist.
     "python/xy",
+    "python/reflex_xy",
     "src",
     # The whole js/ dir (TS sources + build.mjs + tsconfig) plus the npm
     # manifests, so the sdist can rebuild the client with `npm ci &&
@@ -91,22 +127,9 @@ include = [
     "js",
     "package.json",
     "package-lock.json",
-    "benchmarks",
-    "docs",
-    "spec",
-    "examples/fastapi/*.py",
-    "examples/fastapi/pyproject.toml",
-    "examples/fastapi/README.md",
-    "examples/reflex/pyproject.toml",
-    "examples/reflex/README.md",
-    "examples/reflex/rxconfig.py",
-    "examples/reflex/xy_reflex_demo/*.py",
-    "scripts",
-    "tests",
     "Cargo.toml",
     "Cargo.lock",
     "hatch_build.py",
-    "Makefile",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -114,7 +137,19 @@ include = [
     "CONTRIBUTING.md",
 ]
 exclude = [
-    "/docs/app/**",
+    # Repository-only development, CI, documentation, and evidence material.
+    "/.github/**",
+    # Unreleased news fragments: they are materialized into CHANGELOG.md (which
+    # *is* shipped) at release time, so a published sdist never carries them.
+    "/news/**",
+    "/benchmarks/**",
+    "/docs/**",
+    "/examples/**",
+    "/gallery/**",
+    "/Makefile",
+    "/scripts/**",
+    "/spec/**",
+    "/tests/**",
     "/.*-venv/**",
     "/.venv/**",
     "/venv/**",
@@ -125,11 +160,8 @@ exclude = [
     "/node_modules/**",
     "/target/**",
     "/dist/**",
-    # Adapter tests ship with the reflex-xy package's repo checkout, not
-    # with the xy sdist (whose package they can't exercise anyway).
-    "/tests/reflex_adapter/**",
     # Belt and braces for the include narrowing above: hatchling auto-admits
-    # readme-named files, which would smuggle adapter docs back in.
+    # readme-named files, which could smuggle the retired adapter project back in.
     "/python/reflex-xy/**",
 ]
 
@@ -137,6 +169,10 @@ exclude = [
 line-length = 100
 target-version = "py311"
 src = ["python", "tests", "scripts", "benchmarks"]
+# Exact vendored upstream sources are hash-locked gallery inputs. Formatting
+# or lint autofixes would invalidate both their provenance and notebook AST
+# equivalence.
+extend-exclude = ["gallery/matplotlib-3.11.1/examples"]
 
 [tool.ruff.lint]
 select = [
@@ -186,10 +222,13 @@ exclude = ["examples/pdsh/*.ipynb"]
 "tests/reflex_adapter/*.py" = ["RUF012"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["xy"]
+known-first-party = ["reflex_xy", "xy"]
 
 [tool.ty.environment]
 python = ".venv"
+# Maintenance entry points are executable by path and import sibling helpers by
+# their local module names. Keep those imports visible when checking scripts.
+extra-paths = ["scripts"]
 
 [tool.ty.src]
 # Type-check the shippable library; tests/scripts/benchmarks use dynamic
@@ -205,3 +244,127 @@ testpaths = ["tests"]
 # pytest is invoked as a bare binary (CI does `.venv/bin/pytest`, which —
 # unlike `python -m pytest` — does not put the CWD on sys.path).
 pythonpath = ["."]
+
+# ---------------------------------------------------------------------------
+# Release automation (reflex-release + towncrier)
+#
+# CHANGELOG.md is the publish trigger: a version heading with no matching git
+# tag is what makes the pipeline build and upload that version, and the tag is
+# pushed only *after* PyPI accepted the artifacts. Nobody edits the changelog by
+# hand — every user-visible change lands a `news/<pr>.<type>.md` fragment, and
+# the Dispatch release workflow materializes them into a version section.
+# See spec/process/production-readiness.md § Releasing.
+# ---------------------------------------------------------------------------
+[tool.reflex-release]
+# How the release workflows invoke the tool, pinned to one published version so
+# a local run and a CI run cannot drift apart. Bump it (and the `Makefile`'s
+# RELEASE_VERSION) and re-run `reflex-release sync`.
+cli-command = "uvx reflex-release@0.1.0a4"
+
+# Dispatched once per published tag, on the tag itself, after the upload, the tag
+# and the GitHub release exist. The docs site ships the version it documents, and
+# its own `push: tags` trigger cannot see a tag pushed with GITHUB_TOKEN — this
+# is what closes that gap. The workflow declares the `tag`, `package` and
+# `version` inputs the dispatch carries.
+post-release-workflow = "deploy-docs-stg.yml"
+
+# One distribution, built from the repository root: `xy`, including its bundled
+# `reflex_xy` integration. The `xy[reflex]` extra is dependency metadata in
+# those same artifacts, not a second package or release line.
+root-package = "xy"
+
+# A pull request touching any of these needs a news fragment. `src/` is the Rust
+# core, `python/` both shipped packages, `js/` the render client — every one of
+# them can change what a user sees. The layout guess would have picked `src`
+# alone (Rust only), which is why this is explicit.
+root-source-dirs = ["python", "src", "js"]
+
+# Changelog dates and prerelease branch names are stamped in this timezone, so
+# an evening release is not dated tomorrow by a UTC runner.
+release-timezone = "America/Los_Angeles"
+
+# `vX.Y.Z`, unchanged: the shape uv-dynamic-versioning above derives the
+# published version from, and the shape every existing release already carries.
+tag-prefix = "v"
+
+# `xy` cannot be built by `uv build` on one runner: it publishes eleven
+# cross-compiled platform wheels, a runtime-verified PyEmscripten wheel and an
+# sdist, each needing its own operating system or toolchain. So the build is
+# delegated to a workflow this repository owns, and the pipeline keeps
+# everything either side of it — same changelog detection, same version, same
+# approval gate, same tag-after-upload.
+#
+# expect-artifacts is the load-bearing half: a matrix leg that runs, succeeds
+# and uploads nothing is indistinguishable from one never configured, and PyPI
+# accepts a version exactly once. Naming every platform here means an
+# incomplete set stops the release before the approval instead of shipping a
+# version some users cannot install.
+[[tool.reflex-release.custom-build]]
+packages = ["xy"]
+workflow = "build_release_artifacts.yml"
+expect-artifacts = [
+    "*.tar.gz",
+    "*-manylinux_2_17_x86_64.whl",
+    "*-manylinux_2_17_aarch64.whl",
+    "*-manylinux_2_17_armv7l.whl",
+    "*-musllinux_1_2_x86_64.whl",
+    "*-musllinux_1_2_aarch64.whl",
+    "*-musllinux_1_2_armv7l.whl",
+    "*-macosx_10_12_x86_64.whl",
+    "*-macosx_11_0_arm64.whl",
+    "*-win_amd64.whl",
+    "*-win32.whl",
+    "*-win_arm64.whl",
+    "*-pyemscripten_2026_0_wasm32.whl",
+]
+
+[tool.towncrier]
+# One shared configuration, addressed per package with `--dir <package path>`
+# (there is one package today; the monorepo form costs nothing and keeps the
+# configuration identical to the tool's other consumers).
+# https://towncrier.readthedocs.io/en/stable/monorepo.html
+package = ""
+name = ""
+directory = "news"
+filename = "CHANGELOG.md"
+# The version must lead the heading: the same parser reads headings back to
+# decide what to publish. `make release-workflows-check` fails on a format it
+# could not parse back rather than letting a release go undetected.
+title_format = "## {version} ({project_date})"
+issue_format = "[#{issue}](https://github.com/reflex-dev/xy/issues/{issue})"
+start_string = "<!-- towncrier release notes start -->\n"
+
+[[tool.towncrier.type]]
+directory = "breaking"
+name = "Breaking Changes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "deprecation"
+name = "Deprecations"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "feature"
+name = "Features"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "bugfix"
+name = "Bug Fixes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "performance"
+name = "Performance"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "docs"
+name = "Documentation"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "misc"
+name = "Miscellaneous"
+showcontent = true

@@ -90,13 +90,13 @@ def test_shim_never_imports_real_matplotlib_statically() -> None:
 
 
 def test_unsupported_errors_link_to_support_requests() -> None:
-    assert str(not_implemented("polar charts")) == (
-        "xy.pyplot does not implement polar charts. See the compatibility table: "
+    assert str(not_implemented("3-D charts")) == (
+        "xy.pyplot does not implement 3-D charts. See the compatibility table: "
         "https://github.com/reflex-dev/xy/blob/main/spec/matplotlib/compat.md. "
         f"Request support: {SUPPORT_REQUEST_URL}"
     )
     with pytest.raises(TypeError) as exc_info:
-        check_unsupported({"projection": "polar"}, "subplot()")
+        check_unsupported({"projection": "3d"}, "subplot()")
     assert str(exc_info.value) == (
         "xy.pyplot subplot() got unsupported keyword(s): projection. "
         "See the compatibility table: "

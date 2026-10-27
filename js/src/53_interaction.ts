@@ -25,12 +25,21 @@ Object.assign(ChartView.prototype, {
     this.selLasso.dataset.xySelectionLassoOverlay = "";
     this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     this.selLassoPath.dataset.xySelectionLasso = "";
+    this._applySlot(this.selLassoPath, "selection");
+    // The selection slot controls paint, but the polygon itself must never
+    // intercept canvas gestures. Keep this structural behavior inline just as
+    // the rectangular selection band does.
+    this.selLassoPath.style.pointerEvents = "none";
     this.selLasso.appendChild(this.selLassoPath);
     this.selLassoHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this.selLassoHandles.dataset.xySelectionLassoHandles = "";
     this.selLasso.appendChild(this.selLassoHandles);
     this.root.appendChild(this.selLasso);
     this._lassoPolygon = null;
+    // Box / x-range / y-range selections persist like the lasso: the data-space
+    // rectangle ({mode,x0,x1,y0,y1}) survives pan/zoom and re-projects onto
+    // selRect every draw until the selection is cleared (§34).
+    this._boxSelection = null;
     let lassoHandleDrag = null;
     let lassoHandleClick = null;
 
@@ -46,8 +55,8 @@ Object.assign(ChartView.prototype, {
     };
 
     const moveLassoHandle = (e) => {
-      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
-          || !this._lassoPolygon) return;
+      if (!lassoHandleDrag || !this._lassoPolygon) return;
+      if (!lassoHandleDrag.capture.guard(e)) return;
       const distance = Math.hypot(
         e.clientX - lassoHandleDrag.startX,
         e.clientY - lassoHandleDrag.startY,
@@ -61,12 +70,25 @@ Object.assign(ChartView.prototype, {
         lassoHandleDrag.moved = true;
         lassoHandleDrag.interactionId = ++this._interactionSeq;
       }
-      const rect = c.getBoundingClientRect();
+      const rect = this.canvas.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
       const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
       this._lassoPolygon[lassoHandleDrag.index] = this._dataFromCanvas(cssX, cssY);
       this._renderLassoSelection();
       e.preventDefault();
+      e.stopPropagation();
+    };
+    const cancelLassoHandleDrag = (e) => {
+      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+      const cancelledDrag = lassoHandleDrag;
+      lassoHandleDrag = null;
+      cancelledDrag.capture.release();
+      delete cancelledDrag.handle.dataset.xyActive;
+      lassoHandleClick = null;
+      if (this._lassoPolygon) {
+        this._lassoPolygon[cancelledDrag.index] = cancelledDrag.original;
+        this._renderLassoSelection();
+      }
       e.stopPropagation();
     };
     this._listen(this.selLasso, "pointerdown", (e) => {
@@ -84,9 +106,13 @@ Object.assign(ChartView.prototype, {
         moved: false,
         interactionId: null,
       };
+      lassoHandleDrag.capture = this._captureGesturePointer(
+        this.selLasso,
+        e,
+        cancelLassoHandleDrag,
+      );
       handle.dataset.xyActive = "";
       this._hideTooltip();
-      try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       e.preventDefault();
       e.stopPropagation();
     });
@@ -96,6 +122,7 @@ Object.assign(ChartView.prototype, {
       moveLassoHandle(e);
       const completedDrag = lassoHandleDrag;
       lassoHandleDrag = null;
+      completedDrag.capture.release();
       delete completedDrag.handle.dataset.xyActive;
       if (completedDrag.moved && this._lassoPolygon) {
         lassoHandleClick = null;
@@ -116,17 +143,7 @@ Object.assign(ChartView.prototype, {
         removeLassoHandle(completedDrag.index);
       }
     });
-    this._listen(this.selLasso, "pointercancel", (e) => {
-      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
-      if (this._lassoPolygon) {
-        this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
-      }
-      delete lassoHandleDrag.handle.dataset.xyActive;
-      lassoHandleDrag = null;
-      lassoHandleClick = null;
-      if (this._lassoPolygon) this._renderLassoSelection();
-      e.stopPropagation();
-    });
+    this._listen(this.selLasso, "pointercancel", cancelLassoHandleDrag);
 
     if (this._interactionFlag("crosshair")) {
       this.crosshairX = document.createElement("div");
@@ -142,11 +159,11 @@ Object.assign(ChartView.prototype, {
     }
 
     const dataAt = (clientX, clientY) => {
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       return this._dataFromCanvas(clientX - r.left, clientY - r.top);
     };
     const lassoPointAt = (clientX, clientY) => {
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(r.width, clientX - r.left));
       const cssY = Math.max(0, Math.min(r.height, clientY - r.top));
       return {
@@ -168,6 +185,49 @@ Object.assign(ChartView.prototype, {
       return true;
     };
 
+    const finishPanDrag = () => {
+      if (!drag) return;
+      const finished = drag;
+      drag = null;
+      finished.capture.release();
+      if (finished.moved) {
+        this._ignoreNextClick = true;
+        if (finished.changedAxes.length) this._emitViewChange("pan_drag", {
+          axes: finished.changedAxes,
+          phase: "end",
+          interactionId: finished.interactionId,
+        });
+      } else {
+        this._hideTooltip();
+      }
+    };
+    const cancelPointerGesture = () => {
+      band?.capture.release();
+      drag?.capture.release();
+      this.selRect.style.display = "none";
+      this.selLasso.style.display = "none";
+      if (band?.previousLasso) {
+        this._lassoPolygon = band.previousLasso;
+        this._renderLassoSelection();
+      } else if (band?.previousBox) {
+        this._boxSelection = band.previousBox;
+        this._renderBoxSelection();
+      }
+      // A cancelled pan keeps the last view its update frames reached, but it
+      // intentionally emits no public end event. Close the private legend
+      // settle gate explicitly so automatic placement cannot remain frozen.
+      this._settleBestLegendInteraction();
+      band = null;
+      drag = null;
+    };
+    // A capture-owning gesture ended without a release this document saw: a pan
+    // keeps the view it already reached, while an unfinished selection/box-zoom
+    // has no release coordinate to complete with and therefore rolls back.
+    const endGestureWithoutRelease = () => {
+      if (drag) finishPanDrag();
+      else if (band) cancelPointerGesture();
+    };
+
     this._listen(c, "pointerdown", (e) => {
       this._cancelViewAnimation();
       // A browser reports the click count on the second pointer press, before
@@ -180,6 +240,7 @@ Object.assign(ChartView.prototype, {
         return;
       }
       const canPan = this._interactionFlag("pan", true);
+      const panAxes = this._axisPolicy("pan_axes");
       const canZoom = this._interactionFlag("zoom", true);
       const canNavigate = this._interactionFlag("navigation", true);
       const canBoxZoom = this._interactionFlag("box_zoom", true);
@@ -194,19 +255,25 @@ Object.assign(ChartView.prototype, {
         const previousLasso = mode.startsWith("select") && this._lassoPolygon
           ? this._lassoPolygon.map((point) => [...point])
           : null;
+        // A prior box/x/y selection is restored the same way as a prior lasso
+        // when the new gesture turns out to be a no-op click or is cancelled.
+        const previousBox = mode.startsWith("select") && this._boxSelection
+          ? { ...this._boxSelection }
+          : null;
         const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
         const d0 = firstLassoPoint ? firstLassoPoint.data : dataAt(e.clientX, e.clientY);
         band = {
           mode, sx: e.clientX, sy: e.clientY, d0,
           points: firstLassoPoint ? [firstLassoPoint] : null,
           previousLasso,
+          previousBox,
           replacingLasso: false,
         };
-        try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+        band.capture = this._captureGesturePointer(c, e, endGestureWithoutRelease);
         this._hideTooltip();
         return;
       }
-      if (this.dragMode === "pan" && canNavigate && canPan) {
+      if (this.dragMode === "pan" && canNavigate && canPan && panAxes.length > 0) {
         drag = {
           px: e.clientX,
           py: e.clientY,
@@ -217,16 +284,18 @@ Object.assign(ChartView.prototype, {
           // locked axis's motion in the clamp (it slides inside its home
           // window once zoomed in) instead of removing it from the gesture.
           axes: [...new Set([
-            ...this._axisPolicy("pan_axes"),
+            ...panAxes,
             ...this._axisIds().filter((axisId) => this._axisContained(axisId)),
           ])],
           changedAxes: [],
         };
-        try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+        drag.capture = this._captureGesturePointer(c, e, endGestureWithoutRelease);
         this._hideTooltip();
       }
     });
     this._listen(c, "pointermove", (e) => {
+      const capture = band?.capture || drag?.capture;
+      if (capture && !capture.guard(e)) return;
       if (band) { this._updateBand(band, e); return; }
       if (drag) {
         drag.moved = true;
@@ -261,6 +330,7 @@ Object.assign(ChartView.prototype, {
     });
     const end = (e) => {
       if (band) {
+        band.capture.release();
         // Pointermove is not guaranteed to run at the pointer-up coordinate.
         // Capture that final vertex before deciding whether the gesture moved;
         // a naturally closed lasso finishes near its start and therefore has
@@ -289,45 +359,33 @@ Object.assign(ChartView.prototype, {
             }
           } else {
             let d0 = band.d0;
+            let mode = "box";
             if (band.mode === "select-x") {
               d0 = [band.d0[0], this.view.y0];
               d1[1] = this.view.y1;
+              mode = "x";
             } else if (band.mode === "select-y") {
               d0 = [this.view.x0, band.d0[1]];
               d1[0] = this.view.x1;
+              mode = "y";
             }
-            this._sendSelect(d0, d1);
+            this._sendSelect(d0, d1, { mode });
           }
           this._ignoreNextClick = true;
         } else if (band.previousLasso) {
           this._lassoPolygon = band.previousLasso;
           this._renderLassoSelection();
+        } else if (band.previousBox) {
+          this._boxSelection = band.previousBox;
+          this._renderBoxSelection();
         }
         band = null;
         return;
       }
-      if (drag && drag.moved) {
-        this._ignoreNextClick = true;
-        if (drag.changedAxes.length) this._emitViewChange("pan_drag", {
-          axes: drag.changedAxes,
-          phase: "end",
-          interactionId: drag.interactionId,
-        });
-      }
-      if (drag && !drag.moved) this._hideTooltip();
-      drag = null;
+      finishPanDrag();
     };
     this._listen(c, "pointerup", end);
-    this._listen(c, "pointercancel", () => {
-      this.selRect.style.display = "none";
-      this.selLasso.style.display = "none";
-      if (band?.previousLasso) {
-        this._lassoPolygon = band.previousLasso;
-        this._renderLassoSelection();
-      }
-      band = null;
-      drag = null;
-    });
+    this._listen(c, "pointercancel", cancelPointerGesture);
     this._listen(c, "pointerleave", () => this._pointerHoverExit());
     // Backstop for missed canvas pointerleave: browsers skip boundary events
     // when the element under a stationary cursor changes (page scroll,
@@ -345,13 +403,18 @@ Object.assign(ChartView.prototype, {
     this._listen(c, "click", (e) => this._click(e));
 
     this._listen(c, "wheel", (e) => {
-      if (this.dragMode !== "pan") return;
+      // The drag tool never disables the wheel (box-zoom/select drags are
+      // drag-only tools) — except `none` REQUESTED, the escape hatch that
+      // releases page scroll for embedded charts. A chart whose resolved
+      // default is `none` because no drag tool applies (polar) keeps its
+      // wheel gesture.
+      if (this.dragMode === "none" && this._dragModeNoneRequested()) return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       if (!this._interactionFlag("wheel_zoom", true)) return;
       e.preventDefault();
       const f = Math.pow(1.0015, e.deltaY);
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
       const fy = 1 - (e.clientY - r.top) / r.height;
       this._queueWheelZoom(f, fx, fy);
@@ -362,15 +425,28 @@ Object.assign(ChartView.prototype, {
         clearSelectionOnDoubleClick();
         return;
       }
-      if (this.dragMode !== "pan") return;
+      // Same distinction as the wheel handler above: `none` REQUESTED
+      // releases every navigation gesture, but a chart whose resolved
+      // default is `none` because no drag tool applies (polar) keeps its
+      // documented double-click reset — several pie/gauge/wind-rose examples
+      // hide the modebar, which otherwise left no reset path at all.
+      if (this.dragMode === "none" && this._dragModeNoneRequested()) return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("double_click_reset", true)) return;
       this._resetView(true, "reset");
     });
     this._listen(c, "keydown", (e) => {
       if (e.key === "Escape" && (band || drag)) {
+        // Release before dropping the records: the capture object is the only
+        // handle on its `lostpointercapture` listener, so an unreleased gesture
+        // strands that listener on the canvas for the life of the view.
+        band?.capture.release();
+        drag?.capture.release();
         this.selRect.style.display = "none";
         this.selLasso.style.display = "none";
+        // Escape has the same keep-the-current-pan-view semantics as
+        // pointercancel and likewise bypasses `_emitViewChange(..., end)`.
+        this._settleBestLegendInteraction();
         band = null;
         drag = null;
         e.preventDefault();
@@ -400,9 +476,31 @@ Object.assign(ChartView.prototype, {
   },
 
   _a11yPointGroups() {
-    return (this.gpuTraces || []).filter((g) =>
-      markOf(g.trace.kind).pointPick && g.tier !== "density" && g._cpu &&
-      g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
+    // stageNav marks (funnel) traverse their per-stage centers in data order,
+    // which for a funnel is the declared stage order — the ordered process a
+    // screen reader should hear. Funnel navigation follows its visible stage
+    // geometry; ordinary point-series navigation deliberately keeps the full
+    // retained CPU rows even when the legend hides their paint, preserving
+    // the pre-funnel accessibility path and stable "Point N of total" count.
+    return (this.gpuTraces || []).filter((g) => {
+      const mark = markOf(g.trace.kind);
+      return (mark.pointPick || mark.stageNav) && g.tier !== "density" &&
+        (!mark.stageNav || !g._legendHidden) && g._cpu &&
+        g._cpu.x && g._cpu.y && this._a11yGroupCount(g) > 0;
+    });
+  },
+
+  // stageNav walks what is DRAWN: a funnel category filter narrows the group
+  // to its visible stages, and the row index stays in SHIPPED space (what
+  // tooltip_rows and the kernel exact-pick speak). Ordinary point marks retain
+  // their complete accessibility universe regardless of paint-only filtering.
+  _a11yGroupCount(g) {
+    if (markOf(g.trace.kind).stageNav && g._visMap) return g._visMap.length;
+    return Math.min(g._cpu.x.length, g._cpu.y.length);
+  },
+
+  _a11yGroupRow(g, offset) {
+    return markOf(g.trace.kind).stageNav && g._visMap ? g._visMap[offset] : offset;
   },
 
   _onA11yKey(e) {
@@ -469,7 +567,7 @@ Object.assign(ChartView.prototype, {
     // density handoff, or animated tier frame.
     if (this._interactionTransitionActive()) return;
     const groups = this._a11yPointGroups();
-    const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
+    const total = groups.reduce((sum, g) => sum + this._a11yGroupCount(g), 0);
     if (!total) return;
     // Traversal intentionally follows trace/series data order, not visual x
     // order: sorting would change source-row identity and make streamed appends
@@ -483,17 +581,29 @@ Object.assign(ChartView.prototype, {
     let offset = flat;
     let g = groups[0];
     for (const candidate of groups) {
-      const n = Math.min(candidate._cpu.x.length, candidate._cpu.y.length);
+      const n = this._a11yGroupCount(candidate);
       if (offset < n) { g = candidate; break; }
       offset -= n;
     }
-    const hit = { trace: g.trace.id, index: offset, g };
+    const row = this._a11yGroupRow(g, offset);
+    const hit = { trace: g.trace.id, index: row, g };
     // Use the encoded numeric coordinates for positioning; _localRow may have
     // already converted categorical coordinates into display strings.
-    const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
-    const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
-    const x = this._dataPx(g.xAxis || "x", xValue) - this.plot.x;
-    const y = this._dataPx(g.yAxis || "y", yValue) - this.plot.y;
+    const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, row);
+    const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, row);
+    const [chartX, chartY] = this._projectDataPoint(
+      g.xAxis || "x",
+      g.yAxis || "y",
+      xValue,
+      yValue,
+    );
+    // A polar view can legitimately cull source rows outside its authored
+    // sector or radial window. Keyboard traversal still advances over that row,
+    // but it must not publish a hover or feed NaN coordinates to tooltip
+    // placement; the next traversal key continues from this source position.
+    if (!Number.isFinite(chartX) || !Number.isFinite(chartY)) return;
+    const x = chartX - this.plot.x;
+    const y = chartY - this.plot.y;
     const rect = this.canvas.getBoundingClientRect();
     const clientX = rect.left + Math.max(0, Math.min(rect.width, x));
     const clientY = rect.top + Math.max(0, Math.min(rect.height, y));
@@ -622,13 +732,60 @@ Object.assign(ChartView.prototype, {
     // utility (or `styles[selection]`) would lose to the inline style, breaking
     // the "your styles always win" contract for this one slot. Only the mode
     // discriminator and structural position/size stay inline (matches §36).
-    this.selRect.dataset.xyBand = band.mode === "zoom" ? "zoom" : "select";
+    this.selRect.dataset.xyBand = band.mode === "zoom" ? "zoom"
+      : band.mode === "select-x" ? "select-x"
+      : band.mode === "select-y" ? "select-y" : "select";
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
     this.selRect.style.top = cy + "px";
     this.selRect.style.width = Math.max(0, bx2 - cx) + "px";
     this.selRect.style.height = Math.max(0, by2 - cy) + "px";
     void rect;
+  },
+
+  // Re-project the persisted box/x-range/y-range selection (data space) onto
+  // selRect, the mirror of _renderLassoSelection for rectangular brushes. The
+  // range modes span the full plot on their free axis and carry only the two
+  // edge borders (select-x: left/right, select-y: top/bottom) via data-xy-band.
+  _renderBoxSelection() {
+    const sel = this._boxSelection;
+    if (!this.selRect || !sel) return;
+    const xAxis = this._axis("x"), yAxis = this._axis("y");
+    const [x0, x1] = this._axisRange("x");
+    const [y0, y1] = this._axisRange("y");
+    const cx0 = this._axisCoord(xAxis, x0), cx1 = this._axisCoord(xAxis, x1);
+    const cy0 = this._axisCoord(yAxis, y0), cy1 = this._axisCoord(yAxis, y1);
+    if (![cx0, cx1, cy0, cy1].every(Number.isFinite) || cx0 === cx1 || cy0 === cy1) return;
+    const px = this.plot.x, py = this.plot.y, pr = px + this.plot.w, pb = py + this.plot.h;
+    const projX = (value) => px + ((this._axisCoord(xAxis, value) - cx0) / (cx1 - cx0)) * this.plot.w;
+    const projY = (value) => py + ((cy1 - this._axisCoord(yAxis, value)) / (cy1 - cy0)) * this.plot.h;
+    let left, right, top, bottom;
+    if (sel.mode === "x") {
+      left = projX(sel.x0); right = projX(sel.x1); top = py; bottom = pb;
+    } else if (sel.mode === "y") {
+      // projY maps larger data-y to a smaller pixel (top); order after clamp.
+      top = projY(sel.y1); bottom = projY(sel.y0); left = px; right = pr;
+    } else {
+      left = projX(sel.x0); right = projX(sel.x1);
+      top = projY(sel.y1); bottom = projY(sel.y0);
+    }
+    if (![left, right, top, bottom].every(Number.isFinite)) return;
+    const l = Math.max(px, Math.min(pr, Math.min(left, right)));
+    const r = Math.max(px, Math.min(pr, Math.max(left, right)));
+    const t = Math.max(py, Math.min(pb, Math.min(top, bottom)));
+    const b = Math.max(py, Math.min(pb, Math.max(top, bottom)));
+    this.selRect.dataset.xyBand = sel.mode === "x" ? "select-x"
+      : sel.mode === "y" ? "select-y" : "select";
+    this.selRect.style.display = "block";
+    this.selRect.style.left = l + "px";
+    this.selRect.style.top = t + "px";
+    this.selRect.style.width = Math.max(0, r - l) + "px";
+    this.selRect.style.height = Math.max(0, b - t) + "px";
+  },
+
+  _clearBoxOverlay() {
+    this._boxSelection = null;
+    if (this.selRect) this.selRect.style.display = "none";
   },
 
   _simplifyLassoPoints(points, tolerance = 6, maxPoints = 16) {
@@ -745,6 +902,10 @@ Object.assign(ChartView.prototype, {
       const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       handle.dataset.xySelectionLassoHandle = "";
       handle.setAttribute("r", "4");
+      this._applySlot(handle, "selection");
+      // Existing selection classes commonly include pointer-events-none for
+      // the box overlay. Reusing those classes must not disable lasso editing.
+      handle.style.pointerEvents = "all";
       this.selLassoHandles.appendChild(handle);
     }
     while (this.selLassoHandles.childElementCount > points.length) {
@@ -774,18 +935,30 @@ Object.assign(ChartView.prototype, {
       interactionId: opts.interactionId,
       history: opts.history,
     });
-    this._stateSelection = { range: { ...range } };
+    // The mode discriminator (box | x | y) keeps the persisted overlay shaped
+    // like the gesture that made it; it round-trips through durable state only
+    // for the range brushes (a plain box keeps the bare {x0,x1,y0,y1} shape).
+    const mode = opts.mode === "x" || opts.mode === "y" ? opts.mode : "box";
+    this._boxSelection = { mode, x0, x1, y0, y1 };
+    this._renderBoxSelection();
+    // The range document carries the band mode only for x/y brushes (a plain
+    // box keeps the bare {x0,x1,y0,y1}); the same document feeds durable state
+    // and the link-group broadcast so peers re-project the identical overlay.
+    const rangeDoc = mode === "box" ? { ...range } : { ...range, mode };
+    this._stateSelection = { range: rangeDoc };
     // Data-space brush geometry survives drill swaps (§34): a re-drill ships a
     // new subset whose mask indices are unknown until the kernel replies, but
     // the brush itself stays authoritative — 45_lod re-derives a provisional
     // mask from it so the highlight never blinks out on pan/zoom.
     this._lastBrush = { mode: "box", x0, x1, y0, y1 };
-    this._broadcastLinkedSelection({ range });
-    this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
-    if (this.comm) {
-      this.comm.send({ type: "select", x0, x1, y0, y1 });
-    } else {
-      this._selectLocal(x0, x1, y0, y1); // standalone: compute from resident f32
+    if (opts.broadcast !== false) this._broadcastLinkedSelection({ range: rangeDoc });
+    if (opts.dispatch !== false) {
+      this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
+      if (this.comm) {
+        this.comm.send({ type: "select", x0, x1, y0, y1 });
+      } else {
+        this._selectLocal(x0, x1, y0, y1); // standalone: compute from resident f32
+      }
     }
   },
 
@@ -793,6 +966,7 @@ Object.assign(ChartView.prototype, {
     if (!Array.isArray(points) || points.length < 3) return;
     const polygon = points.map((point) => [point[0], point[1]]);
     if (!polygon.every((point) => point.every(Number.isFinite))) return;
+    this._clearBoxOverlay(); // a lasso replaces any rectangular selection
     this._historyRecord({
       source: opts.source,
       interactionId: opts.interactionId,
@@ -801,17 +975,54 @@ Object.assign(ChartView.prototype, {
     this._stateSelection = { polygon: polygon.map((point) => [...point]) };
     this._lassoPolygon = polygon;
     this._lastBrush = { mode: "poly", points: polygon }; // see _sendSelect
-    this._broadcastLinkedSelection({ polygon });
+    if (opts.broadcast !== false) this._broadcastLinkedSelection({ polygon });
     this._renderLassoSelection();
-    this._dispatchChartEvent("brush", {
-      polygon,
-      view: this._eventView("brush"),
-    });
-    if (this.comm) {
-      this.comm.send({ type: "select_polygon", points: polygon });
-    } else {
-      this._selectLocalPolygon(polygon);
+    if (opts.dispatch !== false) {
+      this._dispatchChartEvent("brush", {
+        polygon,
+        view: this._eventView("brush"),
+      });
+      if (this.comm) {
+        this.comm.send({ type: "select_polygon", points: polygon });
+      } else {
+        this._selectLocalPolygon(polygon);
+      }
     }
+  },
+
+  // Republish hydration has already restored the durable geometry through
+  // _applyStatePatch. Fill the rebuilt trace masks from the resident CPU
+  // columns while the authoritative kernel reply is in flight, without
+  // replaying a user gesture. The explicit option keeps this path private to
+  // restoration callers; an unavailable or lost GL context skips the preview.
+  _restoreSelectionLocalMask(selection, opts: any = {}) {
+    if (opts.localMask !== true || this._glLost || !this.gl
+        || !selection || typeof selection !== "object") {
+      return false;
+    }
+    if (selection.range) {
+      const { x0, x1, y0, y1 } = selection.range;
+      if (![x0, x1, y0, y1].every(Number.isFinite)) return false;
+      this._selectLocal(
+        Math.min(x0, x1),
+        Math.max(x0, x1),
+        Math.min(y0, y1),
+        Math.max(y0, y1),
+        { dispatch: false, localMask: true },
+      );
+      return true;
+    }
+    if (Array.isArray(selection.polygon)) {
+      if (selection.polygon.length < 3
+          || !selection.polygon.every((point) => Array.isArray(point)
+            && point.length === 2 && point.every(Number.isFinite))) {
+        return false;
+      }
+      const polygon = selection.polygon.map((point) => [point[0], point[1]]);
+      this._selectLocalPolygon(polygon, { dispatch: false, localMask: true });
+      return true;
+    }
+    return false;
   },
 
   _selectLocalPolygon(points, opts: any = {}) {
@@ -830,6 +1041,16 @@ Object.assign(ChartView.prototype, {
     let total = 0;
     for (const g of this.gpuTraces) {
       if (!g._cpu || g.tier === "density") continue;
+      // A stageNav mark retains `_cpu` as a KEYBOARD aid (funnel stage
+      // centers), not as selectable point geometry: its kind documents
+      // selection as absent, so counting those centers reported a selection
+      // the chart never drew.
+      if (markOf(g.trace.kind).stageNav) continue;
+      // Restoration mirrors the kernel selection universe exactly. Otherwise
+      // a provisional line/hidden-series mask would survive forever because
+      // the authoritative reply only contains visible scatter trace ids.
+      if (opts.localMask === true
+          && (g.trace.kind !== "scatter" || g._legendHidden)) continue;
       const cx = g._cpu.x, cy = g._cpu.y;
       const xMeta = g._cpu.xMeta || g.xMeta;
       const yMeta = g._cpu.yMeta || g.yMeta;
@@ -865,6 +1086,13 @@ Object.assign(ChartView.prototype, {
     for (const g of this.gpuTraces) {
       // _cpu only exists where the standalone entry retained copies (retainCpu).
       if (!g._cpu || g.tier === "density") continue;
+      // A stageNav mark retains `_cpu` as a KEYBOARD aid (funnel stage
+      // centers), not as selectable point geometry: its kind documents
+      // selection as absent, so counting those centers reported a selection
+      // the chart never drew.
+      if (markOf(g.trace.kind).stageNav) continue;
+      if (opts.localMask === true
+          && (g.trace.kind !== "scatter" || g._legendHidden)) continue;
       const cx = g._cpu.x, cy = g._cpu.y;
       const xMeta = g._cpu.xMeta || g.xMeta;
       const yMeta = g._cpu.yMeta || g.yMeta;
@@ -900,6 +1128,7 @@ Object.assign(ChartView.prototype, {
 
   _clearSelection(opts: any = {}) {
     this._clearLassoOverlay();
+    this._clearBoxOverlay();
     // Clearing a durable selection is itself a durable-state change; linked
     // applies (dispatch: false) and no-op clears push nothing.
     if (opts.dispatch !== false && this._stateSelection !== null
@@ -979,6 +1208,7 @@ Object.assign(ChartView.prototype, {
     dragPeek.dataset.xyModebarDragHandle = "";
     dragPeek.setAttribute("aria-hidden", "true");
     dragPeek.innerHTML = this._icon("drag");
+    this._applySlot(dragPeek, "modebar_drag_handle");
     bar.appendChild(dragPeek);
     const updateDragPeekSide = () => {
       if (!bar.isConnected) return;
@@ -1009,11 +1239,11 @@ Object.assign(ChartView.prototype, {
         dy: e.clientY - barRect.top,
         moved: false,
       };
-      try { bar.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+      modebarDrag.capture = this._captureGesturePointer(bar, e, endModebarDrag);
       setVisible(true);
     });
     this._listen(bar, "pointermove", (e) => {
-      if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+      if (!modebarDrag || !modebarDrag.capture.guard(e)) return;
       const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
       if (!modebarDrag.moved) {
         if (distance < DRAG_THRESHOLD_PX) return;
@@ -1033,15 +1263,14 @@ Object.assign(ChartView.prototype, {
     });
     const endModebarDrag = (e) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+      const completedDrag = modebarDrag;
       modebarDrag = null;
+      completedDrag.capture.release();
       this._modebarDragging = false;
       bar.style.transition = "opacity .15s";
       setVisible(root.matches(":hover"));
       bar.classList.remove("xy-dragging");
       updateDragPeekSide();
-      try {
-        if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
-      } catch (_err) { /* synthetic event */ }
     };
     this._listen(bar, "pointerup", endModebarDrag);
     this._listen(bar, "pointercancel", endModebarDrag);
@@ -1053,12 +1282,15 @@ Object.assign(ChartView.prototype, {
       b.setAttribute("aria-label", title);
       b.dataset.xyModebarAction = name;
       if (toggles) b.setAttribute("aria-pressed", "false");
-      b.innerHTML = this._icon(name);
       // Box/size/color are stylesheet defaults (--chart-axis); only layout +
       // interactivity stay inline so a user class can restyle the button.
       b.style.cssText =
         "display:flex;align-items:center;justify-content:center;pointer-events:auto;";
       this._applySlot(b, "modebar_button");
+      const icon = document.createElement("span");
+      icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_icon");
+      b.appendChild(icon);
       this._listen(b, "pointerdown", (e) => e.stopPropagation());
       this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
       parent.appendChild(b);
@@ -1067,13 +1299,12 @@ Object.assign(ChartView.prototype, {
     };
 
     const canNavigate = this._interactionFlag("navigation", true);
-    const canPan = canNavigate && this._interactionFlag("pan", true);
+    const canPan = canNavigate && this._interactionFlag("pan", true)
+      && this._axisPolicy("pan_axes").length > 0;
     const canZoom = canNavigate && this._interactionFlag("zoom", true);
     const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
     const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);
     const canReset = canNavigate && this._resetAxisPolicy().length > 0;
-    const canHistory = canNavigate && this._historyEnabled();
-    const hasZoomMenu = canHistory || canZoomButtons || canBoxZoom || canReset;
     // Pickability is dynamic for density traces (§5: drill-in grants it,
     // drill-out revokes it), so the Select trigger is built whenever the
     // interaction flags allow selection and its *visibility* tracks
@@ -1081,6 +1312,16 @@ Object.assign(ChartView.prototype, {
     // at whatever pickability held when the toolbar was first built.
     const canSelect = this._interactionFlag("brush", true)
       && this._interactionFlag("select", true);
+    // History replays the durable state — axis ranges and the selection (§2 of
+    // view-state.md) — so a chart that can move neither can never record an
+    // entry. Without this, an enabled `history` flag alone was enough to build
+    // the "100%" zoom trigger, and a polar chart with zoom off (its default,
+    // polar-axes.md §8: pan and box select are off by geometry) grew a menu
+    // holding nothing but two permanently dead Back/Next items.
+    const canRecordHistory = canPan || canSelect
+      || (canZoom && this._axisPolicy("zoom_axes").length > 0);
+    const canHistory = canNavigate && this._historyEnabled() && canRecordHistory;
+    const hasZoomMenu = canHistory || canZoomButtons || canBoxZoom || canReset;
     // Declarative export config (spec.export, from xy.export_config): the
     // formats list governs menu availability and order. Only the client-safe
     // subset renders here — pdf/html entries are Python-side formats.
@@ -1100,6 +1341,7 @@ Object.assign(ChartView.prototype, {
       const separator = document.createElement("span");
       separator.dataset.xyModebarSeparator = "";
       separator.setAttribute("aria-hidden", "true");
+      this._applySlot(separator, "modebar_separator");
       bar.appendChild(separator);
     };
     let zoomTrigger = null;
@@ -1113,15 +1355,37 @@ Object.assign(ChartView.prototype, {
       this._zoomMenuButton = zoomTrigger;
       zoomTrigger.dataset.xyModebarMenuTrigger = "";
       zoomTrigger.replaceChildren();
-      const zoomPercent = document.createElement("span");
-      zoomPercent.dataset.xyModebarZoomPercent = "";
-      zoomPercent.textContent = "100%";
-      zoomTrigger.appendChild(zoomPercent);
+      // The percentage is a zoom READOUT, so it only earns its place when zoom
+      // can move it. The menu can outlive zoom — reset (an authored
+      // `reset_axes`) and view history both live in it — and a trigger reading
+      // a permanent "100%" then advertises a control the chart does not have.
+      // Keep the icon instead, which is what `mk` drew before this swap.
+      if (canZoom) {
+        const zoomPercent = document.createElement("span");
+        zoomPercent.dataset.xyModebarZoomPercent = "";
+        zoomPercent.textContent = "100%";
+        this._applySlot(zoomPercent, "modebar_zoom_value");
+        zoomTrigger.appendChild(zoomPercent);
+        this._zoomMenuLabel = zoomPercent;
+      } else {
+        // Rebuilt exactly as `mk` drew it above (same slot, no data attribute —
+        // that one marks *menu item* icons), because `replaceChildren` wiped it.
+        const zoomIcon = document.createElement("span");
+        zoomIcon.innerHTML = this._icon("zoommenu");
+        this._applySlot(zoomIcon, "modebar_icon");
+        zoomTrigger.appendChild(zoomIcon);
+      }
       zoomIndicator = document.createElement("span");
       zoomIndicator.dataset.xyModebarMenuIndicator = "";
       zoomIndicator.innerHTML = this._icon("chevrondown");
+      this._applySlot(zoomIndicator, "modebar_indicator");
       zoomTrigger.appendChild(zoomIndicator);
-      this._zoomMenuLabel = zoomPercent;
+      // Name the menu for what it actually offers: "Zoom controls" on a chart
+      // that cannot zoom is wrong for a screen reader too, not just visually.
+      if (!canZoom) {
+        zoomTrigger.title = "View controls";
+        zoomTrigger.setAttribute("aria-label", "View controls");
+      }
       zoomTrigger.setAttribute("aria-haspopup", "menu");
       zoomTrigger.setAttribute("aria-expanded", "false");
     }
@@ -1129,6 +1393,7 @@ Object.assign(ChartView.prototype, {
 
     const toolGroup = document.createElement("div");
     toolGroup.dataset.xyModebarToolGroup = "";
+    this._applySlot(toolGroup, "modebar_control_group");
     if (hasToolGroup) bar.appendChild(toolGroup);
     let selectTrigger = null;
     let selectIndicator = null;
@@ -1145,10 +1410,12 @@ Object.assign(ChartView.prototype, {
       selectModeIcon = document.createElement("span");
       selectModeIcon.dataset.xyModebarSelectIcon = "";
       selectModeIcon.innerHTML = this._icon("select");
+      this._applySlot(selectModeIcon, "modebar_selection_icon");
       selectTrigger.appendChild(selectModeIcon);
       selectIndicator = document.createElement("span");
       selectIndicator.dataset.xyModebarMenuIndicator = "";
       selectIndicator.innerHTML = this._icon("chevrondown");
+      this._applySlot(selectIndicator, "modebar_indicator");
       selectTrigger.appendChild(selectIndicator);
       this._selectMenuButton = selectTrigger;
       this._selectMenuIcon = selectModeIcon;
@@ -1173,9 +1440,10 @@ Object.assign(ChartView.prototype, {
       zoomMenu = document.createElement("div");
       zoomMenu.dataset.xyModebarMenu = "";
       zoomMenu.setAttribute("role", "menu");
-      zoomMenu.setAttribute("aria-label", "Zoom controls");
+      zoomMenu.setAttribute("aria-label", canZoom ? "Zoom controls" : "View controls");
       zoomMenu.style.cssText =
         "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+      this._applySlot(zoomMenu, "modebar_menu");
       bar.appendChild(zoomMenu);
     }
     const zoomMenuItems = [];
@@ -1194,9 +1462,11 @@ Object.assign(ChartView.prototype, {
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_menu_icon");
       button.appendChild(icon);
       const text = document.createElement("span");
       text.textContent = label;
+      this._applySlot(text, "modebar_menu_label");
       button.appendChild(text);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
@@ -1214,6 +1484,7 @@ Object.assign(ChartView.prototype, {
       const menuSeparator = document.createElement("span");
       menuSeparator.dataset.xyModebarMenuSeparator = "";
       menuSeparator.setAttribute("role", "separator");
+      this._applySlot(menuSeparator, "modebar_menu_separator");
       zoomMenu.appendChild(menuSeparator);
     };
 
@@ -1223,6 +1494,7 @@ Object.assign(ChartView.prototype, {
         viewHistory.dataset.xyModebarViewHistory = "";
         viewHistory.setAttribute("role", "group");
         viewHistory.setAttribute("aria-label", "View history");
+        this._applySlot(viewHistory, "modebar_history_controls");
         zoomMenu.appendChild(viewHistory);
         this._historyBackBtn = mkZoomItem("historyback", "Back",
           () => this._historyBack(), null, {
@@ -1270,6 +1542,7 @@ Object.assign(ChartView.prototype, {
     selectMenu.setAttribute("aria-label", "Selection controls");
     selectMenu.style.cssText =
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+    this._applySlot(selectMenu, "modebar_menu");
     bar.appendChild(selectMenu);
     const selectMenuItems = [];
     const mkSelectItem = (name, label, mode) => {
@@ -1284,9 +1557,11 @@ Object.assign(ChartView.prototype, {
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_menu_icon");
       button.appendChild(icon);
       const text = document.createElement("span");
       text.textContent = label;
+      this._applySlot(text, "modebar_menu_label");
       button.appendChild(text);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
@@ -1312,6 +1587,7 @@ Object.assign(ChartView.prototype, {
     exportMenu.setAttribute("aria-label", "Export options");
     exportMenu.style.cssText =
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+    this._applySlot(exportMenu, "modebar_menu");
     bar.appendChild(exportMenu);
     const exportMenuItems = [];
     const mkExportItem = (name, label, onClick, separator = false) => {
@@ -1327,9 +1603,11 @@ Object.assign(ChartView.prototype, {
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_menu_icon");
       button.appendChild(icon);
       const text = document.createElement("span");
       text.textContent = label;
+      this._applySlot(text, "modebar_menu_label");
       button.appendChild(text);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
@@ -1358,7 +1636,11 @@ Object.assign(ChartView.prototype, {
         zoomTrigger.setAttribute("aria-expanded", String(show));
         if (!show) {
           zoomMenu.style.display = "none";
-          zoomIndicator.style.transform = "none";
+          // The open/closed flip is transient controller state, so it rides a
+          // custom property instead of an inline `transform`. An inline value
+          // would outrank every author declaration, silently making the public
+          // `modebar_indicator` slot unstylable via class_names or styles=.
+          zoomIndicator.style.setProperty("--xy-modebar-indicator-flip", "none");
           if (restoreFocus) zoomTrigger.focus();
           return;
         }
@@ -1376,7 +1658,10 @@ Object.assign(ChartView.prototype, {
           + zoomMenu.offsetHeight <= rootRect.bottom
           ? below
           : above;
-        zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+        zoomIndicator.style.setProperty(
+          "--xy-modebar-indicator-flip",
+          preferredTop === above ? "rotate(180deg)" : "none",
+        );
         const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
         const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
         zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
@@ -1395,7 +1680,7 @@ Object.assign(ChartView.prototype, {
       selectTrigger.setAttribute("aria-expanded", String(show));
       if (!show) {
         selectMenu.style.display = "none";
-        selectIndicator.style.transform = "none";
+        selectIndicator.style.setProperty("--xy-modebar-indicator-flip", "none");
         if (restoreFocus) selectTrigger.focus();
         return;
       }
@@ -1413,7 +1698,10 @@ Object.assign(ChartView.prototype, {
         + selectMenu.offsetHeight <= rootRect.bottom
         ? below
         : above;
-      selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+      selectIndicator.style.setProperty(
+        "--xy-modebar-indicator-flip",
+        preferredTop === above ? "rotate(180deg)" : "none",
+      );
       const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
       const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
       const menuLeft = triggerRect.left - barRect.left - bar.clientLeft;
@@ -1568,7 +1856,7 @@ Object.assign(ChartView.prototype, {
     // A chart can mount beneath an already-stationary pointer, so initialize
     // from the current hover state instead of waiting for pointerenter.
     setVisible(root.matches(":hover"));
-    this._setDragMode(this.dragMode);
+    this._setDragMode(this.dragMode, { userInitiated: false });
   },
 
   // The modebar is unusable chrome once the plot box can't contain it — in a
@@ -1593,7 +1881,29 @@ Object.assign(ChartView.prototype, {
     this._clampModebar();
   },
 
-  _setDragMode(mode) {
+
+  // Did anyone ASK for `none`, as opposed to `none` being all that is left?
+  // The modebar records intent through _setDragMode(userInitiated), but the
+  // declarative spelling — interaction_config(default_drag_action="none"), the
+  // documented escape hatch for embedded pages — never routes through it, so a
+  // gate that checked only the flag kept wheel-zooming and swallowed page
+  // scroll on exactly the charts that opted out. Polar still resolves to
+  // `none` without requesting it, and keeps its gestures.
+  _dragModeNoneRequested() {
+    return Boolean(this._dragModeUserSet)
+      || this.interaction?.default_drag_action === "none";
+  },
+
+  _setDragMode(mode, { userInitiated = true } = {}) {
+    // Calls here are explicit tool changes (modebar, keyboard, the
+    // select-fallback) except the modebar-build re-assert, which passes
+    // userInitiated: false. The wheel gate needs the distinction: a user
+    // choosing the `none` tool releases page scroll, but a chart whose
+    // resolved default is `none` because it HAS no drag tools (polar
+    // disables pan/box/select) must keep its wheel gesture — radial zoom is
+    // the only navigation polar has, and gating it on dragMode made it dead
+    // on arrival.
+    if (userInitiated) this._dragModeUserSet = true;
     this.dragMode = mode;
     // Cursor telegraphs the gesture (grab for pan, crosshair for box-zoom) but
     // lives in the defeatable :where([data-xy-slot="canvas"]) stylesheet keyed on
@@ -1663,9 +1973,14 @@ Object.assign(ChartView.prototype, {
   },
 
   _cancelViewAnimation() {
+    const wasActive = !!this._viewAnim;
     if (this._animRaf) cancelAnimationFrame(this._animRaf);
     this._animRaf = null;
     this._viewAnim = null;
+    // Pointerdown can interrupt navigation at its last rendered frame and then
+    // end without moving, so no public end event follows. Ensure that newly
+    // settled intermediate view gets the same one-shot automatic legend score.
+    if (wasActive && this._markBestLegendsDirty?.()) this.draw();
   },
 
   _setView(next, opts: any = {}) {
@@ -1889,9 +2204,16 @@ Object.assign(ChartView.prototype, {
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
     );
+    // Polar radial zoom scales r_hi about a FIXED r_lo (polar-axes.md §8) —
+    // the wheel path already does. The modebar used a centred anchor for every
+    // coordinate system, so the only reachable polar zoom moved the radial
+    // minimum and carved a hole in the middle of the disc, contradicting the
+    // documented contract.
+    const polarRadial = this.spec?.coords === "polar";
     for (const axisId of axes) {
       const [lo, hi] = ranges[axisId];
-      const range = this._zoomAxisRange(axisId, lo, hi, f, 0.5);
+      const anchor = polarRadial && this._axisDim(axisId) === "y" ? 0 : 0.5;
+      const range = this._zoomAxisRange(axisId, lo, hi, f, anchor);
       if (range) ranges[axisId] = range;
     }
     this._setView({ ranges }, {
@@ -1909,7 +2231,13 @@ Object.assign(ChartView.prototype, {
     if (![c0, c1].every(Number.isFinite) || c0 === c1) return null;
     const ca = c0 + anchorFrac * (c1 - c0);
     if (f < 1) {
-      const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
+      // Floor on the interval's own magnitude, not the anchor's: polar radial
+      // zoom anchors at r_lo = 0, making |ca| = 0 and the old floor 1e-42 —
+      // no floor at all, so sustained wheel-in sailed past f32 quantization
+      // into visible banding. |ca| never exceeds max(|c0|, |c1|), so this is
+      // at least as strict everywhere, including centre-anchored cartesian
+      // zoom on a symmetric range (which had the same hole).
+      const minSpan = Math.max(Math.abs(c0), Math.abs(c1), 1e-30) * 1e-12;
       if (Math.abs((c1 - c0) * f) < minSpan) return null;
     }
     const next0 = ca - (ca - c0) * f;
@@ -1953,8 +2281,17 @@ Object.assign(ChartView.prototype, {
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
     );
     const anchors = {};
+    // Polar radial zoom anchors at the CENTRE, always: an interior anchor
+    // lifts r_lo and carves a hole in the middle of the disc — an annulus view
+    // that reads as broken, not as zoom. Scaling r_hi about a fixed minimum is
+    // Plotly's radial semantics and stays legible from any cursor position
+    // (polar-axes.md §8). One site covers the wheel, the modebar buttons and
+    // axis-band gestures alike.
+    const polarRadial = this.spec?.coords === "polar";
     for (const axisId of axes) {
-      const anchor = this._axisDim(axisId) === "x" ? fx : fy;
+      const anchor = this._axisDim(axisId) === "x"
+        ? fx
+        : (polarRadial ? 0 : fy);
       const [lo, hi] = ranges[axisId];
       const range = this._zoomAxisRange(axisId, lo, hi, f, anchor);
       if (range) ranges[axisId] = range;

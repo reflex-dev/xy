@@ -125,7 +125,7 @@ keeps policy in one visible node.
 | `default_drag_action` | `"auto"` | Choose pan when available, then another enabled drag tool. |
 | `pan` | `True` | Drag panning is available. |
 | `pan_axes` | all declared axes | Pan every axis unless explicitly narrowed. A narrowed-out zoom axis is contained to its home window (§7.1). |
-| `zoom` | `True` | Zoom actions are available. |
+| `zoom` | `True` (`False` under `coords="polar"`) | Zoom actions are available. |
 | `zoom_axes` | all declared axes | Zoom every axis unless explicitly narrowed. |
 | `zoom_limits` | `(1.0, None)` on every axis in `zoom_axes` | Do not zoom out past home; allow zoom-in to bounds/precision. |
 | `wheel_zoom` | `True` | Wheel and trackpad zoom. |
@@ -141,6 +141,16 @@ to `{"x": (1.0, None), "y": (1.0, None)}`. A declared `y2` also receives
 
 Unspecified keys should remain absent from the payload. The client resolves defaults,
 keeping exports compact and compatibility explicit.
+
+**One exception: `zoom` under `coords="polar"`.** A polar figure resolves `zoom` in
+Python and always ships the flag, because the client cannot make the decision — a pie
+and a wind rose are the same figure to it (`Chart.kind` never reaches the wire) and
+they want opposite answers. The centre is a fixed point of the polar transform, so
+zooming a constant-rim composition crops it rather than navigating it; the default is
+therefore `False`, `wind_rose` ships `True` because its radius is a frequency count,
+and `xy.interaction_config(zoom=…)` overrides either. With the flag off, the polar
+modebar carries no zoom controls and the wheel is left uncancelled so the page keeps
+scrolling. See [`polar-axes.md`](polar-axes.md) §8.
 
 ### 5.3 Precedence
 
@@ -182,13 +192,13 @@ defensively and falls back to safe defaults.
 ### 5.5 What `default_drag_action` controls
 
 `default_drag_action` selects the initial tool for an unmodified primary-button drag inside the
-plot. It does not enable a capability, choose axes, configure the wheel, or perform an
-action immediately.
+plot. It does not enable a capability, choose axes, or perform an action immediately, and
+no tool other than `"none"` touches the wheel or double-click reset.
 
 | `default_drag_action` | Plain-drag behavior | Required capability |
 | --- | --- | --- |
 | `"auto"` | Resolve the first usable tool from the priority below. | None |
-| `"none"` | Do nothing on plain drag. Wheel, click, and toolbar actions may still work. | None |
+| `"none"` | Do nothing on plain drag, release the wheel to the page, and ignore double-click reset. Click and toolbar actions still work. | None |
 | `"pan"` | Translate the ranges in `pan_axes`. | `navigation and pan` |
 | `"zoom"` | Draw a rectangle and box-zoom `zoom_axes` on release. | `navigation and zoom and box_zoom` |
 | `"select"` | Rectangular x/y selection. | `select and brush` plus pickable data |
@@ -196,9 +206,12 @@ action immediately.
 | `"select-y"` | Select a y interval across the full visible x range. | `select and brush` plus pickable data |
 | `"select-lasso"` | Draw a free-form polygon selection. | `select and brush` plus pickable data |
 
-`"zoom"` means **box zoom for drag only**. It does not control wheel zoom or the
-Zoom In/Out toolbar commands. Those remain governed by `wheel_zoom` and
-`zoom_buttons`.
+`"zoom"` means **box zoom for drag only**. It does not control wheel zoom,
+double-click reset, or the Zoom In/Out toolbar commands. Those remain governed
+by `wheel_zoom`, `double_click_reset`, and `zoom_buttons`. `"none"` is the one
+tool that reaches beyond the drag: it releases the wheel to the page and
+disables double-click reset, so the modebar's pan toggle (pan ↔ none) gives an
+embedded chart back to page scroll.
 
 `"auto"` resolves once at mount and whenever configuration invalidates the active
 tool:
@@ -229,11 +242,9 @@ xy.interaction_config(
     box_zoom=True,
 )
 
-# No plain-drag gesture; keep cursor-anchored wheel zoom.
-xy.interaction_config(
-    default_drag_action="none",
-    wheel_zoom=True,
-)
+# Inert plot for a scrolling page: no drag gesture, and the wheel
+# stays with the page. Toolbar navigation keeps working.
+xy.interaction_config(default_drag_action="none")
 ```
 
 ## 6. Shared mutation pipeline
@@ -457,11 +468,33 @@ single coordinated keymap design.
 xy.x_axis(
     domain=(20, 80),   # initial/home view
     bounds=(0, 100),   # hard navigation envelope
+    margin=0.05,       # padding around an *automatic* domain
 )
 ```
 
 Domain is never a hard limit. `bounds="data"` resolves the canonical data range in
 Python independently of an explicit domain.
+
+`margin` is a non-negative fraction of the data span padded onto both ends of an
+**automatic** domain (matplotlib's `Axes.margins`; the pyplot shim routes
+`margins()`/`rcParams["axes.{x,y}margin"]` through it). An explicit `domain`
+short-circuits autoscaling entirely, so `margin` and `domain` never combine —
+the axis takes `domain` verbatim. Unset, the axis keeps the historical 3% pad, so
+`margin` is additive public API and changes no existing chart. Details that are
+part of the contract, not incidental:
+
+| Case | Behavior |
+| --- | --- |
+| `margin` unset | 3% of the data span on each end. A log axis additionally floors the low edge at `max(lo / 10, nextafter(0, 1))`. |
+| `margin=0` | The domain is exactly the data range — no pad, on any scale kind. |
+| Log axis with an explicit `margin` | The pad is applied in log10 space (`10 ** (log10(lo) - span * margin)`), so it is multiplicative and symmetric on screen. If the padded low edge underflows to zero, it is floored at `nextafter(0, 1)`; the `lo / 10` floor does not apply because an authored margin remains the authority otherwise. |
+| Singleton data range (`lo == hi`) with an explicit `margin` | The extent becomes `[lo, lo + 1]` and the margin pads that unit interval — matching mpl's singleton handling. Without a margin the legacy fallback still applies: `±5%` of `abs(lo)`, or `±0.5` at zero. |
+| Zero-baseline marks (bars, areas) | Unchanged: the padded edge still snaps back to `0` when the data range touches it, so a bar chart's baseline does not float off the spine. |
+| Both ends sticky (mesh, image, ECDF cumulative axis) | The axis takes the data range verbatim, as matplotlib's sticky edges do for `imshow`/`pcolormesh`/`hist2d`/`specgram` and for an ECDF's 0/1 axis. The engine has no sticky concept beyond the zero-baseline anchor above, so the pyplot shim resolves this case itself and ships a materialized `domain` in place of `margin` (`Axes._fully_sticky_domain`) — the two never combine. A *one-sided* sticky edge is the zero baseline and stays with `margin`, anchored by the engine. |
+
+`margin` is resolved in Python, in f64, by `Figure._range` — only the resulting
+domain crosses the wire, so it is not a renderer-side concept and needs no
+client, SVG, or raster support.
 
 `bounds` and `zoom_limits` are complementary:
 
@@ -595,6 +628,15 @@ controls transport work.
 - DOM events may emit once per animation frame.
 - Python/Reflex events are coalesced.
 - Continuous gestures always deliver a final `end` event.
+- Every capture-owning gesture acquires its pointer through one shared
+  capture-loss detector (`ChartView._captureGesturePointer`), so the behavior
+  cannot be opted out of; each gesture then declares its own end policy — a pan
+  finalizes at its last in-frame view, coordinate-dependent gestures cancel, and
+  chrome drags release. The detector fires on `lostpointercapture`, and falls
+  back to the first trusted buttonless re-entry move for browsers that delay or
+  omit it. That backstop is mouse-only (it reads the primary-button bit, which
+  has no equivalent for pen or touch); pen and touch rely on
+  `lostpointercapture` alone.
 - LOD and view-event throttles may differ.
 - Linked peers receive browser-local updates without a Python round trip.
 

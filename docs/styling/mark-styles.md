@@ -14,14 +14,17 @@ renderer cannot silently ignore a declaration that another honors.
 
 | Mark family | Supported properties in `style=` |
 | --- | --- |
-| `line`, `step`, `stairs`, `ecdf` | `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `opacity` |
+| `line`, `step`, `stairs`, `ecdf` | `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `stroke-linecap`, `opacity` |
 | `area`, `error_band` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; `area` also supports `stroke-dasharray` |
-| `scatter` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| `scatter` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `marker-shape`, `opacity` |
 | `histogram`, `bar`, `column` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `border-radius`, `opacity` |
 | `segments`, `errorbar`, `contour`, `stem` | `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
-| `box`, `violin` | `fill`, `fill-opacity`, `opacity` |
+| `box` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| `violin` | `fill`, `fill-opacity`, `opacity` |
 | `triangle_mesh` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
 | `heatmap`, `hexbin` | `fill-opacity`, `opacity` |
+| `ribbon`, `sankey` | `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; Sankey styles apply to link ribbons |
+| `funnel` | `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; per-stage paint is the categorical stage channel (`colors=`/theme palette), never `fill` |
 
 Use canonical CSS kebab-case when sharing styles with web code; Python
 snake_case aliases remain accepted.
@@ -57,6 +60,73 @@ of each mark's API. A declaration in `style=` is the final override when both
 surfaces set the same rendered property. Inside `style`, use `stroke` for
 line-like geometry and `fill` for filled geometry; `color` is deliberately not
 a CSS paint alias there.
+
+## Style compound box plots
+
+A box plot is one public mark composed from four renderer traces. Its main
+`style=` mapping controls the box body; the three part mappings use the same
+validated vocabularies as the built-in segment and scatter marks:
+
+~~~python
+xy.box(
+    values,
+    group=cohorts,
+    style={
+        "fill": "#dbeafe",
+        "fill-opacity": 0.45,
+        "stroke": "#2563eb",
+        "stroke-width": 2,
+    },
+    whisker_style={
+        "stroke": "#64748b",
+        "stroke-width": 1.5,
+        "stroke-opacity": 0.75,
+    },
+    median_style={"stroke": "#0f172a", "stroke-width": 3},
+    outlier_style={
+        "fill": "#ffffff",
+        "stroke": "#dc2626",
+        "stroke-width": 2,
+        "marker-shape": "diamond",
+    },
+)
+~~~
+
+The mappings are intentionally separate: `fill` is invalid for a whisker and
+`marker-shape` is invalid for the box body, so a misplaced declaration raises
+with the part name instead of disappearing. All four paths survive WebGL,
+native PNG, SVG, and PDF output.
+
+## Stroke geometry: line caps
+
+`stroke-linecap` (`butt`, `round`, `square`) shapes the two ends of a polyline
+and each dash end. It is polyline geometry, so only the line family accepts it —
+a `bar` or a `scatter` raises rather than accepting a declaration no renderer
+can draw.
+
+XY defaults to `round`, **not** to the CSS initial value `butt`: the native
+rasterizer has always drawn round caps and it is the reference for static
+export. Set the property to opt into the CSS initial value.
+
+~~~python
+xy.line(x, y, style={"stroke-width": "6px", "stroke-linecap": "butt"})
+~~~
+
+Joins are always round and are not selectable.
+
+## Marker shape
+
+`marker-shape` picks one of the 19 renderer-backed scatter symbols — `circle`,
+`square`, `diamond`, `triangle`, `cross`, `hexagon`, `pentagon`, `star`,
+`triangle_down`, `triangle_left`, `triangle_right`, `x`, `point`, `pixel`,
+`thin_diamond`, `plus_line`, `x_line`, `horizontal_line`, `vertical_line` — and
+is the CSS spelling of the existing `symbol=` argument. It is an XY vocabulary
+name rather than a standard CSS property: CSS has no shape keyword for a non-DOM
+point mark.
+
+~~~python
+xy.scatter(x, y, size=12, style={"marker-shape": "diamond", "fill": "#22c55e"})
+~~~
 
 ## Combine mark styles
 
@@ -143,11 +213,14 @@ declarations:
   Use `{"gradient": "...", "space": "plot"}` for one plot-space gradient.
 - `corner_radius=(tip, base)` rounds value and baseline ends independently for
   bars, columns, and histograms.
-- Scatter `symbol` accepts all 17 renderer-backed shapes: `circle`, `square`,
+- Scatter `symbol` accepts all 19 renderer-backed shapes: `circle`, `square`,
   `diamond`, `triangle`, `triangle_down`, `triangle_left`, `triangle_right`,
   `cross`, `x`, `hexagon`, `pentagon`, `star`, `point`, `pixel`,
-  `thin_diamond`, `plus_line`, and `x_line`. Every shape combines with
-  `stroke` / `stroke_width`; the last two are intentionally line-only glyphs.
+  `thin_diamond`, `plus_line`, `x_line`, `horizontal_line`, and `vertical_line`.
+  Every shape combines with `stroke` / `stroke_width`; the last four are
+  intentionally line-only glyphs.
+- Box plots expose `whisker_style`, `median_style`, and `outlier_style` for
+  their compound parts; the main `style` mapping controls the box body.
 
 All CSS gradients accept two to eight color stops and the four axis-aligned
 directions. `currentColor` resolves to the mark's color; `transparent` retains
@@ -202,10 +275,11 @@ xy.y_axis(
 )
 ~~~
 
-The `tick_label` and `axis_title` DOM slots provide chart-wide CSS or Tailwind
-hooks for tick text and axis titles. Use per-axis `style` as above when x and y
-must differ. Grid lines, axis lines, and tick marks are canvas-painted, so style
-them through the axis component rather than a CSS selector.
+The `axis_line`, `tick_mark`, `tick_label`, and `axis_title` DOM slots provide
+chart-wide CSS or Tailwind hooks for Cartesian axis chrome. Use per-axis
+`style` as above when x and y must differ or when browser, SVG, and native PNG
+must match. Grid lines remain canvas-painted and use the axis component rather
+than a CSS selector.
 
 ## Validation
 

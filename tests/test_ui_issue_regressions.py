@@ -2,13 +2,71 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
 import xy
 from conftest import run_browser_probe
+from xy import _svg
 from xy.export import find_chromium
+
+# Browser renderer rule: rotated y titles clear the tick-label union by this
+# multiple of the title's font size.
+_Y_TITLE_TICK_GAP_EM = 0.4
+
+
+def _svg_y_title_geometry(chart: xy.Chart, labels: set[str]) -> dict[str, dict[str, float]]:
+    """Return the static renderer's resolved title anchors for named labels."""
+    geometry: dict[str, dict[str, float]] = {}
+    for element in ElementTree.fromstring(chart.to_svg()).iter():
+        if not element.tag.endswith("text"):
+            continue
+        text = "".join(element.itertext())
+        if text not in labels:
+            continue
+        transform = element.attrib.get("transform", "")
+        rotation = re.match(r"rotate\((-?[\d.]+)", transform)
+        geometry[text] = {
+            "x": float(element.attrib["x"]),
+            "y": float(element.attrib["y"]),
+            "angle": float(rotation.group(1)) if rotation else 0.0,
+        }
+    assert geometry.keys() == labels
+    return geometry
+
+
+def test_svg_y_axis_title_locations_center_primary_and_named_axes() -> None:
+    labels = {"primary default", "right start", "left center", "right end"}
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.line([0, 1], [2, 3], y_axis="y3"),
+        xy.line([0, 1], [3, 4], y_axis="y4"),
+        xy.x_axis(),
+        xy.y_axis(label="primary default", side="left"),
+        xy.y_axis(id="y2", label="right start", side="right", label_position="start"),
+        xy.y_axis(id="y3", label="left center", side="left", label_position="center"),
+        xy.y_axis(id="y4", label="right end", side="right", label_position="end"),
+        width=720,
+        height=440,
+        padding=(48, 120, 48, 120),
+    )
+    spec, _blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    geometry = _svg_y_title_geometry(chart, labels)
+
+    assert geometry["primary default"]["y"] == pytest.approx(plot["y"] + plot["h"] / 2)
+    assert geometry["primary default"]["angle"] == -90
+    assert geometry["right start"]["y"] == pytest.approx(plot["y"] + plot["h"])
+    assert geometry["right start"]["angle"] == 90
+    assert geometry["left center"]["y"] == pytest.approx(plot["y"] + plot["h"] / 2)
+    assert geometry["left center"]["angle"] == -90
+    assert geometry["right end"]["y"] == pytest.approx(plot["y"])
+    assert geometry["right end"]["angle"] == 90
 
 
 def _probe(chart: xy.Chart, script: str, tmp_path: Path, name: str) -> dict:
@@ -48,6 +106,297 @@ _POSTLUDE = """
 """
 
 
+def test_browser_log_minor_grid_and_nonpositive_mode_reach_live_renderer(
+    tmp_path: Path,
+) -> None:
+    chart = xy.line_chart(
+        xy.line(x=[1.0, 10.0], y=[1.0, 2.0]),
+        xy.x_axis(
+            type_="log",
+            domain=(1.0, 10.0),
+            tick_values=[1.0, 10.0],
+            minor_tick_values=[2.0, 3.0, 4.0, 5.0],
+            nonpositive="mask",
+            style={"grid_color": "red", "grid_width": 2},
+            minor_style={"grid_color": "#e6e6e6", "grid_width": 1},
+        ),
+        width=480,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const ctx = view.chrome.getContext("2d");
+    const colors = [];
+    const realStroke = ctx.stroke.bind(ctx);
+    ctx.stroke = (...args) => {
+      colors.push(String(ctx.strokeStyle));
+      return realStroke(...args);
+    };
+    view._drawChrome();
+    const maskMode = view._axisMode("x");
+    view.axes.x.nonpositive = "clip";
+    const clipMode = view._axisMode("x");
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      maskMode,
+      clipMode,
+      hasMinorGrid: colors.includes("#e6e6e6") || colors.includes("rgb(230, 230, 230)"),
+      hasMajorGrid: colors.includes("red") || colors.includes("#ff0000"),
+    }));
+"""
+        + _POSTLUDE
+    )
+
+    result = _probe(chart, script, tmp_path, "log minor grid and nonpositive mode")
+    assert result == {
+        "maskMode": 3,
+        "clipMode": 1,
+        "hasMinorGrid": True,
+        "hasMajorGrid": True,
+    }
+
+
+def test_tooltip_labels_and_semantic_slots_are_independently_styleable(tmp_path: Path) -> None:
+    data = {
+        "quarter": [1, 2, 3, 4],
+        "revenue_usd": [1000, 1250, 1500, 1750],
+        "conversion_rate": [4.2, 4.8, 5.1, 5.7],
+    }
+    chart = xy.scatter_chart(
+        xy.scatter(
+            x="quarter",
+            y="revenue_usd",
+            color="conversion_rate",
+            data=data,
+        ),
+        xy.tooltip(
+            title="Quarter {quarter}",
+            fields=["revenue_usd", "conversion_rate"],
+            labels={"revenue_usd": 'Revenue <img src=x onerror="window.__bad=1">'},
+            format={"revenue_usd": ",.0f", "conversion_rate": ".1f"},
+        ),
+        styles={
+            "tooltip_title": {"font-weight": 700},
+            "tooltip_row": {"display": "grid", "grid-template-columns": "140px 1fr"},
+            "tooltip_label": {"color": "#94a3b8"},
+            "tooltip_value": {"color": "#ffffff", "text-align": "right"},
+        },
+        width=520,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const row = {
+      x: 4,
+      y: 1750,
+      color_value: 5.7,
+      index: 3,
+    };
+    const items = view._tooltipItems(row);
+    const lines = view._tooltipLines(items);
+    view._renderTooltip(row, 200, 120, {announce: false});
+    const title = view.tooltip.querySelector('[data-xy-slot="tooltip_title"]');
+    const rows = [...view.tooltip.querySelectorAll('[data-xy-slot="tooltip_row"]')];
+    const labels = [...view.tooltip.querySelectorAll('[data-xy-slot="tooltip_label"]')];
+    const values = [...view.tooltip.querySelectorAll('[data-xy-slot="tooltip_value"]')];
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      title: title && title.textContent,
+      rowCount: rows.length,
+      rowChildCounts: rows.map((node) => node.children.length),
+      labels: labels.map((node) => node.textContent),
+      values: values.map((node) => node.textContent),
+      lines,
+      parsedUserMarkup: !!view.tooltip.querySelector("img") || !!window.__bad,
+      titleWeight: title && getComputedStyle(title).fontWeight,
+      rowDisplay: rows[0] && getComputedStyle(rows[0]).display,
+      labelColor: labels[0] && getComputedStyle(labels[0]).color,
+      separatorContent: labels[0] && getComputedStyle(labels[0], "::after").content,
+      valueAlign: values[0] && getComputedStyle(values[0]).textAlign,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "tooltip semantic slots")
+
+    assert result["title"] == "Quarter 4", result
+    assert result["rowCount"] == 2, result
+    assert result["rowChildCounts"] == [2, 2], result
+    assert result["labels"] == [
+        'Revenue <img src=x onerror="window.__bad=1">',
+        "conversion_rate",
+    ], result
+    assert result["values"] == ["1,750", "5.7"], result
+    assert result["lines"] == [
+        "Quarter 4",
+        'Revenue <img src=x onerror="window.__bad=1">: 1,750',
+        "conversion_rate: 5.7",
+    ], result
+    assert result["parsedUserMarkup"] is False, result
+    assert result["titleWeight"] == "700", result
+    assert result["rowDisplay"] == "grid", result
+    assert result["labelColor"] == "rgb(148, 163, 184)", result
+    assert ":" in result["separatorContent"], result
+    assert result["valueAlign"] == "right", result
+
+
+def test_sankey_tooltips_describe_flows_and_nodes(tmp_path: Path) -> None:
+    chart = xy.sankey_chart(
+        [
+            ("Visitors", "Checkout", 42),
+            ("Visitors", "Browse", 58),
+            ("Browse", "Checkout", 21),
+        ],
+        width=520,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const linkTrace = view.gpuTraces.find(
+      (trace) => Array.isArray(trace.tooltipRows) && trace.tooltipRows[0].source
+    );
+    const nodeTrace = view.gpuTraces.find(
+      (trace) => Array.isArray(trace.tooltipRows) && trace.tooltipRows[0].node
+    );
+    if (!linkTrace || !nodeTrace) throw new Error("semantic Sankey rows missing");
+    const linkRow = view._localRow({g: linkTrace, index: 0});
+    const nodeRow = view._localRow({g: nodeTrace, index: 0});
+    const linkLines = view._tooltipLines(view._tooltipItems(linkRow));
+    const nodeLines = view._tooltipLines(view._tooltipItems(nodeRow));
+    view._renderTooltip(linkRow, 200, 120, {announce: false});
+    const linkText = view.tooltip.textContent;
+    view._renderTooltip(nodeRow, 200, 120, {announce: false});
+    const nodeText = view.tooltip.textContent;
+    const hit = {g: linkTrace, trace: 0, index: 0};
+    const canvasRect = view.canvas.getBoundingClientRect();
+    const firstClientX = canvasRect.left + view.plot.x + 30;
+    const firstClientY = canvasRect.top + view.plot.y + 30;
+    view._setTooltipAnchor(hit, linkRow, firstClientX, firstClientY);
+    const firstAnchor = view._tooltipAnchorPx();
+    view._hoverId = 0;
+    view._hoverTarget = hit;
+    view._lastRow = linkRow;
+    view._pickAt = () => hit;
+    view._hoverAt = () => null;
+    view._hover({
+      clientX: firstClientX + 90,
+      clientY: firstClientY + 25,
+    });
+    const movedAnchor = view._tooltipAnchorPx();
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      linkRow,
+      nodeRow,
+      linkLines,
+      nodeLines,
+      linkText,
+      nodeText,
+      anchorDelta: {
+        x: movedAnchor.lx - firstAnchor.lx,
+        y: movedAnchor.ly - firstAnchor.ly,
+      },
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "sankey semantic tooltips")
+
+    assert result["linkRow"]["source"] == "Visitors", result
+    assert result["linkRow"]["target"] == "Checkout", result
+    assert result["linkRow"]["value"] == 42, result
+    assert result["linkLines"] == ["Visitors → Checkout", "Flow: 42"], result
+    assert result["nodeRow"]["node"] == "Visitors", result
+    assert result["nodeRow"]["value"] == 100, result
+    assert result["nodeLines"] == ["Visitors", "Total flow: 100"], result
+    assert result["linkText"] == "Visitors → CheckoutFlow42", result
+    assert result["nodeText"] == "VisitorsTotal flow100", result
+    assert result["anchorDelta"]["x"] == pytest.approx(90), result
+    assert result["anchorDelta"]["y"] == pytest.approx(25), result
+
+
+def test_tooltip_labels_customize_default_channel_rows(tmp_path: Path) -> None:
+    data = {
+        "quarter": [1, 2],
+        "revenue_usd": [1000, 1250],
+        "segment": ["Direct", "Partner"],
+    }
+    chart = xy.scatter_chart(
+        xy.scatter(x="quarter", y="revenue_usd", color="segment", data=data),
+        xy.tooltip(
+            labels={
+                "quarter": "Quarter",
+                "revenue_usd": "Revenue",
+                "segment": "Segment",
+            }
+        ),
+        width=520,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const row = {
+      x: 2,
+      y: 1250,
+      color_category: "Partner",
+      index: 1,
+    };
+    const items = view._tooltipItems(row);
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      items,
+      lines: view._tooltipLines(items),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "tooltip default channel labels")
+
+    assert result["items"] == [
+        {"kind": "field", "label": "Quarter", "value": "2"},
+        {"kind": "field", "label": "Revenue", "value": "1250"},
+        {"kind": "field", "label": "Segment", "value": "Partner"},
+    ], result
+    assert result["lines"] == [
+        "Quarter: 2",
+        "Revenue: 1250",
+        "Segment: Partner",
+    ], result
+
+
+def test_legend_title_and_label_slots_are_independently_styleable(tmp_path: Path) -> None:
+    chart = xy.line_chart(
+        xy.line([0, 1], [1, 2], name="Revenue"),
+        xy.line([0, 1], [2, 1], name="Forecast"),
+        xy.legend(title="Series"),
+        styles={
+            "legend_title": {"font-weight": 800},
+            "legend_label": {"color": "#7c3aed"},
+        },
+        width=520,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const title = view.root.querySelector('[data-xy-slot="legend_title"]');
+    const labels = [...view.root.querySelectorAll('[data-xy-slot="legend_label"]')];
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      title: title && title.textContent,
+      titleWeight: title && getComputedStyle(title).fontWeight,
+      labels: labels.map((node) => node.textContent),
+      labelColors: labels.map((node) => getComputedStyle(node).color),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "legend semantic slots")
+
+    assert result["title"] == "Series", result
+    assert result["titleWeight"] == "800", result
+    assert result["labels"] == ["Revenue", "Forecast"], result
+    assert result["labelColors"] == ["rgb(124, 58, 237)"] * 2, result
+
+
 def test_density_badges_follow_dark_theme(tmp_path: Path) -> None:
     chart = xy.line_chart(xy.line([0, 1], [0, 1]), width=320, height=220)
     script = (
@@ -70,6 +419,49 @@ def test_density_badges_follow_dark_theme(tmp_path: Path) -> None:
 
     assert result["color"] == "rgb(248, 250, 252)", result
     assert result["background"] == "rgba(30, 35, 44, 0.88)", result
+
+
+def test_modebar_active_button_uses_dark_active_color(tmp_path: Path) -> None:
+    chart = xy.line_chart(xy.line([0, 1], [0, 1]), width=500, height=320)
+    script = (
+        _PRELUDE
+        + """
+    view.root.classList.add("dark");
+    const bar = view.root.querySelector('[data-xy-slot="modebar"]');
+    const active = view.root.querySelector(
+      'button[data-xy-slot="modebar_button"].xy-active'
+    );
+    const darkActiveBackground = getComputedStyle(active).backgroundColor;
+    const darkBarBackground = getComputedStyle(bar).backgroundColor;
+    active.focus();
+    const darkFocusShadow = getComputedStyle(active).boxShadow;
+    // An app that themes focus once with --chart-focus keeps a single ring
+    // color across the canvas and the toolbar.
+    view.root.style.setProperty("--chart-focus", "#0000ff");
+    const inheritedFocusShadow = getComputedStyle(active).boxShadow;
+    view.root.style.setProperty("--chart-modebar-active", "#ff00ff");
+    view.root.style.setProperty("--chart-modebar-focus", "#00ff00");
+    const customActiveBackground = getComputedStyle(active).backgroundColor;
+    const customFocusShadow = getComputedStyle(active).boxShadow;
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      darkActiveBackground,
+      darkBarBackground,
+      darkFocusShadow,
+      inheritedFocusShadow,
+      customActiveBackground,
+      customFocusShadow,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "dark active modebar button")
+
+    assert result["darkActiveBackground"] == "rgb(18, 20, 23)", result
+    assert result["darkBarBackground"] == "rgb(27, 29, 32)", result
+    assert "rgb(226, 229, 233)" in result["darkFocusShadow"], result
+    assert "rgb(0, 0, 255)" in result["inheritedFocusShadow"], result
+    assert result["customActiveBackground"] == "rgb(255, 0, 255)", result
+    assert "rgb(0, 255, 0)" in result["customFocusShadow"], result
 
 
 def test_narrow_annotation_labels_stay_inside_and_do_not_collide(tmp_path: Path) -> None:
@@ -221,6 +613,463 @@ def test_narrow_categorical_tick_labels_are_ellipsized_inside_chart(tmp_path: Pa
     assert result["documentOverflow"] is False, result
 
 
+def test_tick_label_padding_starts_after_outward_tick_and_text_bottom_aligns(
+    tmp_path: Path,
+) -> None:
+    chart = xy.chart(
+        xy.line([0, 1, 2], [0.25, 1.0, 0.5]),
+        xy.text(
+            1,
+            1,
+            "peak",
+            dx=0,
+            dy=-5,
+            anchor="middle",
+            style={"vertical_align": "bottom"},
+        ),
+        xy.x_axis(
+            domain=(0, 2),
+            tick_values=[0, 1, 2],
+            style={"tick_length": 6, "tick_label_pad": 5},
+        ),
+        xy.y_axis(
+            domain=(0, 1),
+            tick_values=[0, 0.5, 1],
+            style={"tick_length": 6, "tick_label_pad": 5},
+        ),
+        width=420,
+        height=300,
+        padding=(28, 24, 48, 52),
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const xTick = view.root.querySelector(
+      '[data-xy-label-kind="tick"][data-xy-axis="x"]'
+    ).getBoundingClientRect();
+    const yTick = view.root.querySelector(
+      '[data-xy-label-kind="tick"][data-xy-axis="y"]'
+    ).getBoundingClientRect();
+    const annotation = view.root.querySelector(
+      '[data-xy-slot="annotation_label"]'
+    ).getBoundingClientRect();
+    const plotBottom = root.top + view.plot.y + view.plot.h;
+    const plotLeft = root.left + view.plot.x;
+    const annotationAnchor = root.top + view._dataPxY(1) - 5;
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      xGap: xTick.top - (plotBottom + 6),
+      yGap: (plotLeft - 6) - yTick.right,
+      annotationBottomError: annotation.bottom - annotationAnchor,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "tick and annotation alignment")
+
+    assert result["xGap"] == pytest.approx(5, abs=0.75), result
+    assert result["yGap"] == pytest.approx(5, abs=0.75), result
+    assert result["annotationBottomError"] == pytest.approx(0, abs=0.75), result
+
+
+def test_y_axis_title_stays_attached_when_left_padding_is_wide(tmp_path: Path) -> None:
+    chart = xy.chart(
+        xy.line([0, 1], [3600, 5400]),
+        xy.x_axis(),
+        xy.y_axis(
+            label="average daily births",
+            domain=(3600, 5400),
+            tick_values=[3600, 4000, 4400, 4800, 5200, 5400],
+            style={"tick_length": 3.5, "tick_padding": 3.5, "label_size": 13.8889},
+        ),
+        width=1200,
+        height=400,
+        padding=(48, 120, 44, 150),
+    )
+    script = (
+        _PRELUDE
+        + """
+    const realGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+    let titleLayoutReads = 0;
+    Element.prototype.getBoundingClientRect = function () {
+      if (this.dataset &&
+          this.dataset.xyLabelKind === "label" &&
+          this.dataset.xyAxis === "y") {
+        titleLayoutReads += 1;
+      }
+      return realGetBoundingClientRect.call(this);
+    };
+    view._drawNow();
+    view._raf = null;
+    Element.prototype.getBoundingClientRect = realGetBoundingClientRect;
+    const root = view.root.getBoundingClientRect();
+    const title = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y"]'
+    ).getBoundingClientRect();
+    const ticks = [...view.root.querySelectorAll(
+      '[data-xy-label-kind="tick"][data-xy-axis="y"]'
+    )].map((element) => element.getBoundingClientRect());
+    const tickLeft = Math.min(...ticks.map((rect) => rect.left));
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      gap: tickLeft - title.right,
+      titleInside: title.left >= root.left,
+      tickInside: tickLeft >= root.left,
+      titleLayoutReads,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "wide left gutter title attachment")
+
+    assert result["gap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * 13.8889, abs=0.75), result
+    assert result["titleInside"] is True, result
+    assert result["tickInside"] is True, result
+    assert result["titleLayoutReads"] == 1, result
+
+
+def test_y_axis_titles_center_and_match_svg_longitudinally_for_named_axes(
+    tmp_path: Path,
+) -> None:
+    labels = {
+        "primary default",
+        "right start",
+        "left center",
+        "right end",
+    }
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.line([0, 1], [2, 3], y_axis="y3"),
+        xy.line([0, 1], [3, 4], y_axis="y4"),
+        xy.x_axis(),
+        xy.y_axis(label="primary default", side="left"),
+        xy.y_axis(id="y2", label="right start", side="right", label_position="start"),
+        xy.y_axis(id="y3", label="left center", side="left", label_position="center"),
+        xy.y_axis(id="y4", label="right end", side="right", label_position="end"),
+        width=720,
+        height=440,
+        padding=(48, 120, 48, 120),
+    )
+    svg_geometry = _svg_y_title_geometry(chart, labels)
+    script = (
+        _PRELUDE
+        + f"""
+    const expected = {json.dumps(svg_geometry)};
+    const root = view.root.getBoundingClientRect();
+    const titles = Object.fromEntries(
+      [...view.root.querySelectorAll('[data-xy-label-kind="label"][data-xy-axis^="y"]')]
+        .map((title) => {{
+          const box = title.getBoundingClientRect();
+          return [title.textContent, {{
+            axis: title.dataset.xyAxis,
+            side: title.dataset.xyAxisSide,
+            centerX: (box.left + box.right) / 2 - root.left,
+            centerY: (box.top + box.bottom) / 2 - root.top,
+            top: parseFloat(title.style.top),
+            transform: title.style.transform,
+            origin: title.style.transformOrigin,
+            svgY: expected[title.textContent].y,
+          }}];
+        }})
+    );
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({{
+      plot: view.plot,
+      titles,
+    }}));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "centered primary and named y titles")
+
+    plot = result["plot"]
+    titles = result["titles"]
+    assert titles.keys() == labels
+    assert titles["primary default"]["centerY"] == pytest.approx(
+        plot["y"] + plot["h"] / 2,
+        abs=0.75,
+    )
+    assert titles["right start"]["centerY"] == pytest.approx(plot["y"] + plot["h"], abs=0.75)
+    assert titles["left center"]["centerY"] == pytest.approx(
+        plot["y"] + plot["h"] / 2,
+        abs=0.75,
+    )
+    assert titles["right end"]["centerY"] == pytest.approx(plot["y"], abs=0.75)
+    for title in titles.values():
+        assert title["centerY"] == pytest.approx(title["svgY"], abs=0.75)
+        assert title["origin"].replace(" ", "") in {"center", "centercenter"}
+        assert title["transform"].replace(" ", "").startswith("translate(-50%,-50%)rotate(")
+    assert titles["primary default"]["centerX"] < plot["x"]
+    assert titles["left center"]["centerX"] < plot["x"]
+    assert titles["right start"]["centerX"] > plot["x"] + plot["w"]
+    assert titles["right end"]["centerX"] > plot["x"] + plot["w"]
+
+
+def test_y_axis_title_offset_unions_inward_tick_labels_with_the_spine(
+    tmp_path: Path,
+) -> None:
+    label_size = 15
+    inside_tick_style = {
+        "label_size": label_size,
+        "tick_length": 4,
+        "tick_direction": "in",
+        "tick_padding": -12,
+    }
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.x_axis(),
+        xy.y_axis(
+            label="left spine union",
+            side="left",
+            tick_values=[0, 0.5, 1],
+            tick_label_anchor="start",
+            style=inside_tick_style,
+        ),
+        xy.y_axis(
+            id="y2",
+            label="right spine union",
+            side="right",
+            tick_values=[1, 1.5, 2],
+            tick_label_anchor="end",
+            style=inside_tick_style,
+        ),
+        width=640,
+        height=400,
+        padding=(48, 110, 48, 110),
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const leftSpine = root.left + view.plot.x;
+    const rightSpine = leftSpine + view.plot.w;
+    const titleBox = (axis) => view.root.querySelector(
+      `[data-xy-label-kind="label"][data-xy-axis="${axis}"]`
+    ).getBoundingClientRect();
+    const tickBoxes = (axis) => [...view.root.querySelectorAll(
+      `[data-xy-label-kind="tick"][data-xy-axis="${axis}"]`
+    )].map((tick) => tick.getBoundingClientRect());
+    const leftTitle = titleBox("y");
+    const rightTitle = titleBox("y2");
+    const leftTicks = tickBoxes("y");
+    const rightTicks = tickBoxes("y2");
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      leftTicksInside: leftTicks.every((box) => box.left > leftSpine),
+      rightTicksInside: rightTicks.every((box) => box.right < rightSpine),
+      leftGap: leftSpine - leftTitle.right,
+      rightGap: rightTitle.left - rightSpine,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "y title spine and inward tick union")
+
+    assert result["leftTicksInside"] is True
+    assert result["rightTicksInside"] is True
+    assert result["leftGap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * label_size, abs=0.75)
+    assert result["rightGap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * label_size, abs=0.75)
+
+
+def test_y_axis_title_rotation_labelpad_and_tickless_spine_fallback(
+    tmp_path: Path,
+) -> None:
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.x_axis(),
+        xy.y_axis(
+            label="angled primary",
+            side="left",
+            label_angle=-45,
+            label_offset=18,
+            tick_values=[0, 0.5, 1],
+        ),
+        xy.y_axis(
+            id="y2",
+            label="tickless secondary",
+            side="right",
+            tick_values=[],
+            style={"label_size": 15},
+        ),
+        width=640,
+        height=400,
+        padding=(48, 110, 48, 110),
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const primary = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y"]'
+    );
+    const secondary = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y2"]'
+    );
+    const primaryBox = primary.getBoundingClientRect();
+    const secondaryBox = secondary.getBoundingClientRect();
+    const primaryTicks = [...view.root.querySelectorAll(
+      '[data-xy-label-kind="tick"][data-xy-axis="y"][data-xy-axis-side="left"]'
+    )].map((tick) => tick.getBoundingClientRect());
+    const secondaryTicks = [...view.root.querySelectorAll(
+      '[data-xy-label-kind="tick"][data-xy-axis="y2"]'
+    )];
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      primaryGap: Math.min(...primaryTicks.map((box) => box.left)) - primaryBox.right,
+      primaryTransform: primary.style.transform,
+      secondaryTicks: secondaryTicks.length,
+      secondaryGap: secondaryBox.left - (root.left + view.plot.x + view.plot.w),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "y title angle labelpad and spine fallback")
+
+    assert result["primaryGap"] == pytest.approx(18, abs=0.75)
+    assert "rotate(-45deg)" in result["primaryTransform"].replace(" ", "")
+    assert result["secondaryTicks"] == 0
+    assert result["secondaryGap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * 15, abs=0.75)
+
+
+def test_structured_y_axis_title_position_remains_authoritative(tmp_path: Path) -> None:
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.x_axis(),
+        xy.y_axis(
+            label="author positioned",
+            label_position={
+                "right": 18,
+                "top": "52%",
+                "transform": "rotate(-75deg)",
+            },
+        ),
+        width=480,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const title = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y"]'
+    );
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      left: title.style.left,
+      right: title.style.right,
+      top: title.style.top,
+      transform: title.style.transform,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "structured y title placement")
+
+    assert result == {
+        "left": "",
+        "right": "18px",
+        "top": "52%",
+        "transform": "rotate(-75deg)",
+    }
+
+
+def test_long_y_categories_expand_the_browser_gutter(tmp_path: Path) -> None:
+    categories = [f"Questionnaire item {index}" for index in range(1, 7)]
+    chart = xy.bar_chart(
+        xy.bar(
+            x=categories,
+            y=[10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            orientation="horizontal",
+        ),
+        xy.y_axis(label="survey question", style={"label_size": 14, "tick_label_size": 14}),
+        width=640,
+        height=480,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const title = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y"]'
+    ).getBoundingClientRect();
+    const ticks = [...view.root.querySelectorAll(
+      '[data-xy-label-kind="tick"][data-xy-axis="y"]'
+    )];
+    const tickBoxes = ticks.map((element) => element.getBoundingClientRect());
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      plotX: view.plot.x,
+      gap: Math.min(...tickBoxes.map((box) => box.left)) - title.right,
+      clipped: ticks.some((element) => element.scrollWidth > element.clientWidth),
+      titleInside: title.left >= root.left,
+      tickTexts: ticks.map((element) => element.textContent),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "long category y gutter")
+
+    assert result["plotX"] > 150, result
+    assert result["gap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * 14, abs=0.75), result
+    assert result["clipped"] is False, result
+    assert result["titleInside"] is True, result
+    assert sorted(result["tickTexts"]) == categories, result
+
+
+def test_rotated_x_labels_expand_top_and_bottom_browser_gutters(tmp_path: Path) -> None:
+    labels = [
+        "Democratic Republic of the Congo",
+        "United States of America",
+        "Papua New Guinea",
+    ]
+    chart = xy.chart(
+        xy.line(labels, [1.0, 2.0, 3.0]),
+        xy.line([0.0, 1.0, 2.0], [3.0, 2.0, 1.0], x_axis="x2"),
+        xy.x_axis(
+            tick_values=[0.0, 1.0, 2.0],
+            tick_labels=labels,
+            tick_label_angle=45,
+            tick_label_anchor="end",
+            tick_label_strategy="preserve",
+        ),
+        xy.x_axis(
+            id="x2",
+            side="top",
+            tick_values=[0.0, 1.0, 2.0],
+            tick_labels=labels,
+            tick_label_angle=-45,
+            tick_label_anchor="end",
+            tick_label_strategy="preserve",
+        ),
+        width=640,
+        height=420,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const labels = [...view.root.querySelectorAll('[data-xy-label-kind="tick"]')]
+      .filter((node) => node.dataset.xyAxis === "x" || node.dataset.xyAxis === "x2")
+      .map((node) => ({
+        axis: node.dataset.xyAxis,
+        top: node.getBoundingClientRect().top,
+        bottom: node.getBoundingClientRect().bottom,
+      }));
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      topRoom: view.plot.y,
+      bottomRoom: view.size.h - view.plot.y - view.plot.h,
+      topInside: labels.filter((item) => item.axis === "x2")
+        .every((item) => item.top >= root.top - 1),
+      bottomInside: labels.filter((item) => item.axis === "x")
+        .every((item) => item.bottom <= root.bottom + 1),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "rotated x tick gutters")
+
+    assert result["topRoom"] > 100, result
+    assert result["bottomRoom"] > 100, result
+    assert result["topInside"] is True, result
+    assert result["bottomInside"] is True, result
+
+
 def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     tmp_path: Path,
 ) -> None:
@@ -248,7 +1097,7 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
         + """
     // Python normalizes an omitted extra-y side to "right". Remove it here to
     // exercise the client/update-spec state that previously disagreed: chrome
-    // still defaults this axis to right via `side !== "left"`.
+    // must still resolve and record the rendered tick-label side as right.
     view.axes.y2.side = undefined;
     view._drawNow();
     view._raf = null;
@@ -278,5 +1127,163 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     assert all(row["inside"] for row in result["rows"]), result
     extra = [row for row in result["rows"] if row["axis"] == "y2"]
     assert extra, result
-    assert all(row["side"] == "" for row in extra), result
+    assert all(row["side"] == "right" for row in extra), result
     assert all(row["pinnedRight"] for row in extra), result
+
+
+def test_bar_pick_reports_band_center_and_value_for_both_orientations() -> None:
+    """The exact pick row must agree with the instant client readout: the
+    category-band center on the position axis and the value end on the value
+    axis. Horizontal bars used to report the rect x midpoint (half the value)
+    and the y1 edge (band position + half width), so the kernel's exact reply
+    visibly rewrote the tooltip a round-trip after hover."""
+    vertical = xy.bar_chart(xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0]))
+    assert vertical.pick(0, 1) == {
+        "trace": 0,
+        "index": 1,
+        "x": 1.0,
+        "y": 42.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+    horizontal = xy.bar_chart(
+        xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0], orientation="horizontal")
+    )
+    assert horizontal.pick(0, 1) == {
+        "trace": 0,
+        "index": 1,
+        "x": 42.0,
+        "y": 1.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+    # Stacked horizontal: the value end is the signed cumulative edge and the
+    # band center stays the category code, including on the negative branch.
+    stacked = xy.bar_chart(
+        xy.bar(
+            x=["A", "B"],
+            y=[[1.0, -2.0], [3.0, 4.0]],
+            mode="stacked",
+            orientation="horizontal",
+        )
+    )
+    assert stacked.pick(1, 0) == {
+        "trace": 1,
+        "index": 0,
+        "x": 4.0,
+        "y": 0.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+    assert stacked.pick(0, 1) == {
+        "trace": 0,
+        "index": 1,
+        "x": -2.0,
+        "y": 1.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_bar_tooltip_survives_the_exact_pick_reply_unchanged(
+    tmp_path: Path, orientation: str
+) -> None:
+    """Hovering a bar shows the instant local readout; the kernel's exact
+    pick_result then replaces it. Both must say the same thing: the exact row
+    used to arrive as raw axis coordinates (category code, and for horizontal
+    bars half the value), so the tooltip visibly changed content and jumped to
+    a new anchor a round-trip after every hover."""
+    chart = xy.bar_chart(
+        xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0], orientation=orientation),
+        width=520,
+        height=320,
+    )
+    pick_row = chart.pick(0, 1)
+    hover_xy = (21.0, 1.0) if orientation == "horizontal" else (1.0, 21.0)
+    script = (
+        _PRELUDE
+        + f"""
+    const pickRow = {json.dumps(pick_row)};
+    const [hx, hy] = {json.dumps(hover_xy)};
+"""
+        + """
+    const rect = view.canvas.getBoundingClientRect();
+    // _projectDataPoint is root-relative; the hover canvas covers the plot.
+    const [lx, ly] = view._projectDataPoint("x", "y", hx, hy);
+    const cssX = lx - view.plot.x;
+    const cssY = ly - view.plot.y;
+    const hit = view._hoverAt(cssX, cssY);
+    if (!hit || hit.index !== 1) throw new Error("expected to hover bar index 1");
+    const clientX = rect.left + cssX;
+    const clientY = rect.top + cssY;
+    view._hoverTarget = hit;
+    view._lastHoverXY = {clientX, clientY};
+    view._showTooltip(hit, clientX, clientY);
+    const snapshot = () => ({
+      text: view.tooltip.textContent,
+      left: view.tooltip.style.left,
+      top: view.tooltip.style.top,
+      display: view.tooltip.style.display,
+    });
+    const before = snapshot();
+    view._onKernelMsg({type: "pick_result", row: pickRow}, []);
+    const after = snapshot();
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      before, after, exactRow: view._lastRow,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, f"bar tooltip exact reply {orientation}")
+
+    expected = "x42yB" if orientation == "horizontal" else "xBy42"
+    assert result["before"]["text"] == expected, result
+    assert result["after"] == result["before"], result
+    # The exact row reads like the local one: category label, full value.
+    label_field = "y" if orientation == "horizontal" else "x"
+    value_field = "x" if orientation == "horizontal" else "y"
+    assert result["exactRow"][label_field] == "B", result
+    assert result["exactRow"][value_field] == 42.0, result
+
+
+def test_pick_reply_for_a_dropped_trace_is_a_miss(tmp_path: Path) -> None:
+    """A pick_result can land after a data update removed its trace. With no
+    trace to map against, the raw kernel row must not render: the category
+    code would replace the label and drag the anchor — the exact rewrite/jump
+    this fix removes. A reply for a trace that no longer exists is a miss."""
+    chart = xy.bar_chart(
+        xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0]),
+        width=520,
+        height=320,
+    )
+    pick_row = chart.pick(0, 1)
+    script = (
+        _PRELUDE
+        + f"""
+    const pickRow = {json.dumps(pick_row)};
+"""
+        + """
+    const rect = view.canvas.getBoundingClientRect();
+    const [lx, ly] = view._projectDataPoint("x", "y", 1.0, 21.0);
+    const cssX = lx - view.plot.x;
+    const cssY = ly - view.plot.y;
+    const hit = view._hoverAt(cssX, cssY);
+    if (!hit || hit.index !== 1) throw new Error("expected to hover bar index 1");
+    const clientX = rect.left + cssX;
+    const clientY = rect.top + cssY;
+    view._hoverTarget = hit;
+    view._lastHoverXY = {clientX, clientY};
+    view._showTooltip(hit, clientX, clientY);
+    // Simulate a data update dropping the trace while the pick is in flight.
+    view.gpuTraces = view.gpuTraces.filter((t) => t.trace.id !== pickRow.trace);
+    view._onKernelMsg({type: "pick_result", row: pickRow}, []);
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      display: view.tooltip.style.display,
+      text: view.tooltip.textContent,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "pick reply dropped trace")
+    assert result["display"] == "none", result

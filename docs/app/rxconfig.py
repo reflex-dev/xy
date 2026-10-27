@@ -1,11 +1,12 @@
 """Reflex configuration for the XY documentation site."""
 
 import reflex as rx
-import reflex_xy
 from reflex_site_shared.plugins import SharedSiteStylesPlugin
 from xy_docs.config import DOCS_CONFIG
 from xy_docs.plugins import XYDocsAgentFilesPlugin
 from xy_docs.prerender import XyDocsMarkdownPlugin
+
+import reflex_xy
 
 config = rx.Config(
     app_name="xy_docs",
@@ -16,10 +17,13 @@ config = rx.Config(
         "es-toolkit@1.46.1",
         "@fontsource-variable/instrument-sans@5.2.8",
         "@fontsource-variable/jetbrains-mono@5.2.8",
+        "@fontsource-variable/inter@5.3.0",
+        "@fontsource-variable/geist@5.3.0",
     ],
     telemetry_enabled=False,
+    show_built_with_reflex=False,
     plugins=[
-        rx.plugins.TailwindV4Plugin(),
+        rx.plugins.TailwindV4Plugin(config={"darkMode": "selector"}),
         SharedSiteStylesPlugin(),
         rx.plugins.RadixThemesPlugin(),
         rx.plugins.SitemapPlugin(trailing_slash="always"),

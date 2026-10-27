@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +56,20 @@ def test_collect_environment_metadata_is_machine_readable(tmp_path: Path) -> Non
         "chromium": "Chromium 126.0.0",
     }
     assert metadata["git"] == {"commit": "abc123", "branch": "main", "dirty": True}
+
+
+def test_ux_hosts_use_atomic_server_port_binding() -> None:
+    webagg = (ROOT / "benchmarks" / "_ux_webagg_host.py").read_text(encoding="utf-8")
+    datashader = (ROOT / "benchmarks" / "_ux_datashader_host.py").read_text(encoding="utf-8")
+
+    assert "def free_port" not in webagg
+    assert "WebAggApplication.initialize()" in webagg
+    assert "port = WebAggApplication.port" in webagg
+    assert "call_on_ioloop(webagg_loop, state)" in webagg
+
+    assert "def free_port" not in datashader
+    assert "port=0" in datashader
+    assert "port = server.port" in datashader
 
 
 def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
@@ -136,7 +151,6 @@ def test_codspeed_suite_covers_backend_selection_workloads() -> None:
         "test_pick_hover_categorical_readout",
         "test_select_box_zone_pruned_1m",
         "test_select_box_message_full_scan_1m",
-        "test_select_lasso_message_1m",
         "test_selection_rows_message_crossfilter",
     }
     missing = sorted(required_benchmarks - set(functions))
@@ -158,16 +172,13 @@ def test_codspeed_animation_module_guards_backend_and_split_transport() -> None:
     assert "build_payload_split" in source
 
 
-def test_codspeed_dependency_is_declared_and_shared_by_ci_and_runbook() -> None:
+def test_codspeed_dependency_is_declared_and_used_by_ci() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "codspeed.yml").read_text(encoding="utf-8")
-    runbook = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
 
     assert "codspeed = [" in pyproject
     assert '"pytest-codspeed>=5,<6"' in pyproject
-    assert '-e ".[dev,codspeed]"' in workflow
-    assert '-e ".[dev,codspeed]"' in runbook
-    assert "--codspeed" in runbook
+    assert "-e . --group dev --group codspeed" in workflow
 
 
 def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
@@ -182,12 +193,10 @@ def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
 
 def test_scatter_native_exposes_reproducible_categorical_ceiling() -> None:
     source = (ROOT / "benchmarks" / "bench_scatter_native.py").read_text(encoding="utf-8")
-    runbook = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
     assert "def gen_numpy_categories" in source
     assert "def _warm_production_path" in source
     assert '"--categorical-groups"' in source
     assert '"categorical_groups"' in source
-    assert "--categorical-groups 24" in runbook
 
 
 def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> None:
@@ -262,8 +271,9 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
 
 
 def test_context_governor_reserves_pending_restores() -> None:
-    """Concurrent visibility callbacks must count restores before their
-    asynchronous ``webglcontextrestored`` events acquire the contexts."""
+    """A governed re-acquire reserves with the governor before rebuilding on a
+    fresh canvas (never ``restoreContext()`` on the released one, §18), so an
+    off-screen peer is shed before the replacement context is created."""
     client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
 
     assert "view._ctxPendingReservation" in client
@@ -273,8 +283,9 @@ def test_context_governor_reserves_pending_restores() -> None:
     assert "WebGL2 unavailable in this browser" not in init_gl
     recover = client.index("  _recoverContext() {")
     reserve = client.index("XY_CONTEXT_GOVERNOR.reserve(this);", recover)
-    restore = client.index("ext.restoreContext();", recover)
-    assert reserve < restore
+    rebuild = client.index("this._rebuildEvictedContext();", recover)
+    assert reserve < rebuild
+    assert ".restoreContext(" not in client[recover:rebuild]
 
     snapshot = client[client.index("_snapshotBeforeRelease()") : recover]
     draw = snapshot.index("this._drawNow();")
@@ -340,11 +351,71 @@ def test_context_governor_reserves_pending_restores() -> None:
 
 
 def test_triangle_mesh_resource_cleanup_deletes_every_coordinate_buffer() -> None:
+    # The buffer names moved out of `_destroyTraceResources` into the shared
+    # `TRACE_GPU_BUFFERS` list (js/src/00_header.ts) that all three teardown paths
+    # read, so assert against the list and that the teardown really uses it.
+    # `tests/test_trace_buffer_lifecycle.py` pins the list against every buffer
+    # any build path creates; this row keeps the triangle-mesh six explicit.
+    header = (ROOT / "js" / "src" / "00_header.ts").read_text(encoding="utf-8")
+    listed = header.split("export const TRACE_GPU_BUFFERS = [", 1)[1].split("];", 1)[0]
+    for name in ("x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf"):
+        assert f'"{name}"' in listed
+
     client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
     cleanup = client[client.index("_destroyTraceResources(g, texSeen)") :]
     cleanup = cleanup[: cleanup.index("_destroyGlResources()")]
-    for name in ("x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf"):
-        assert f'"{name}"' in cleanup
+    assert "this._deleteBuffers(g, TRACE_GPU_BUFFERS);" in cleanup
+
+
+def _codspeed_row_count() -> int:
+    """CodSpeed rows the workflow's glob collects, counting parametrized expansion.
+
+    Parsed rather than imported: the benchmark modules assert a native backend at
+    import time, and this only needs their shape.
+    """
+    total = 0
+    for path in sorted((ROOT / "benchmarks").glob("test_codspeed_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
+                continue
+            rows = 1
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call) or len(decorator.args) != 2:
+                    continue
+                target = decorator.func
+                name = (
+                    target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                )
+                if name != "parametrize":
+                    continue
+                argvalues = decorator.args[1]
+                assert isinstance(argvalues, (ast.List, ast.Tuple)), (
+                    f"{path.name}::{node.name} parametrizes with a non-literal argvalues; "
+                    "the row count can no longer be counted statically"
+                )
+                rows *= len(argvalues.elts)
+            total += rows
+    return total
+
+
+def test_codspeed_row_count_matches_the_methodology_spec() -> None:
+    """A benchmark cannot be added or removed without saying so in the spec.
+
+    A row that is renamed or deleted silently stays in CodSpeed's stored
+    baseline, where the dashboard keeps reporting it as "skipped, using the
+    baseline result" — indistinguishable from a flaky measurement rather than a
+    row that no longer exists. Deleting a benchmark is fine; deleting one without
+    updating §8 (and archiving the stale row in the dashboard) is not.
+    """
+    methodology = (ROOT / "spec/benchmarks/methodology.md").read_text(encoding="utf-8")
+    declared = re.search(r"for \*\*(\d+) rows\*\* total", methodology)
+    assert declared is not None, "spec/benchmarks/methodology.md §8 no longer states a row count"
+    assert _codspeed_row_count() == int(declared.group(1)), (
+        "CodSpeed row count drifted from spec/benchmarks/methodology.md §8. Update the "
+        "count and the module list there, and archive any deleted row in the CodSpeed "
+        "dashboard so it stops being reported as skipped."
+    )
 
 
 def test_benchmark_categories_track_core_hardening_metrics() -> None:

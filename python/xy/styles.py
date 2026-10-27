@@ -35,16 +35,51 @@ _POINT_KINDS = frozenset({"scatter"})
 _RECT_KINDS = frozenset({"histogram", "hist", "bar", "column"})
 _FILL_KINDS = frozenset({"box", "violin"})
 _MESH_KINDS = frozenset({"triangle_mesh"})
+# A ribbon is filled and outlined but never gradient-filled through `style`:
+# its two end colors are channels, not per-trace state, so "fill" is
+# deliberately absent from its property set and the guard below rejects a
+# `linear-gradient(...)` on it with the standard message.
+_RIBBON_KINDS = frozenset({"ribbon"})
+# Funnel per-stage colors are a channel (categorical by stage, or explicit
+# per-stage paints), so like ribbon its style carries no "fill".
+_FUNNEL_KINDS = frozenset({"funnel"})
 _DENSITY_KINDS = frozenset({"heatmap", "hexbin"})
 
 _AXIS_COLOR_PROPERTIES = frozenset(
     {"grid_color", "axis_color", "tick_color", "tick_label_color", "label_color"}
 )
-_AXIS_LENGTH_PROPERTIES = frozenset({"grid_width", "axis_width", "tick_length", "tick_width"})
+_AXIS_LENGTH_PROPERTIES = frozenset(
+    {
+        "grid_width",
+        "axis_width",
+        "tick_length",
+        "tick_label_pad",
+        "tick_padding",
+        "tick_width",
+    }
+)
 _AXIS_SIZE_PROPERTIES = frozenset({"tick_size", "tick_label_size", "label_size"})
+_AXIS_FONT_PROPERTIES = frozenset({"label_font_family", "label_font_style", "label_font_weight"})
 _AXIS_COMPAT_PROPERTIES = frozenset({"grid_dash", "grid_opacity"})
 _AXIS_DASH_STYLES = frozenset({"solid", "dashed", "dotted", "dashdot"})
 _AXIS_DIRECTIONS = frozenset({"in", "out", "inout"})
+
+# Polyline stroke geometry. All three mark renderers (WebGL, SVG, native
+# rasterizer) draw these caps identically; XY defaults to `round` rather than
+# the CSS initial value `butt` because the native rasterizer is the reference
+# for static export and has always drawn round. Set the property to opt into
+# the CSS initial value.
+#
+# `stroke-linejoin` is deliberately absent. SVG and the native rasterizer both
+# implement all three joins, but the WebGL client draws polylines as one
+# instanced quad per segment with no join geometry at all, so a `miter` there
+# would render as the overlap the segments already produce. Accepting a
+# declaration one renderer silently ignores is exactly what this module exists
+# to prevent, so the property waits for the client. The gap — including the
+# joins the three renderers already disagree on by default — is a row in
+# `xy.styling.capabilities`.
+LINE_CAPS = frozenset({"butt", "round", "square"})
+DEFAULT_LINE_CAP = "round"
 
 _MARK_KINDS = tuple(
     sorted(
@@ -55,6 +90,8 @@ _MARK_KINDS = tuple(
         | _RECT_KINDS
         | _FILL_KINDS
         | _MESH_KINDS
+        | _RIBBON_KINDS
+        | _FUNNEL_KINDS
         | _DENSITY_KINDS
     )
 )
@@ -131,19 +168,30 @@ def normalize_css_style(value: StyleMapping | None, label: str = "style") -> dic
     return out
 
 
-def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
+def _parse_px(value: StyleValue, label: str) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
+        return float(value)
     elif isinstance(value, str):
         match = _PX_RE.match(value)
         if match is None:
             raise ValueError(f"{label} must be a finite CSS px length")
-        number = float(match.group(1))
+        return float(match.group(1))
     else:  # pragma: no cover - normalize_css_style rejects this first
         raise ValueError(f"{label} must be a finite CSS px length")
+
+
+def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
+    number = _parse_px(value, label)
     if not np.isfinite(number) or number < 0 or (positive and number <= 0):
         qualifier = "positive " if positive else "non-negative "
         raise ValueError(f"{label} must be a {qualifier}finite CSS px length")
+    return number
+
+
+def _signed_px(value: StyleValue, label: str) -> float:
+    number = _parse_px(value, label)
+    if not np.isfinite(number):
+        raise ValueError(f"{label} must be a finite CSS px length")
     return number
 
 
@@ -168,6 +216,12 @@ def _dasharray(value: StyleValue, label: str) -> list[float] | None:
     if not 2 <= len(lengths) <= 8:
         raise ValueError(f"{label} must contain between 2 and 8 positive CSS px lengths")
     return lengths
+
+
+def _keyword(value: StyleValue, allowed: frozenset[str], label: str) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"{label} must be one of {sorted(allowed)}")
+    return value
 
 
 def _paint(value: StyleValue, label: str) -> str:
@@ -195,7 +249,13 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
         raise ValueError(f"unknown mark kind {kind!r}; expected one of {_MARK_KINDS}")
     props = {"opacity"}
     if kind in _LINE_KINDS:
-        props |= {"stroke", "stroke-width", "stroke-opacity", "stroke-dasharray"}
+        props |= {
+            "stroke",
+            "stroke-width",
+            "stroke-opacity",
+            "stroke-dasharray",
+            "stroke-linecap",
+        }
     elif kind in _SIMPLE_STROKE_KINDS:
         props |= {"stroke", "stroke-width", "stroke-opacity"}
     elif kind in _AREA_KINDS:
@@ -216,6 +276,7 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
             "stroke",
             "stroke-width",
             "stroke-opacity",
+            "marker-shape",
         }
     elif kind in _RECT_KINDS:
         props |= {
@@ -225,9 +286,22 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
             "stroke-width",
             "stroke-opacity",
             "border-radius",
+            "wedge-gap",
         }
     elif kind in _FILL_KINDS:
         props |= {"fill", "fill-opacity"}
+        # Box bodies use the shared rectangle renderer, so their border is a
+        # real cross-renderer stroke. Violin marks are adjacent density bands:
+        # stroking every band would draw internal seams rather than one
+        # distribution outline, so keep their smaller fill-only contract.
+        if kind == "box":
+            props |= {"stroke", "stroke-width", "stroke-opacity"}
+    elif kind in _RIBBON_KINDS | _FUNNEL_KINDS:
+        # No "fill": a ribbon's two end colors — and a funnel's per-stage
+        # colors — are channels. Leaving the property out is what makes
+        # `style={"fill": "linear-gradient(...)"}` raise instead of silently
+        # painting one paint across per-mark geometry.
+        props |= {"fill-opacity", "stroke", "stroke-width", "stroke-opacity"}
     elif kind in _MESH_KINDS:
         props |= {
             "fill",
@@ -292,18 +366,32 @@ def _compile_mark_style(kind: str, value: StyleMapping | None, label: str) -> di
             _set(out, target, paint, prop, seen)
         elif prop == "stroke":
             target = "line_color" if kind == "area" else "color"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | _FUNNEL_KINDS | {
+                "box"
+            }:
                 target = "stroke"
             _set(out, target, _paint(raw, f"{label}['stroke']"), prop, seen)
         elif prop == "stroke-width":
             target = "line_width" if kind in _AREA_KINDS else "width"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | _FUNNEL_KINDS | {
+                "box"
+            }:
                 target = "stroke_width"
             _set(out, target, _px(raw, f"{label}['stroke-width']"), prop, seen)
         elif prop == "stroke-dasharray":
             _set(out, "dash", _dasharray(raw, f"{label}['stroke-dasharray']"), prop, seen)
+        elif prop == "stroke-linecap":
+            _set(out, "linecap", _keyword(raw, LINE_CAPS, f"{label}['stroke-linecap']"), prop, seen)
+        elif prop == "marker-shape":
+            _set(out, "symbol", _validate.point_symbol(raw, f"{label}['marker-shape']"), prop, seen)
         elif prop == "border-radius":
             _set(out, "corner_radius", _px(raw, f"{label}['border-radius']"), prop, seen)
+        elif prop == "wedge-gap":
+            # Gap between neighbouring polar wedges, in px. Deliberately a
+            # LENGTH and not an angle: an angular pad's gap is `r · dtheta`
+            # wide, so it tapers to nothing at the hole (see
+            # `_wedge_edge_inset` in _svg.py). Ignored outside coords="polar".
+            _set(out, "wedge_gap", _px(raw, f"{label}['wedge-gap']"), prop, seen)
     return out
 
 
@@ -329,6 +417,7 @@ def _compile_axis_style(
         _AXIS_COLOR_PROPERTIES
         | _AXIS_LENGTH_PROPERTIES
         | _AXIS_SIZE_PROPERTIES
+        | _AXIS_FONT_PROPERTIES
         | _AXIS_COMPAT_PROPERTIES
         | {"tick_direction", "tick_label_anchor"}
     )
@@ -341,10 +430,20 @@ def _compile_axis_style(
             raise ValueError(f"{label} has unsupported property {css_prop!r}; supports: {expected}")
         if prop in _AXIS_COLOR_PROPERTIES:
             parsed: StyleValue = _paint(raw, f"{label}[{css_prop!r}]")
+        elif prop in {"tick_label_pad", "tick_padding"}:
+            parsed = _signed_px(raw, f"{label}[{css_prop!r}]")
         elif prop in _AXIS_LENGTH_PROPERTIES:
             parsed = _px(raw, f"{label}[{css_prop!r}]")
         elif prop in _AXIS_SIZE_PROPERTIES:
             parsed = _px(raw, f"{label}[{css_prop!r}]", positive=True)
+        elif prop == "label_font_style":
+            if not isinstance(raw, str) or raw not in {"normal", "italic", "oblique"}:
+                raise ValueError(f"{label}[{css_prop!r}] must be 'normal', 'italic', or 'oblique'")
+            parsed = raw
+        elif prop in {"label_font_family", "label_font_weight"}:
+            if not isinstance(raw, (str, int, float)) or isinstance(raw, bool):
+                raise ValueError(f"{label}[{css_prop!r}] must be a CSS font value")
+            parsed = raw
         elif prop == "grid_opacity":
             parsed = _opacity(raw, f"{label}[{css_prop!r}]")
         elif prop == "grid_dash":
@@ -359,7 +458,8 @@ def _compile_axis_style(
             if not isinstance(raw, str) or raw not in _AXIS_DIRECTIONS:
                 raise ValueError(f"{label}[{css_prop!r}] must be one of {sorted(_AXIS_DIRECTIONS)}")
             parsed = raw
-        _set(out, prop, parsed, css_prop, sources)
+        canonical = "tick_padding" if prop == "tick_label_pad" else prop
+        _set(out, canonical, parsed, css_prop, sources)
     return out
 
 
@@ -371,6 +471,8 @@ def _opacity_channels(compiled: Mapping[str, Any]) -> dict[str, float]:
 
 
 __all__ = [
+    "DEFAULT_LINE_CAP",
+    "LINE_CAPS",
     "StyleMapping",
     "StyleValue",
     "compile_axis_style",

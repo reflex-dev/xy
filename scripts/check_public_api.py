@@ -14,13 +14,13 @@ release or CI green build.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib
 import json
 import os
 import subprocess
 import sys
 import textwrap
-import tomllib
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Optional
@@ -72,7 +72,7 @@ DECLARATIVE_ANNOTATION_EXPORTS = (
     "y_band",
     "text",
 )
-DECLARATIVE_AXIS_EXPORTS = ("x_axis", "y_axis")
+DECLARATIVE_AXIS_EXPORTS = ("x_axis", "y_axis", "theta_axis", "r_axis")
 DECLARATIVE_CHROME_EXPORTS = (
     "legend",
     "tooltip",
@@ -84,6 +84,11 @@ DECLARATIVE_CHROME_EXPORTS = (
 DECLARATIVE_CHART_EXPORTS = (
     "chart",
     "scatter_chart",
+    "polar_chart",
+    "radar_chart",
+    "polar_bar_chart",
+    "pie_chart",
+    "wind_rose",
     "segments_chart",
     "triangle_mesh_chart",
     "line_chart",
@@ -285,23 +290,34 @@ def validate_declarative_api_contract(
     return errors
 
 
-def validate_version_consistency(
-    pkg: ModuleType, pyproject_path: Path = ROOT / "pyproject.toml"
-) -> list[str]:
-    """Ensure import-time ``__version__`` matches package metadata."""
-    try:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        return [f"cannot read project version from {pyproject_path}: {exc}"]
+def validate_version_consistency(pkg: ModuleType, distribution: str = "xy") -> list[str]:
+    """Ensure import-time ``__version__`` matches installed package metadata.
 
-    project_version = str((data.get("project") or {}).get("version") or "").strip()
+    pyproject holds no version to compare against — it is derived from the git
+    tag at build time — so installed metadata is the reference. The check that
+    remains is worth keeping: `xy.__version__` is resolved lazily through
+    ``__getattr__``, and this is what catches it resolving to something other
+    than the version pip actually installed (a stale editable install shadowing
+    a wheel, say), rather than merely to *some* non-empty string.
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as distribution_version
+
+    try:
+        installed_version = distribution_version(distribution)
+    except PackageNotFoundError:
+        return [
+            f"distribution {distribution!r} is not installed, so xy.__version__ "
+            "cannot be checked — run this against an installed package"
+        ]
+
     public_version = getattr(pkg, "__version__", None)
     if not isinstance(public_version, str) or not public_version.strip():
         return [f"xy.__version__ must be a non-empty string, got {public_version!r}"]
-    if project_version != public_version:
+    if installed_version != public_version:
         return [
-            "xy.__version__ must match pyproject.toml project.version: "
-            f"{public_version!r} != {project_version!r}"
+            f"xy.__version__ must match the installed {distribution} distribution "
+            f"metadata: {public_version!r} != {installed_version!r}"
         ]
     return []
 
@@ -317,6 +333,54 @@ def validate_pep561_marker(
     if data != b"":
         return [f"xy py.typed must be an empty full-package PEP 561 marker; got {data!r}"]
     return []
+
+
+def validate_static_typing_surface(
+    pkg: ModuleType,
+    init_path: Path = ROOT / "python" / "xy" / "__init__.py",
+) -> list[str]:
+    """Ensure every lazy root export also has a static declaration.
+
+    Runtime consumers resolve root names through ``__getattr__``.  A type
+    checker cannot infer the per-name types hidden behind that dynamic hook, so
+    each public name must also be imported under ``TYPE_CHECKING`` (or, for a
+    lazily materialized scalar such as ``__version__``, explicitly annotated).
+    """
+    errors: list[str] = []
+    public_names = set(_string_list(getattr(pkg, "__all__", None), "__all__", errors))
+
+    try:
+        tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=str(init_path))
+    except (OSError, SyntaxError) as exc:
+        return [*errors, f"cannot inspect static typing surface in {init_path}: {exc}"]
+
+    declared: set[str] = set()
+    for statement in tree.body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            declared.add(statement.target.id)
+            continue
+        if not (
+            isinstance(statement, ast.If)
+            and isinstance(statement.test, ast.Name)
+            and statement.test.id == "TYPE_CHECKING"
+        ):
+            continue
+        for child in statement.body:
+            if isinstance(child, ast.ImportFrom):
+                declared.update(
+                    alias.asname or alias.name for alias in child.names if alias.name != "*"
+                )
+            elif isinstance(child, ast.Import):
+                declared.update(
+                    alias.asname or alias.name.split(".", 1)[0] for alias in child.names
+                )
+
+    missing = sorted(public_names - declared)
+    if missing:
+        errors.append(
+            f"xy public names have no static TYPE_CHECKING import or annotation: {missing}"
+        )
+    return errors
 
 
 def _loaded_import_budget_modules() -> list[str]:
@@ -468,6 +532,7 @@ def check_public_api(*, check_lazy_import: bool = True) -> list[str]:
     errors = check_all_fresh_import_budgets() if check_lazy_import else []
     errors.extend(validate_version_consistency(pkg))
     errors.extend(validate_pep561_marker())
+    errors.extend(validate_static_typing_surface(pkg))
     errors.extend(validate_public_api(pkg))
     errors.extend(validate_component_public_api(pkg))
     errors.extend(validate_declarative_api_contract(pkg))

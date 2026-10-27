@@ -56,7 +56,9 @@ high-level data-frame API, and their internals may evolve during alpha.
 
 ## Public Constants
 
-- `CHART_DOM_SLOTS` is the tuple of accepted browser chrome slot names.
+- `CHART_DOM_SLOTS` is the tuple of accepted browser chrome slot names. The
+  complete, element-by-element contract is in
+  [Chrome Slots](/docs/xy/styling/chrome-slots/).
 - `__version__` reports the installed package version.
 
 The old fluent `Figure` class is not root-exported. `Chart.figure()` returns an

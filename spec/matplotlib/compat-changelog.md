@@ -4,6 +4,227 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Dual-mode Matplotlib 3.11 gallery contract — 2026-07-31
+
+- `xy.pyplot` now separates the existing dependency-free, high-performance
+  2-D implementation (`native`) from the optional real-Matplotlib frontend
+  (`compat`). The configured default is `native`, including when Matplotlib is
+  installed. `auto` remains an explicit environment-sensitive choice that
+  resolves to compat for the supported Matplotlib 3.11 series and native
+  otherwise.
+- `pip install "xy[matplotlib]"` installs the supported Matplotlib 3.11
+  series. `plt.set_mode(...)` and `XY_PYPLOT_MODE` select a process before
+  figures are created; switching with an open native or Matplotlib figure is
+  rejected. Import and selection remain lazy.
+- Compat mode returns genuine Matplotlib Figure, Axes, Artist, layout, units,
+  toolkit, widget, and animation objects/semantics. The public
+  `module://xy.backends.backend_xy` backend emits one device-space XY display
+  list consumed by browser, HTML, SVG, and native raster output.
+- Renderer acceptance is fallback-free. Agg or another Matplotlib renderer may
+  be a development oracle, but a gallery result with `fallback_used=true`
+  fails. Pixel identity is not required; structure, semantics, major geometry,
+  layout, and tolerant full-canvas visual appearance are.
+- The immutable Matplotlib 3.11.0 contract selects 459 non-3-D sources from the
+  507-source upstream archive. Of these, 437 bind pyplot and are split into 425
+  standard-profile and 12 extended-environment cases. The other 22
+  backend/font/server/GUI sources are classified and hash-locked but never
+  counted as pyplot successes or failures.
+- Native font and canvas companions mirror raster behavior at their output
+  boundaries: controls and zero-width characters have no glyph or advance,
+  unsupported whitespace advances as a space, and BMP export does not depend
+  on the requested filename suffix.
+- Gallery import substitution now edits only the exact `matplotlib` token
+  spans rather than round-tripping the full source through
+  `tokenize.untokenize`. Transformed hashes are therefore reproducible across
+  CPython 3.11/3.12 patch releases. Reports and per-engine results record the
+  exact interpreter implementation and `major.minor.micro` version, and
+  resume/promotion reject missing or inconsistent interpreter provenance.
+- The extended profile declares TeX/fonts, GTK/Xvfb and SVG-loader
+  dependencies, deterministic input/argument/PDF/multiprocessing drivers, and
+  separate reference/XY backend requirements.
+- The completed report passes 425/425 standard and 12/12 extended examples:
+  437/437 pyplot-eligible cases with no execution, structural, semantic,
+  tolerant visual, behavioral, or fallback waivers.
+- Interactive, coordinate-reporting, navigation, and animation entries have
+  hard behavior gates for Matplotlib event delivery, axes callbacks, real
+  widget/selector gestures, draggable artists, status messages, pan changes,
+  timers, and deterministic driven frames. Exact interactive SVG
+  exports also run click, hover, and hyperlink canaries in Chromium.
+  A live browser canvas routes events through a Python comm; standalone HTML
+  cannot retain arbitrary Python callbacks after the process exits.
+- Compat mode accepts the exact 3.11.0 resampling gallery call
+  `FillBetweenPolyCollection.set_data(..., step="pre")`. The source uses that
+  keyword even though 3.11.0 omitted it from the method while retaining the
+  `_step` state; the reference behavior run records the same scoped,
+  version-pinned normalization.
+- Public typing now exposes dependency-free common Figure/Axes protocols,
+  concrete native aliases, structural compat aliases, and honest union return
+  types for mode-routed factories.
+- Native figures now own a first-class measured tree for root figures, nested
+  subfigures, axes, insets, twins, explicit colorbar axes, renderer-owned
+  colorbar chrome, and figure-level text. Every node resolves a normalized
+  viewport and clip; HTML, SVG, and native PNG share one immutable snapshot per
+  export. Figure text stays axes-free, insets remain independent panels, and
+  `get_figure(root=True)` crosses nested subfigure ownership explicitly.
+
+## Patch bodies and geometry — 2026-07-30 (Matplotlib 3.11.1 reference)
+
+- `xy.pyplot.Axes.add_patch` now fills a patch instead of drawing only its
+  outline. Each ring gets a triangle mesh in the patch's own face color, with
+  triangle joins marked as a single fill so browser, PNG, and SVG output
+  suppress internal seams. Patches that report `fill=False`, a `"none"` face
+  color, or a fully transparent one stay edge-only, and the patch never
+  advances the axes color cycle.
+- Patch geometry now comes from `Path.to_polygons`, with the patch transform
+  applied. `Rectangle(angle=...)` keeps its rotation, and curved patches use
+  the curve rather than its cubic Bézier control points: at the default figure size
+  `Circle(radius=1)` covers 3.141 rather than 3.251, and
+  `Ellipse(width=2, height=1, angle=20)` covers 1.570 rather than 3.251.
+- The flattening is resolved at the figure's pixel size rather than in data
+  units. `to_polygons` subdivides until the curve is flat in whatever
+  coordinates it is handed, so flattening straight through the patch transform
+  would take its tessellation from the numeric magnitude of the data:
+  `Circle(radius=1)` came back as sixteen segments overshooting the true
+  radius by 2.5%, while the same circle drawn as `radius=1000` came back
+  smooth. Matplotlib does not have this problem, because its renderers flatten
+  in display space, after the full data-to-pixel transform. xy builds geometry
+  when the patch is added, before the view is known, so it flattens as though
+  the patch filled the figure — the finest resolution it could need — which
+  holds the radial error near 1e-4 at every coordinate scale.
+- Outlines take the patch's own line width, converted from Matplotlib points
+  into output pixels like every other stroke in the shim, instead of a fixed
+  one pixel that did not move with figure DPI. A patch whose edge paints
+  nothing — `edgecolor="none"`, which is Matplotlib's default on a filled
+  patch, a fully transparent one, or `linewidth=0` — emits no outline mark at
+  all, unless it drew no body either. Degenerate rings with no triangulation,
+  such as a zero-height `Rectangle`, draw their edge and skip the fill rather
+  than raising.
+- A ring that has a body but no triangulation — self-intersecting, or past
+  `polygon_triangles`' 10,000-vertex cap — draws its outline and raises a
+  `RuntimeWarning` naming the reason. Matplotlib fills both, so abstaining
+  silently would leave a hollow patch that looks like a deliberate style.
+- An artist-level `transform=` on the patch rides along when it is a
+  data-space affine — `Rectangle(..., transform=Affine2D().rotate_deg(45))`
+  keeps its rotation, and `transform=ax.transData` is accepted as the no-op
+  it is. `transform=ax.transAxes`/`transFigure` raise `NotImplementedError`
+  like every other data artist, since baked fractions go silently stale on
+  the next limit change.
+- Holes are not implemented. A patch whose path has nested rings, such as a
+  compound `PathPatch` of a square inside a square or a full-circle `Wedge`
+  with a `width`, draws its outlines and skips the fill rather than painting
+  the hole solid. `polygon_triangles` takes one simple polygon, so filling
+  every ring would paint 116 for a square-with-hole whose true area is 84.
+  Nesting means every vertex of one ring inside another: rings that merely
+  overlap fill ring-by-ring (their union, where Matplotlib's even-odd rule
+  leaves the intersection unpainted), rings that sit beside each other still
+  fill, and an annular *sector* fills correctly because Matplotlib returns it
+  as one ring that traces out along the outer arc and back along the inner
+  one.
+- `add_patch` returns a `Patch` handle rather than a bare `Artist`. It owns the
+  outline marks alongside the fill, so `remove()`, `set_zorder()`,
+  `set_visible()`, `set_alpha()`, `set_color()` and `set_transform()` move the
+  whole patch instead of only its body. `set_color` paints edge and face
+  alike, as `matplotlib.patches.Patch.set_color` does.
+- Matplotlib `FancyArrowPatch` interop now honors the arrow style's separate
+  fillability result. Open bracket and `->` paths remain strokes rather than
+  being implicitly closed and filled. Mutation, shrink, and connection
+  geometry is resolved under the axes data-to-display transform and figure
+  DPI before being mapped back to xy data coordinates, so point-sized heads
+  and brackets do not expand into plot-spanning polygons.
+
+## Polar projection depth — 2026-07-28 (Matplotlib 3.11.1 reference)
+
+- Polar heatmap/image and contour now use the core polar grid/segment paths,
+  and `errorbar` uses the same allowlisted projected-segment contract. The
+  heatmap samples through a fragment-stage screen→(θ, r) inverse rather than
+  stretching a Cartesian image into the disc.
+- `set_thetamin`/`set_thetamax` and their getters use Matplotlib's degree
+  surface while the core axis remains in its declared angular unit.
+  `set_rorigin`/`get_rorigin` route to the radial-origin geometry, including
+  annular views.
+- Categorical θ, positive log-r autorange, symlog radius, partial-sector
+  layout/clipping, and the core polygonal radial grid are shared across HTML,
+  PNG, and SVG.
+- This does not generalize every segment or mesh artist to polar. Polar
+  rules/spans, LOD, facets/animation, angular navigation/selection, and the
+  stateful `plt.polar`/`plt.thetagrids`/`plt.rgrids` wrappers remain deferred
+  or absent and fail loudly where a Cartesian fallback would be misleading.
+- Minor ticks, minor tick styling, tick-label horizontal alignment, and the
+  tick-label collision strategies are now recorded as **dropped** on a polar
+  Axes rather than left undocumented. No renderer draws minor rings or spokes,
+  and rim labels have neither an edge-relative collision pass nor an anchor.
+  A hand-authored `xy.theta_axis`/`xy.r_axis` refuses them; the shim drops them,
+  because every Axes carries an rcParam-derived minor style and refusing would
+  break `projection="polar"` over a default nobody authored.
+- A polar radial axis carrying datetimes now autoranges from its data instead of
+  from epoch zero, which had compressed every modern instant into a hairline
+  ring at the rim. `set_rlim` and an explicit radial `margin` are unaffected and
+  still win.
+
+## Parent-relative inset axes — 2026-07-28 (Matplotlib 3.11.1 reference)
+
+- `Axes.inset_axes` now creates an independent free-form axes at the parent-relative
+  figure rectangle. Marginal histogram axes outside the central scatter frame no
+  longer have their artists projected into and stacked on the parent data space;
+  `sharex` and `sharey` retain the requested static axis-property sharing.
+
+## Axes-free figure text — 2026-07-31 (supplied 3.11.1 gallery source)
+
+- `Figure.text`, `supxlabel`, and `supylabel` are now figure-owned artists.
+  Creating them on an otherwise empty figure no longer manufactures a default
+  axes, so text-only examples retain the expected zero-axes structure.
+- HTML, SVG, and native PNG composition now accept an axes-free canvas and
+  preserve its requested `figsize * dpi` dimensions. Figure text participates
+  in the same measured compositor used by multi-axes figures and remains
+  mutable/removable through its returned `Text` handle.
+
+## Stateful `matshow` figure sizing — 2026-07-31 (supplied 3.11.1 gallery source)
+
+- `plt.matshow(A)` now creates a dedicated figure whose size follows
+  Matplotlib's bounded `figaspect(A)` calculation and places its axes at
+  `(0.15, 0.09, 0.775, 0.775)`. Square matrices therefore produce the
+  expected square 480×480 default canvas.
+- `fignum=0` reuses the current axes without resizing, while a numbered
+  existing figure receives a new axes without changing its authored size.
+
+## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `xy.pyplot.boxplot` no longer routes its default call through the native
+  opinionated box mark. It now draws Matplotlib's unfilled line geometry and
+  returns one box, median, and flier handle plus two whisker and cap handles per
+  group. Fliers stay centered on their group even when several groups are
+  present, and empty groups of fliers still have the expected handle.
+- `xy.pyplot.violinplot` now uses the same Gaussian-KDE path for its default
+  Scott bandwidth as it does for explicit Scott, Silverman, scalar, and
+  callable bandwidths. It returns one body per group, with triangle joins
+  marked as a single fill so browser, PNG, and SVG output suppress internal
+  seams.
+- The public composition API keeps its independent native `box` and `violin`
+  marks and their opinionated styling; this compatibility correction is
+  contained inside `xy.pyplot`.
+
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
+
+## Vector-field gallery corrections — 2026-07-24
+
+- `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without
+  changing arrow length semantics; figure-coordinate quiver keys also convert
+  their basic MathText labels.
+- `barbs` now renders fixed-length WMO-style flag/full/half geometry and honors
+  length, pivot, increments, rounding, empty fill, size, color, and flip
+  controls.
+- `streamplot` now uses an occupancy-aware adaptive Heun integrator for default
+  and explicit seeds. `broken_streamlines=False` and both Matplotlib 3.11
+  integration scale controls affect the generated trajectories.
+
 ## Matplotlib 3.11 development snapshot — 2026-07-13
 
 - Pinned upstream revision `bde111fb4e`
@@ -133,16 +354,17 @@ into a dozen root causes, recorded here as known defects until fixed:
    colormap while the attached colorbar correctly shows RdBu — image and
    legend disagree. Discrete colormaps (`get_cmap(name, N)`-style) render
    as continuous gradients.
-5. Contours: no dashed-negative convention, auto level count runs 2–3× 
+5. Contours: no dashed-negative convention, auto level count runs 2–3×
    Matplotlib's, `contourf` bands smooth into gradients.
-6. **Mixed-engine measurement artifact (out of scope):** when seaborn —
-   which draws through real Matplotlib — owns the current figure,
-   module-level `plt.hist`/`axvline`/`axhline` draw onto xy's own figure,
-   so three seaborn-notebook cells count as passing while their plt-drawn
-   content lands elsewhere. This can only occur in a mixed environment:
-   xy replaces Matplotlib, and without Matplotlib installed seaborn fails
-   loudly at import. No runtime fallback onto Matplotlib will be added;
-   the benchmark's seaborn column is soft evidence only.
+6. **Historical mixed-engine measurement artifact:** in the native-only audit,
+   seaborn could own a real Matplotlib figure while module-level
+   `xy.pyplot` calls drew onto a separate native figure, so three cells counted
+   as running with content split across engines. Native mode remains isolated.
+   Compat mode resolves this architecturally by routing the whole pyplot
+   surface to genuine Matplotlib objects using the XY backend. That explicit
+   frontend selection is not a raster fallback: Agg output remains forbidden
+   by the gallery gate. The old benchmark's seaborn column remains historical
+   soft evidence rather than a compat pass count.
 7. `annotate` draws no arrow and ignores the `xytext` offset.
 8. A free-form `plt.axes([x, y, w, h])` inset next to a default axes
    renders as an equal side-by-side panel even in PNG (contradicting the
@@ -265,6 +487,57 @@ colorbar domains) fully cleared.
   `"toolmanager"`). `figure(toolbar=...)` — also reachable through
   `subplots(..., toolbar=...)`, which forwards it to `figure` — overrides
   rcParams for one figure.
+
+### Default colorbar label orientation — 2026-07-24 (Matplotlib 3.11.1 reference)
+
+- `Colorbar.set_label(...)` / `colorbar(label=...)` now render Matplotlib's
+  default label geometry in native PNG: rotated 90° counter-clockwise and
+  centered beside a vertical bar, outboard of its tick labels. The native exporter had
+  instead drawn the label horizontally above the bar at `plot.y - 5`, where the
+  glyph ascent overflowed the canvas top edge and the text was clipped — the
+  placement was chosen on the since-outdated assumption that the native text
+  primitive could not rotate. It rotates in quarter turns
+  (`TEXT_ROTATED`/`TEXT_ROTATED_CW`, already used for rotated axis titles), so
+  90° is exact here; only arbitrary text angles still fall back to upright
+  glyphs. The two static exporters now use the same baseline. Browser and SVG
+  output are unchanged — both already had the correct default orientation.
+  This clears the three loud-free but visually wrong PDSH ch. 04.05 cells
+  (`hist2d`, `hexbin`, and `imshow` colorbars with labels).
+- Non-pyplot (composition API) colorbars built with `xy.colorbar(title=...)`
+  share the same renderer, so their vertical labels change in PNG export the
+  same way. Horizontal colorbar labels are untouched in every renderer.
+- Matplotlib's `Colorbar.set_label` customization keywords (`loc`, `labelpad`,
+  rotation, and other text properties) remain outside this change and are
+  currently accepted and ignored by the shim.
+
+### Mesh and distribution autoscale — 2026-07-24 (Matplotlib 3.11.1 reference)
+
+- The shim's pre-build autoscale scan (`Axes._iter_entry_arrays`) now
+  recognizes the `@mark`/`heatmap`, `step`, and `box` entry shapes, which keep
+  their coordinates inside `kwargs` or compact factory arguments rather than
+  as top-level `x`/`y`. Those
+  axes previously scanned as *dataless* and were pinned to the empty `(0, 1)`
+  view, clipping the geometry: a 30×30 `hist2d` showed roughly 3×1 of its bins.
+  Affects `hist2d` (uniform bins), `pcolormesh` on a uniform grid, `specgram`,
+  `ecdf`, `step`, and the compact `boxplot` path. Non-uniform
+  `hist2d`/`pcolormesh` meshes now carry their coordinate-grid extent through
+  the triangle expansion too, including when every scalar is masked.
+  `hexbin`, `contour`/`contourf`, `imshow`, `tripcolor`, `violinplot`, and
+  `errorbar` already scanned correctly and are unchanged.
+- Sticky edges are now derived for mesh, image, and ECDF entries, so
+  `hist2d`/`pcolormesh`/`specgram`/`imshow` view limits are exactly the outer
+  cell edges and an ECDF's cumulative axis is exactly `0..1` — matching
+  Matplotlib, which gives these artists sticky edges and therefore no margin.
+  An axis with sticky edges on *both* ends ships a materialized `domain`
+  instead of a `margin`; one-sided rectangle baselines are unchanged and stay
+  anchored by the engine.
+- `pcolormesh(C)` uses Matplotlib's implicit integer edges `0..N` and `0..M`;
+  `specgram` reconstructs its image centers so the frequency view lands on the
+  FFT endpoints instead of adding half a frequency bin beyond them.
+- `boxplot` autoscales its value axis over the Tukey whiskers plus the flier
+  points when `showfliers` is on. Its default category positions are
+  Matplotlib's 1-based ordinals, and `manage_ticks=True` reserves a half unit
+  around the outer positions regardless of the drawn box width.
 
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

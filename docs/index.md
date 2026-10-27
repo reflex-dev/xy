@@ -6,15 +6,18 @@ description: XY is a fast Python charting library for interactive data visualiza
 # What is `xy`?
 
 XY is a Python charting library for interactive 2D visualizations that stay
-smooth at millions of points and is completely customizable. Two ideas shape
-the library:
+smooth at millions of points and take your design system seriously. Two ideas
+shape the library:
 
 - **Fast, even with lots of data.** XY draws the detail you can actually see
   instead of every row at once, so pan, zoom, and hover stay responsive as
   your data grows.
-- **Completely customizable.** Style titles, axes, legends, tooltips, and controls
-  with CSS or Tailwind, and keep the same look in interactive charts, SVGs, and
-  PNGs.
+- **Styled by your CSS, not ours.** Titles, axes, legends, tooltips, and controls
+  are addressable with plain CSS or Tailwind through 23 stable slots, and your
+  design tokens reach the marks themselves — in the browser, in SVG, and in
+  native PNG. What each mechanism reaches is published per renderer in the
+  [Capability Matrix](/docs/xy/styling/capabilities/), including where it
+  stops.
 
 
 ~~~python demo-only exec
@@ -61,22 +64,21 @@ kernels aggregate data before display, binary transport keeps numbers out of
 JSON, and the WebGL2 client bounds browser work by what the screen can show,
 while exact source data stays in Python for hover and selection.
 
-The numbers back this up. In the recorded 10-million-point launch benchmark, XY
-produced a static PNG in 0.023 s, while Matplotlib took 2.8 s and Plotly
-9.6 s. XY reached first interactive render 16–20× sooner, peaking at a
-third of Matplotlib's memory and a twentieth of Plotly's.
+The numbers back this up. In the recorded live interactive sweep, XY reached a
+correct, stable canvas in 0.071 seconds at 10,000 points and 0.081 seconds at
+100 million. Matplotlib reached 13.4 seconds at 50 million points, while Plotly
+reached 9.8 seconds at 25 million.
 
 ~~~python demo-only exec
-from xy_docs.demos.benchmark_charts import launch_snapshot_demo
+from xy_docs.demos.benchmark_charts import interactive_ux_demo
 
-benchmark_launch_snapshot = launch_snapshot_demo
+benchmark_interactive_ux = interactive_ux_demo
 ~~~
 
-The benchmark also tested one billion points. At that size XY switches to a
-density view, a heatmap-like summary of where the points fall, and still
-delivered a working interactive chart in just over a second. The default
-Matplotlib and Plotly approach of drawing every single point did not finish
-within the run's memory and time limits.
+Above 200,000 rows, XY's default path switches to a density view while keeping
+exact source rows available for deeper zooms. With density disabled, the same
+engine still rendered 100 million individual markers in 1.34 seconds. The
+benchmark publishes both paths so the effect of aggregation stays visible.
 [Inspect the benchmark evidence](/docs/xy/overview/benchmarks/) or
 [browse the chart gallery](/docs/xy/overview/gallery/).
 

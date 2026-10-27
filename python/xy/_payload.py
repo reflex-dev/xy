@@ -10,18 +10,16 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import _native, channels, kernels, lod
+from . import _native, channels, interaction, kernels, lod
 from ._trace import Trace
 from .columns import Column
 from .config import (
     DECIMATION_THRESHOLD,
-    DEFAULT_PALETTE,
     DENSITY_GRID,
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     MAX_ANIMATION_MATCH_ROWS,
     PROTOCOL_VERSION,
-    default_palette_color,
 )
 
 if TYPE_CHECKING:
@@ -38,6 +36,39 @@ else:
 _U32_MAX = (1 << 32) - 1
 
 
+_EMITTED_DTYPES = {
+    "u8": np.dtype(np.uint8),
+    "u32": np.dtype("<u4"),
+    "f64": np.dtype("<f8"),
+    "f32": np.dtype("<f4"),
+}
+
+
+def _emitted_column_dtype(meta: dict[str, Any]) -> np.dtype[Any]:
+    """NumPy dtype named by one emitted column's wire metadata."""
+    return _EMITTED_DTYPES.get(str(meta.get("dtype", "f32")), _EMITTED_DTYPES["f32"])
+
+
+def _decode_emitted_values(
+    values: np.ndarray,
+    meta: dict[str, Any],
+    budget: Optional[int] = None,
+) -> np.ndarray:
+    """Sample emitted rows, then undo their wire offset/scale encoding.
+
+    ``values`` may be a scalar column or a two-dimensional row table. Sampling
+    always selects axis-0 rows, so multi-component channels such as RGBA stay
+    aligned with the geometry sample that consumes them.
+    """
+    if budget is not None and len(values) > budget:
+        selected = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
+        values = values[selected]
+    decoded = np.asarray(values, dtype=np.float64)
+    if "offset" in meta or "scale" in meta:
+        decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(meta.get("offset", 0.0))
+    return decoded
+
+
 class _PayloadWriter:
     """Accumulates the binary blob + column table for `build_payload`.
 
@@ -48,7 +79,13 @@ class _PayloadWriter:
     means calling these, not re-implementing the encoding.
     """
 
-    def __init__(self, *, split: bool = False, borrow_heatmaps: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        split: bool = False,
+        borrow_heatmaps: bool = False,
+        point_overlay: bool = True,
+    ) -> None:
         # split=True: every column ships as its own wire buffer — spec entries
         # carry `buf` (the wire-buffer index) with byte_offset 0, and
         # `buffers()` returns per-column views with no join copy. Packed mode
@@ -56,10 +93,23 @@ class _PayloadWriter:
         # export, streaming-refresh reopen state).
         self.columns: list[dict[str, Any]] = []
         self._chunks: list[bytes | np.ndarray] = []
+        # One retained encoded array per column, aligned with ``columns``.
+        # Legend placement reads this bounded *emitted* geometry before blob
+        # assembly, so an M4-preserved spike cannot be missed by a second,
+        # unrelated sample of the canonical source.
+        self._column_arrays: list[np.ndarray] = []
         self._pos = 0
         self._split = split
         self.borrow_heatmaps = borrow_heatmaps
         self.borrowed: list[np.ndarray] = []
+        # point_overlay=False: skip the density tier's sampled point overlay.
+        # Only the *raster* exporters set this. They draw density traces
+        # through `_emit_grid`, which never reads `density["sample"]`, so on
+        # that path the overlay is an O(N) SplitMix scan plus two gathers whose
+        # result no pixel consumes. The browser client *does* draw it
+        # (`50_chartview.ts`), so `build_payload`/`build_payload_split` must
+        # keep shipping it.
+        self.point_overlay = point_overlay
 
     def ship(self, values: np.ndarray, col: "Column", *, scale: str | None = None) -> int:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
@@ -68,7 +118,15 @@ class _PayloadWriter:
         `scale` is the target axis scale: log-family axes pin the offset to
         0.0 (`lod.geometry_offset`) so relative f32 precision survives the
         shader-side transform."""
-        offset = lod.geometry_offset(scale, col.min, col.max)
+        # Direct append payloads need a stable encoding so their previous
+        # bytes remain a prefix of the new column. Log-family axes retain
+        # their required zero origin; linear axes use the column's sticky
+        # shipped offset and re-center only when it leaves the safe span.
+        offset = (
+            lod.geometry_offset(scale, col.min, col.max)
+            if lod.pins_offset_to_zero(scale)
+            else col.suggest_offset()
+        )
         encoded = lod.encode_f32_values(
             values,
             offset,
@@ -96,10 +154,12 @@ class _PayloadWriter:
             self.columns.append(
                 {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), "dtype": "u8"}
             )
+            self._column_arrays.append(enc)
             self._chunks.append(padded)
             self._pos += padded.nbytes
             return index
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
+        self._column_arrays.append(enc)
         self._chunks.append(enc)
         self._pos += enc.nbytes
         padding = (-self._pos) % 4
@@ -128,6 +188,7 @@ class _PayloadWriter:
         self.borrowed.append(arr)
         index = len(self.columns)
         self.columns.append({"span": span, "byte_offset": 0, "len": int(len(arr)), "dtype": "f64"})
+        self._column_arrays.append(arr)
         return index
 
     def ship_values(
@@ -155,9 +216,29 @@ class _PayloadWriter:
             )
         else:
             self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+        self._column_arrays.append(enc)
         self._chunks.append(enc)
         self._pos += enc.nbytes
         return idx
+
+    def decoded_column(self, index: int, budget: Optional[int] = None) -> np.ndarray:
+        """Decode one already-emitted column, optionally with a bounded sample."""
+        values = self._column_arrays[int(index)].reshape(-1)
+        meta = self.columns[int(index)]
+        return _decode_emitted_values(values, meta, budget)
+
+    def decoded_column_rows(
+        self,
+        index: int,
+        components: int,
+        budget: Optional[int] = None,
+    ) -> np.ndarray:
+        """Decode a bounded row sample from a multi-component emitted column."""
+        if components <= 0:
+            raise ValueError("column components must be positive")
+        values = self._column_arrays[int(index)].reshape(-1, components)
+        meta = self.columns[int(index)]
+        return _decode_emitted_values(values, meta, budget)
 
     def blob(self) -> bytes:
         return b"".join(
@@ -209,7 +290,7 @@ class PayloadMixin(_Host):
         self, px_width: Optional[int] = None
     ) -> tuple[dict[str, Any], bytes, tuple[np.ndarray, ...]]:
         """Private static-export payload with borrowed canonical heatmap spans."""
-        pw = _PayloadWriter(borrow_heatmaps=True)
+        pw = _PayloadWriter(borrow_heatmaps=True, point_overlay=False)
         spec = self._payload_spec(pw, self._resolve_px_width(px_width))
         return spec, pw.blob(), tuple(pw.borrowed)
 
@@ -240,6 +321,8 @@ class PayloadMixin(_Host):
                 ranges[axis_id] = r = self._range(axis_id)
             return r
 
+        self._validate_coords()
+        self._validate_funnel_axes()
         spec_traces = []
         for t in self.traces:
             xr = axis_range(t.x_axis)
@@ -267,8 +350,38 @@ class PayloadMixin(_Host):
                 "ranges": {axis_id: list(axis["range"]) for axis_id, axis in axis_specs.items()}
             },
         }
-        if self.legend_options:
-            spec["legend"] = self.legend_options
+        if self.title_options:
+            spec["title_options"] = [
+                {
+                    **{key: value for key, value in entry.items() if key not in {"y", "pad"}},
+                    "geometry": pw.ship_scalar(
+                        np.asarray(
+                            (entry.get("y", 1.0), entry.get("pad", 8.0)),
+                            dtype=np.float64,
+                        )
+                    ),
+                }
+                for entry in self.title_options
+            ]
+        if self.coords != "cartesian":
+            spec["coords"] = self.coords
+        if self.palette is not None:
+            # Chart-level categorical cycle (`xy.theme(palette=...)`). Every
+            # trace already bakes its own color and every categorical channel
+            # ships its own resolved `palette`, so this is only the indexed
+            # fallback the STATIC exporters use for a trace that carries no
+            # style color. The browser client never reads it — it works from
+            # `trace.color.palette` — which is why omitting it (no chart
+            # palette set) leaves existing specs byte-identical.
+            # `palette_cycle`, not `list(self.palette)`: a `{category: color}`
+            # palette would otherwise ship its category NAMES as colors.
+            spec["palette"] = self.palette_cycle
+        annotations = self._annotation_specs()
+        if annotations:
+            # Best-legend placement treats annotation geometry as first-class
+            # visible ink, so compile it before the initial location is
+            # resolved. The same list is then shipped unchanged below.
+            spec["annotations"] = annotations
         extra_legends = getattr(self, "extra_legends", None)
         if extra_legends:
             spec["extra_legends"] = extra_legends
@@ -296,11 +409,28 @@ class PayloadMixin(_Host):
         interaction = self._interaction_spec()
         if interaction:
             spec["interaction"] = interaction
-        annotations = self._annotation_specs()
-        if annotations:
-            spec["annotations"] = annotations
         if self.animation_options is not None:
             spec["animation"] = dict(self.animation_options)
+        if self.legend_options:
+            legend = dict(self.legend_options)
+            auto_loc = (
+                self.coords == "cartesian"
+                and legend.get("anchor") is None
+                and legend.get("loc") == "best"
+            )
+            if auto_loc or legend.get("loc") == "best":
+                # Resolve only after the complete layout spec exists: padding,
+                # colorbars, secondary axes, and merged DOM styles can all
+                # change the measured plot or legend footprint.
+                from ._legendfit import resolve_for_figure
+
+                legend["loc"] = resolve_for_figure(self, spec, legend, rendered_columns=pw)
+                if auto_loc:
+                    # Static writers and the first browser frame receive one
+                    # concrete decision. The live renderer retains the intent
+                    # separately and can reconsider it after settled changes.
+                    legend["auto_loc"] = "best"
+            spec["legend"] = legend
         return spec
 
     @staticmethod
@@ -374,6 +504,29 @@ class PayloadMixin(_Host):
             return None
         return np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
 
+    def _visible_mask_needed(
+        self,
+        t: Trace,
+        *,
+        prefiltered: bool,
+        base_column: Optional[Column] = None,
+    ) -> bool:
+        """Whether `_log_visible_mask` can drop any row for this trace.
+
+        The mask is three O(N) passes plus two N-byte temporaries, and on the
+        common shape (linear axes, no nulls) it is provably all-True: zone maps
+        count NaN *and* ±inf as null (§22/§19), so a null-free column has no
+        row for `isfinite` to reject, and `prefiltered` rows already went
+        through `_finite_sel`. Only a log axis (which additionally rejects
+        non-positive values) or a baseline column outside the x/y zone maps can
+        actually remove something.
+        """
+        if self._axis_scale(t.x_axis) == "log" or self._axis_scale(t.y_axis) == "log":
+            return True
+        if base_column is not None and base_column.zone.null_count:
+            return True
+        return not prefiltered and bool(t.x.zone.null_count or t.y.zone.null_count)
+
     def _log_visible_mask(
         self,
         t: Trace,
@@ -381,6 +534,14 @@ class PayloadMixin(_Host):
         yv: np.ndarray,
         base: Optional[np.ndarray] = None,
     ) -> np.ndarray:
+        """Rows this trace may actually ship.
+
+        Paired with `_visible_mask_needed`, which decides whether calling this
+        can drop anything at all: **a new rejection rule here needs a matching
+        condition there**, or the emitters will skip the mask on data it would
+        now reject. (`tests/test_figure.py` pins one case per rule; the
+        predicate going stale is otherwise silent.)
+        """
         mask = np.isfinite(xv) & np.isfinite(yv)
         if self._axis_scale(t.x_axis) == "log":
             mask &= xv > 0
@@ -409,13 +570,14 @@ class PayloadMixin(_Host):
             return values, (float(bounds[0]), float(bounds[1]))
         return self._axis_coord(axis_id, values), (c0, c1)
 
-    @staticmethod
-    def _default_styled(t: Trace) -> dict[str, Any]:
+    def _default_styled(self, t: Trace) -> dict[str, Any]:
         """Trace style dict with the per-trace palette default when no color
-        was given — the one place this rule lives (was copy-pasted per kind)."""
+        was given — the one place this rule lives (was copy-pasted per kind).
+        Cycles the figure's palette (`xy.theme(palette=...)`), which defaults
+        to config.DEFAULT_PALETTE."""
         style = dict(t.style)
         if style.get("color") is None:
-            style["color"] = default_palette_color(t.id)
+            style["color"] = self.palette_color(t.id)
         return style
 
     def _m4_decimate(
@@ -429,6 +591,13 @@ class PayloadMixin(_Host):
         each bucket covers a uniform strip of *screen*, not of raw data (§28);
         monotone transforms keep per-bucket min/max rows identical, so y stays
         raw and the gathered rows ship untransformed."""
+        if self.coords == "polar":
+            # M4 buckets on a monotonic screen-x column. Under polar the x
+            # column is an angle: a spiral revisits the same screen columns and
+            # a multi-turn series is not monotonic at all, so the buckets carry
+            # no screen meaning. Ship direct until polar-aware decimation
+            # exists (spec/design/polar-axes.md §7).
+            return "direct", arrays
         if t.n_points <= DECIMATION_THRESHOLD:
             return "direct", arrays
         eps = float(np.finfo(np.float64).eps)
@@ -453,12 +622,17 @@ class PayloadMixin(_Host):
             sel = self._finite_sel(t, xv, yv)
             if sel is not None:
                 xv, yv = xv[sel], yv[sel]
-        if len(xv):
+        if len(xv) and self._visible_mask_needed(t, prefiltered=sel is not None):
             finite = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(finite)):
                 sel = np.flatnonzero(finite) if sel is None else sel[finite]
                 xv, yv = xv[finite], yv[finite]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
+        if tier == "decimated":
+            # Record the px width this M4 pass was computed for (§28): the
+            # client uses it to skip an at-home re-request that would only
+            # recompute the same windows after a streaming append.
+            entry["decimation_px"] = int(px_width)
         # Attach direct keys in the same finite/log-filtered row order.
         if t.transition_keys is not None:
             self._transition_entry(entry, t, pw, sel)
@@ -472,10 +646,14 @@ class PayloadMixin(_Host):
         tier, (xv, yv, bv) = self._m4_decimate(
             t, xr, px_width, t.x.values, t.y.values, t.base.values
         )
-        sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
-        if len(sel) != len(xv):
-            xv, yv, bv = xv[sel], yv[sel], bv[sel]
+        sel = None
+        if self._visible_mask_needed(t, prefiltered=False, base_column=t.base):
+            sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
+            if len(sel) != len(xv):
+                xv, yv, bv = xv[sel], yv[sel], bv[sel]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
+        if tier == "decimated":
+            entry["decimation_px"] = int(px_width)
         if t.transition_keys is not None:
             self._transition_entry(entry, t, pw, sel)
         entry["base"] = pw.ship(bv, t.base, scale=self._axis_scale(t.y_axis))
@@ -489,7 +667,12 @@ class PayloadMixin(_Host):
     def _emit_scatter(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
-        if t.use_density():
+        if t.use_density() and self.coords != "polar":
+            # Polar forces direct: density bins an axis-aligned (x, y) grid,
+            # and equal (theta, r) bins near the origin cover far fewer pixels,
+            # so uniform data would render centre-concentrated. Trace.use_density
+            # has no Figure reference, so the chart-level flag is applied here at
+            # the call site (spec/design/polar-axes.md §7).
             t.shipped_sel = None  # no per-point marks, no pick mapping
             t.drill_mode = False  # full view: density until a zoom drills in
             entry = self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw)
@@ -498,7 +681,7 @@ class PayloadMixin(_Host):
         sel = self._finite_sel(t, xv, yv)
         if sel is not None:
             xv, yv = xv[sel], yv[sel]
-        if len(xv):
+        if len(xv) and self._visible_mask_needed(t, prefiltered=sel is not None):
             visible = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(visible)):
                 sel = np.flatnonzero(visible) if sel is None else sel[visible]
@@ -703,6 +886,124 @@ class PayloadMixin(_Host):
                 raise ValueError("errorbar role-qualified animation key collision")
         return self._transition_entry(entry, t, pw, source_sel, key_values)
 
+    def _emit_ribbon(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        """Ship a flow band: two faces on x, four span edges on y, two paints.
+
+        The six geometry slots are saturated (ribbon geometry contract), so the
+        target span's y values ride in the `x`/`y` slots and must be shipped on
+        the **y** scale, not the x one — the single easiest thing to get wrong
+        here, and it would place every ribbon's far end at the wrong height.
+        """
+        del xr, yr, px_width
+        if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+            raise ValueError("ribbon trace missing geometry columns")
+        columns = (t.x0, t.x1, t.y0, t.y1, t.x, t.y)
+        arrays = [column.values for column in columns]
+        candidates = [
+            array for column, array in zip(columns, arrays, strict=True) if column.zone.null_count
+        ]
+        sel_arg = kernels.valid_indices_f64(tuple(candidates)) if candidates else None
+        if sel_arg is not None:
+            arrays = [array[sel_arg] for array in arrays]
+        x0v, x1v, slo, shi, tlo, thi = arrays
+        xs, ys = self._axis_scale(t.x_axis), self._axis_scale(t.y_axis)
+        entry = {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": self._default_styled(t),
+            # Always direct: a flow diagram is small-N by nature, and neither
+            # decimation nor a density tier means anything for a band (§28).
+            "tier": "direct",
+            "n_points": t.n_points,
+            "n_marks": int(len(x0v)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
+            "x0": pw.ship(x0v, t.x0, scale=xs),
+            "x1": pw.ship(x1v, t.x1, scale=xs),
+            "y0": pw.ship(slo, t.y0, scale=ys),
+            "y1": pw.ship(shi, t.y1, scale=ys),
+            "target_y0": pw.ship(tlo, t.x, scale=ys),
+            "target_y1": pw.ship(thi, t.y, scale=ys),
+        }
+        if t.color_ch is not None:
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
+        if t.color2_ch is not None:
+            entry["color_target"] = channels.ship_color_channel(
+                t.color2_ch, sel_arg, pw.ship_scalar, pw.ship_u8
+            )
+        if t.tooltip_rows is not None:
+            if len(t.tooltip_rows) != t.n_points:
+                raise ValueError(
+                    "ribbon tooltip rows must match ribbon geometry "
+                    f"({len(t.tooltip_rows)} != {t.n_points})"
+                )
+            indices = range(len(t.tooltip_rows)) if sel_arg is None else (int(i) for i in sel_arg)
+            entry["tooltip_rows"] = [dict(t.tooltip_rows[i]) for i in indices]
+        self._ship_trace_styles(entry, t, sel_arg, pw)
+        return self._transition_entry(entry, t, pw, sel_arg)
+
+    def _emit_funnel(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        """Ship funnel segments: per-stage symmetric quads plus semantics.
+
+        Slot mapping (funnel geometry contract): the stage-axis edges ride the
+        stage dimension's edge pair, the leading cross edges ride the other
+        pair, and the generic x/y slots carry the TRAILING cross edges — both
+        on the CROSS axis scale. Orientation decides which axis is which, so
+        the wire re-labels the six columns semantically (`pos0`/`pos1`,
+        `lo0`/`hi0`, `lo1`/`hi1`) and renderers never see the slot trick.
+        """
+        del xr, yr, px_width
+        if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+            raise ValueError("funnel trace missing geometry columns")
+        orientation = str(t.style.get("orientation", "vertical"))
+        xs, ys = self._axis_scale(t.x_axis), self._axis_scale(t.y_axis)
+        if orientation == "vertical":
+            pos0, pos1, pos_scale = t.y0, t.y1, ys
+            lo0, hi0, cross_scale = t.x0, t.x1, xs
+        elif orientation == "horizontal":
+            pos0, pos1, pos_scale = t.x0, t.x1, xs
+            lo0, hi0, cross_scale = t.y0, t.y1, ys
+        else:
+            raise ValueError(f"unknown funnel orientation {orientation!r}")
+        lo1, hi1 = t.x, t.y
+        entry = {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": self._default_styled(t),
+            # Always direct: a funnel is small-N by nature — one quad per
+            # stage — and neither decimation nor a density tier means
+            # anything for it (§28).
+            "tier": "direct",
+            "n_points": t.n_points,
+            "n_marks": int(len(pos0.values)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
+            "orientation": orientation,
+            "pos0": pw.ship(pos0.values, pos0, scale=pos_scale),
+            "pos1": pw.ship(pos1.values, pos1, scale=pos_scale),
+            "lo0": pw.ship(lo0.values, lo0, scale=cross_scale),
+            "hi0": pw.ship(hi0.values, hi0, scale=cross_scale),
+            "lo1": pw.ship(lo1.values, lo1, scale=cross_scale),
+            "hi1": pw.ship(hi1.values, hi1, scale=cross_scale),
+        }
+        if t.color_ch is not None:
+            entry["color"], _size = self._ship_channels(t, None, pw.ship_scalar, pw.ship_u8)
+        if t.tooltip_rows is not None:
+            if len(t.tooltip_rows) != t.n_points:
+                raise ValueError(
+                    "funnel tooltip rows must match funnel geometry "
+                    f"({len(t.tooltip_rows)} != {t.n_points})"
+                )
+            entry["tooltip_rows"] = [dict(row) for row in t.tooltip_rows]
+        self._ship_trace_styles(entry, t, None, pw)
+        return self._transition_entry(entry, t, pw, None)
+
     def _emit_triangle_mesh(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
@@ -886,7 +1187,7 @@ class PayloadMixin(_Host):
         path keeps unit f32 because tooltips denormalize the shipped columns
         (see channels.ship_channels)."""
         return channels.ship_channels(
-            t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE, quantize_continuous=quantize_continuous
+            t, sel, ship_scalar, ship_u8, quantize_continuous=quantize_continuous
         )
 
     @staticmethod
@@ -894,7 +1195,7 @@ class PayloadMixin(_Host):
         """Attach outline paint and direct instance attributes to a trace spec."""
         if t.stroke_ch is not None:
             entry["stroke"] = channels.ship_color_channel(
-                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, DEFAULT_PALETTE
+                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8
             )
         if t.style_channels:
             entry["channels"] = channels.ship_style_channels(
@@ -1000,6 +1301,13 @@ class PayloadMixin(_Host):
             sel = np.empty(0, dtype=np.uint32)
             sample_sel = None
             grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+        elif full_identity and not pw.point_overlay:
+            # Raster export: no overlay is drawn, so take the plain grid kernel
+            # instead of the fused grid+sample variants below. `bin_2d` is the
+            # grid half of every one of them, so the counts are identical.
+            visible = int(t.n_points)
+            sel = np.empty(0, dtype=np.uint32)
+            grid = kernels.bin_2d(bx, by, bx0, bx1, by0, by1, w, h)
         elif full_identity:
             visible = int(t.n_points)
             sel = np.empty(0, dtype=np.uint32)
@@ -1051,16 +1359,20 @@ class PayloadMixin(_Host):
             grid, sel = kernels.bin_2d_indices(bx, by, bx0, bx1, by0, by1, w, h)
             visible = int(len(sel))
         encoded_grid, gmax = kernels.density_log_u8(grid)
-        # Honor the user's colormap for the density ramp even though the per-point
-        # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
-        # Constant channels carry it too — colormap= without color data means
-        # exactly this ramp. Categorical has no ramp, so it keeps the default.
+        # The density surface wears the data's own colors (LOD doc §2): count
+        # is the alpha channel, and per-point color channels aggregate to a
+        # per-cell mean shipped as an RGBA plane below. `colormap` stays on
+        # the wire only for the client's count-only LUT fallback (hand-built
+        # specs); no shipped path colormaps counts.
         cmap = (
             t.color_ch.colormap
             if (t.color_ch and t.color_ch.mode in ("constant", "continuous"))
             else channels.DEFAULT_COLORMAP
         )
         dropped_channels = list(t.per_item_channel_names())
+        # Cached full-column resolution (LOD doc §2): the O(N) quantize pass
+        # is shared with the pyramid build and every later grid reply.
+        bin_colors = interaction.trace_bin_colors(t)
         density = {
             "buf": pw.ship_u8(encoded_grid),
             "w": w,
@@ -1070,19 +1382,34 @@ class PayloadMixin(_Host):
             "colormap": cmap,
             "x_range": list(xr),
             "y_range": list(yr),
-            "channels_dropped": bool(dropped_channels),  # compatibility boolean
-            "dropped_channels": dropped_channels,  # complete, actionable list (§28)
         }
+        if bin_colors is not None:
+            # Mean point color per cell, straight-alpha RGBA8: the color the
+            # points themselves would downsample to (averaged in linear
+            # light). The channel is aggregated, recorded via `color_agg`,
+            # and therefore leaves the dropped list.
+            rgba_grid = kernels.bin_2d_mean_color(bx, by, bx0, bx1, by0, by1, w, h, **bin_colors)
+            density["rgba"] = pw.ship_u8(rgba_grid.reshape(-1))
+            density["color_agg"] = "mean"
+            dropped_channels.remove("color")
+        density["channels_dropped"] = bool(dropped_channels)  # compatibility boolean
+        density["dropped_channels"] = dropped_channels  # complete, actionable list (§28)
         if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
             density["color"] = t.color_ch.constant
         if oversized:
             # §28: exact grid, but the deterministic point overlay is dropped
             # because row ids exceed u32. Recorded so the client/legend can say so.
             density["overlay_omitted"] = "rows_exceed_u32"
-        sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
-        if sample is not None:
-            density["sample"] = sample
-        return {
+        if pw.point_overlay:
+            sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
+            if sample is not None:
+                density["sample"] = sample
+        elif "overlay_omitted" not in density:
+            # §28: no representation is dropped silently. `oversized` above may
+            # have already recorded the more fundamental u32 reason; that one
+            # wins, so only claim the field when nothing else has.
+            density["overlay_omitted"] = "static_raster"
+        entry = {
             "id": t.id,
             "kind": "scatter",
             "name": t.name,
@@ -1095,3 +1422,18 @@ class PayloadMixin(_Host):
             "y_axis": t.y_axis,
             "density": density,
         }
+        if categorical and t.color_ch is not None:
+            # Legend chrome needs the encoding even though the per-point codes
+            # aggregate into the mean-color plane: ship the channel spec slim
+            # (categories + palette, no per-point `buf`) so category rows
+            # exist for density-tier traces — the §10 category-toggle path is
+            # unreachable without them, and every client consumer of a color
+            # buffer already guards on `buf`. Continuous channels stay
+            # deliberately unshipped here: a gradient row would claim
+            # color == density.
+            color_spec = t.color_ch.spec()
+            color_spec["palette"] = channels.categorical_palette(
+                t.color_ch.colors, len(t.color_ch.categories or ())
+            )
+            entry["color"] = color_spec
+        return entry

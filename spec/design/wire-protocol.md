@@ -61,13 +61,34 @@ produces no traces, there is no reply at all (silence, not an empty message).
 **`density_view`** — one request per density-tier trace, each naming its
 `trace` id. `w` defaults to `512`, `h` to `384`; the client sends the rounded
 plot width and height. A trace that is not in density mode yields
-`{"traces": []}`, which is dropped rather than sent.
+`{"traces": []}`, which is dropped rather than sent. Not every view change
+produces a request: a view fully contained in an exact shipped window — the
+live drill's, or a retired cached point window the client promotes back — is
+elided client-side (`reduction: "none"` means the subset already holds every
+point of any contained view; LOD doc §5 T12/T13). The elision ends, and one
+request goes out purely to re-center the §16 f32 offset encoding, once the
+view span drops below 1/256 of the drilled window's span on either axis.
+A request within half an output texel per edge of the trace's last sent
+request (same screen size) is also suppressed (T13): if that request was
+already answered there is nothing to refresh (replies are deterministic for
+unchanged data; data changes rebuild the GPU trace and reset the memo), and
+if it is still in flight the trace keeps waiting on the original request's
+`seq`, whose reply is then accepted per-trace instead of dying to the global
+seq race. More fundamentally, the aggregate tier never refines (LOD doc T13,
+revised): a `density_view` goes out only when the estimated in-view count —
+the smallest cached window containing the view, area-scaled, seeded by the
+first payload's recorded count — sits within the points band
+(`LOD_DIRECT_POINT_BUDGET × LOD_POINTS_REQUEST_BAND`). Outside that band the
+covering texture stands, however blurry; traces with no recorded counts
+always request.
 
 **`pick`** — `trace` and `index` pass through `_integer_id`. `index` is a
 *shipped-vertex* index, translated kernel-side to a canonical row when the
 shipped copy dropped non-finite rows. `drill_seq`, when present, is the drill
-subset version the client picked against; a mismatch resolves to `row: null`
-rather than to a row in a dead index space.
+subset version the client picked against; a non-current seq translates
+through the kernel's bounded subset history when it is still remembered (the
+client may be drawing a retired cached point window, LOD doc T13) and
+resolves to `row: null` otherwise — never to a row in a dead index space.
 
 **`click`** — same fields and same `fig.pick` resolution as `pick`, minus
 `seq`; it fires `on_click` and returns nothing.
@@ -85,7 +106,7 @@ gate. This is the one request
 type a host may withhold: on the Reflex host it never reaches the kernel,
 because `XYChart.jsx` intercepts the outgoing message and invokes the
 `on_view_change` prop directly
-(`python/reflex-xy/reflex_xy/assets/XYChart.jsx`) — that namespace
+(`python/reflex_xy/assets/XYChart.jsx`) — that namespace
 registers no Python-side view callback.
 
 **`select`** — box select. Edges are ordered by `lod.normalize_window` with
@@ -121,33 +142,80 @@ message unless `msg.seq === this.seq`.
 states which representation this view resolved to:
 
 - `mode: "density"` — `{id, mode, tier, visible, reduction, binning, density}`.
-  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus
-  optional `color` (a constant-channel color) and `sample` (the retained
-  point-sample overlay). `binning` is `"exact"` or `"pyramid-L<level>"`.
-  `x_range`/`y_range` are raw data endpoints, but the grid's cells are
-  **uniform in the axis's scale coordinates** (identical to raw on a linear
-  axis): on a log/symlog axis the kernel bins transformed values so every
-  cell covers the same strip of screen, and renderers interpolate cell edges
-  between the *transformed* endpoints (dossier §28). The raw-space tile
-  pyramid cannot compose such a grid, so nonlinear-axis traces always report
-  `binning: "exact"`.
+  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus, for
+  channel-bearing traces, `rgba` (a `w*h*4` straight-alpha RGBA8 plane: each
+  occupied cell's alpha-weighted **mean point color**, averaged in linear
+  light, plus the cell's mean point alpha) with `color_agg: "mean"` recording
+  the aggregation (LOD doc §2); constant-color traces ship `color` (the
+  constant) instead and no color plane — the mean of a constant IS the
+  constant, so the client tints the count texture. Count always rides `buf`
+  as log-u8 and drives only the drawn **alpha**; renderers must never
+  colormap counts when either color source is present. Interactive replies
+  ship **no `sample`** (#225): the only retained point-sample overlay is the
+  first-payload one, and the client draws it solely below the T9
+  resolvable-count gate (a client still accepts a legacy reply-borne `sample`
+  and gates it the same way). `binning` is `"exact"` or
+  `"pyramid-L<level>"`. Pyramid-served grids are **clamped to source
+  resolution** — never more cells per axis than the finest level resolves
+  under the window (a full-screen grid of upsampled cells is the same
+  picture at several times the bytes; the client's texture filtering does
+  the upscale). Exact and spatial grids are true full-detail bins at screen
+  resolution. `visible` — the window's point count — is the fact the
+  client's points-band gate scales to decide whether any later view is
+  worth a request at all (LOD doc T13). `x_range`/`y_range` are raw data endpoints, but the
+  grid's cells are **uniform in the axis's scale coordinates** (identical to
+  raw on a linear axis): on a log/symlog axis the kernel bins transformed
+  values so every cell covers the same strip of screen, and renderers
+  interpolate cell edges between the *transformed* endpoints (dossier §28).
+  The raw-space tile pyramid cannot compose such a grid, so nonlinear-axis
+  traces always report `binning: "exact"`.
 - `mode: "points"` — the deep-zoom drill:
   `{id, mode, tier: "direct", visible, reduction: "none", x_range, y_range,
-  x, y, color, size, density_val, lod_blend, density_colormap, drill_seq,
-  style}`. `x_range`/`y_range` are the window these points cover; the client
-  falls back to the density overview the moment the view leaves it.
+  x, y, color, size, density_val, lod_blend, drill_seq, style}`.
+  `x_range`/`y_range` are the window these points cover — usually a padded
+  ALIGNED superset of the requested view (LOD doc T13; the raw view window on
+  nonlinear axes or when no padding fits the budget) — and the client falls
+  back to the density overview the moment the view leaves it. `visible`
+  counts the points of the SHIPPED window; `lod_blend` stays keyed on the
+  requested view's own count. `density_val` (per-point local log-density) and
+  `lod_blend` drive the intensity-only handoff: hue is continuous by
+  construction because the aggregate surface wears the mean point color, so
+  no `density_colormap` field rides this message (clients ignore one if
+  present).
 
   Channel encodings on this (and the sampled-overlay) live wire: `x`/`y` are
   offset-encoded f32 (position precision is load-bearing, dossier §16), but
-  every unit-scalar channel — continuous `color`, continuous `size`,
-  `density_val` — ships as **u8 LUT coordinates** with a `dtype: "u8"`
-  marker (absent means f32; the client accepts both), and categorical color
-  ships u8 codes. The quantization is safe precisely because these values are
+  every unit-scalar channel — continuous `color` and `size` (LUT/ramp
+  coordinates), `density_val` (the handoff weight) — ships quantized to
+  **u8** with a `dtype: "u8"` marker (absent means f32; the client accepts
+  both), and categorical color ships u8 codes. The quantization is safe precisely because these values are
   never read back into displayed numbers on a live path: hover/pick answers
   come from the kernel's canonical columns (`pick_result` above). The *build*
   payload keeps continuous channels as unit f32 — the client retains those
   columns CPU-side and denormalizes them for tooltip readouts, where 8-bit
-  steps would surface as wrong digits (`channels.ship_channels`).
+  steps would surface as wrong digits (`channels.ship_channels`). A
+  continuous color spec may additionally carry `label` — the declarative
+  column name behind the encoding (`ColorChannel.label`, attached by
+  `Chart.figure()` when `color=` was a column-name string) — which legend
+  chrome uses to title gradient rows for unnamed traces; with neither a
+  trace name nor a `label` the encoding renders no legend row at all
+  (interaction spec §9).
+
+**`legend_toggle`** — `{type, trace, category?, hidden}`, client → kernel,
+fire-and-forget (no reply, no seq). Records the §34 legend-toggle predicate
+on the trace (`hidden` retires the whole trace; `category` excludes one
+categorical code). Re-aggregation rides the next `density_view` request:
+a masked reply's `binning` gains a `-masked` suffix and the trace entry
+carries `filter: {hidden_categories: [...]}` — the filter state it was
+computed under (§37 filter_hash-lite) — which the client compares against
+its own current set, dropping stale-predicate replies (interaction spec
+§10). So that category rows exist to click at all, a categorical
+density-tier first-paint entry carries a **slim** `color` spec —
+`{mode: "categorical", categories, palette}`, no per-point `buf` (the codes
+aggregated into the mean-color plane) — which legend chrome consumes and
+every buffer consumer ignores (they all guard on `buf`). Continuous density
+entries ship no `color` spec, deliberately: a gradient row on an aggregated
+surface would claim color == density.
 
 The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no
@@ -161,6 +229,17 @@ and `size_value` when those channels exist. A heatmap row is
 `{trace, index, row, col}` plus `color_value` when the cell is finite. Picks
 use their own client-side sequence (`_pickSeq`), not the view `seq` — sharing
 one counter let a hover invalidate an in-flight `tier_update`.
+
+`x`/`y` are raw axis coordinates from the conventional center/value columns
+(orientation-aware for bars: band center on the position axis, value end on
+the value axis). The client maps a category axis's code to its label before
+rendering or re-anchoring — the exact reply must land as an invisible
+refinement of the instant local readout, never a visible rewrite (a category
+code replacing its label, or a finite code dragging the tooltip anchor away
+from the cursor). A reply naming a trace the client no longer holds (dropped
+by a data update while the pick was in flight) has no mapping source and
+describes a mark that no longer exists; the client treats it as a miss and
+hides the tooltip.
 
 **`selection`** — `{type, traces, total}` plus one u32 buffer per trace. Each
 entry is `{id, count, buf, drill_seq}`. Masks speak **shipped-vertex
@@ -178,14 +257,45 @@ additionally carries `append: {seq, affected}` — a monotonic apply signal, so
 a host whose transport is the payload itself can detect the refresh without a
 message envelope. The kernel re-emits a complete fresh payload rather
 than a delta, because every tier's payload is screen-bounded by construction.
-Without animation, the client swaps `spec` and the retained payload together,
-rebuilds only the GPU traces named in `affected`, then re-requests its current
-view with `delay: 0`. With animation configured it routes the full payload
-through `ChartView.updatePayload`, retaining one previous scene for matching
-and positional interpolation while preserving append's
+Without animation, the client swaps `spec` and the retained payload together
+and updates only the GPU traces named in `affected` — in place when it can,
+rebuilt otherwise:
+
+- **Tail-only fast path.** A direct scatter/line whose encoding is unchanged
+  between the previous and the fresh spec — same per-column
+  `offset`/`scale`/`dtype`, same channel shapes (a continuous color/size
+  domain that expanded fails this on purpose: its shipped values are
+  normalized over the domain), same style, no transition keys, no
+  `curve: "smooth"`/`step` vertex expansion — extends its existing GPU
+  buffers with a tail-only `bufferSubData`. The device pixel ratio must also
+  be unchanged since the trace was built: the interleaved style buffer bakes
+  `stroke_width` in device pixels, and `_resize` moves `dpr` on browser zoom
+  *without* rebuilding traces, so appending across that change would leave
+  the prefix at one scale and the tail at another. Buffer *objects* are retained
+  (VAO attachments stay valid); data stores grow with doubling capacity,
+  mirroring `Column.append` kernel-side, so a steady stream costs O(rows
+  appended) GPU upload per tick instead of O(N). The client derives
+  prefix-compatibility entirely from the two specs (no extra wire fields);
+  the kernel makes it *hold* in the common case by keeping each column's
+  encode offset sticky across appends while every value stays within one
+  span of it (`Column.suggest_offset`, ≤1 f32 mantissa bit vs a fresh
+  midpoint — a right-growing stream never exceeds that bound).
+- Any precondition failure falls back to destroy + rebuild of that trace,
+  which is always correct.
+
+It then re-requests its current view through the ordinary
+stale-while-revalidate path, **coalesced**: `delay: 120` with
+`maxWait: 300`, so a single tick refines after the standard debounce while a
+continuous stream pays at most one re-decimation/re-bin round-trip per
+300 ms instead of one per tick. Parked at home, decimated traces skip the
+re-request entirely when the append payload's recorded `decimation_px`
+(emitted on every decimated line/area entry, §28's recorded-decision rule)
+already covers the plot width — the payload itself was M4-decimated over
+exactly that view. With animation configured the client routes the full
+payload through `ChartView.updatePayload`, retaining one previous scene for
+matching and positional interpolation while preserving append's
 home/live-edge/history follow policy. Unsupported layouts snap to the new
 representation without an opacity animation.
-
 How the push travels is per-host, and the payload crosses the wire exactly
 once per tick. On the anywidget comm the `spec`/`buffers` trait update (one
 `hold_sync` message) is both the live push — the client applies an append
@@ -252,12 +362,26 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
   counts only real values, so split is a byte-identical repack of packed. This
   is what both live hosts ship at first paint — `FigureWidget`
   (`python/xy/widget.py`) and the `/_xy` namespace
-  (`python/reflex-xy/reflex_xy/namespace.py`) — and on streaming append (§4),
+  (`python/reflex_xy/namespace.py`) — and on streaming append (§4),
   with no join copy anywhere on a live path.
+
+The browser accepts genuine `ArrayBuffer` objects across JavaScript realm
+boundaries. This matters for notebook hosts such as Databricks, whose widget
+manager can construct the binary comm attachment in a different realm from the
+one evaluating the anywidget module: cross-realm buffers fail JavaScript's
+realm-local `instanceof ArrayBuffer` test despite retaining the same binary
+brand. The client verifies that brand with the intrinsic `byteLength` getter
+and creates a view over the original buffer, preserving the live path's
+no-re-encoding and no-extra-copy contract.
 
 Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`.
+
+Decimated line/area trace entries additionally record `decimation_px`, the px
+width their M4 pass was computed for (§28: every decimation decision is
+recorded, never silent). The client reads it to skip a redundant at-home
+re-request after a streaming append (§4).
 
 The client picks the layout from the spec, never from the shape of what
 arrived, and **a disagreement is a fatal error, not a fallback**.
@@ -275,7 +399,42 @@ columns that form one stable 64-bit identity per shipped mark. Aggregate and
 decimated tiers omit keys and record an animation fallback rather than
 materializing canonical rows in the browser.
 
-### 5.1 Full-payload data transition
+### 5.1 Legend automatic-location metadata
+
+An unanchored Cartesian legend whose author requested `loc="best"` has this
+first-paint shape:
+
+```json
+{
+  "legend": {
+    "loc": "upper left",
+    "auto_loc": "best"
+  }
+}
+```
+
+`loc` is always one concrete member of the nine-candidate set when `auto_loc`
+is present. It is the Python scorer's initial decision and remains sufficient
+for static writers and older clients. The optional `auto_loc` field records
+semantic intent separately; `"best"` authorizes the browser to replace the
+concrete location after measuring rendered geometry on resize or after a view
+settles. Absence of `auto_loc` means the transmitted location is exact.
+
+The initial Python/static location and the browser's first settled live
+location choose the exact minimum score, with the canonical nine-candidate
+order breaking an exact tie. After a live winner is settled, subsequent view,
+resize, and LOD re-scores retain it unless a challenger lowers the normalized
+occupied fraction by at least `0.05`. The exception is an empty challenger,
+which always replaces an occupied current box. This live-only hysteresis keeps
+near-uniform rendered occupancy from moving the legend on every settle without
+blocking a clearly open candidate.
+
+Payload builders omit the field for an explicit concrete `loc`, any legend
+with `anchor`, and polar coordinates. Those are authored placements, not live
+scoring requests. Receivers must likewise ignore `auto_loc` outside an
+unanchored Cartesian plot.
+
+### 5.2 Full-payload data transition
 
 A host receiving a replacement `{spec, buffers}` for the same mounted figure
 calls `ChartView.updatePayload`. This is an in-browser operation, not a new
@@ -316,9 +475,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 6` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 13` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 6` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 13` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -329,7 +488,54 @@ Two independent version constants:
   pre-v5 bundle would otherwise wait forever for a custom append message
   that no longer exists. v6 added the symlog axis scale (`scale: "symlog"`
   + `constant` on an axis spec) and scale-coordinate density grids; a v5
-  client would draw both as linear without erroring.
+  client would draw both as linear without erroring. v7 widened `colormap`
+  from a built-in name to *either* a name or explicit evenly spaced RGB stops,
+  and added an optional top-level `palette`; a v6 client indexes its built-in
+  table with the stop array, misses, and silently paints viridis. v8 adds
+  legend/colorbar geometry, named colormaps, and match-fill strokes that an
+  older v7 client would accept but silently render with its old defaults. v9
+  adds explicit minor tick/style tiers, the log `nonpositive` policy,
+  `axis.tick_sides`/`axis.tick_label_sides`,
+  scalar-normalization scale, colorbar padding and explicit-axes placement,
+  exact `band_colors`/extension colors, plus `colorbar.lines` isoline overlays
+  and the `line_only` body mode used by line-contour mappables; a v8 client
+  would silently omit minor styling, always mask log values in the browser,
+  place log ticks linearly, draw an explicit colorbar outside its supplied
+  axes, substitute a fallback ramp for listed colors, silently omit contour
+  levels drawn across the ramp, or incorrectly fill a line-contour colorbar
+  with that ramp. v10 adds top-level `title_options`, whose entries retain
+  independent left/center/right axes titles and text style. Each entry's
+  axes-fraction `y` and pixel `pad` occupy a two-f32 raw geometry column
+  referenced by `geometry`, keeping numeric data out of JSON. A cached v9
+  client would ignore the field and silently omit non-center slots and their
+  placement, so the v10 mismatch rejects it before rendering. v11 adds the
+  top-level `coords: "polar"` mode plus `theta_unit`, `theta_zero`, and
+  `theta_direction` on the angular axis. A cached v10 client would accept the
+  same x/y columns and render a plausible Cartesian chart, so it must be
+  rejected. v11 also adds the `ribbon` mark kind (the flow band behind
+  `sankey`: six span columns, two resolved paints, optional semantic
+  `tooltip_rows` — the ribbon geometry contract in
+  `spec/api/chart-kind-contract.md`). `markOf()` falls back to scatter for
+  unknown kinds, so a cached v10 client would silently draw every flow diagram
+  as a point cloud of span endpoints. v12 adds resolved
+  `sector`/`grid_shape` fields on the angular axis
+  and `hole` plus optional `r_origin` on the radial axis, and makes
+  heatmap/contour/error-bar trace schemas legal in polar coordinates. A cached
+  v11 client would silently draw a full circular, centre-origin view and route
+  those grid/segment traces through their Cartesian paths. The v12 handshake
+  rejects that stale bundle before any of those compatible-looking wrong
+  pictures can appear. v13 adds the `funnel` mark kind (per-stage symmetric
+  quads: six semantic geometry columns re-labelled `pos0`/`pos1`/`lo0`/`hi0`/
+  `lo1`/`hi1`, an `orientation` field, a per-stage paint channel, and semantic
+  `tooltip_rows` — the funnel geometry contract in
+  `spec/api/chart-kind-contract.md`). `markOf()` falls back to scatter for
+  unknown kinds, so a cached v12 client would silently draw every funnel as a
+  point cloud of trailing cross edges.
+  The optional `legend.auto_loc` field described in §5.1 deliberately does
+  **not** increment v13: it accompanies an already concrete `legend.loc`, so a
+  cached client that does not recognize the hint renders the same correct
+  first placement and merely forgoes later adaptive re-scoring. Ignoring it
+  cannot produce a structurally wrong first-paint scene.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

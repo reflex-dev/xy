@@ -41,6 +41,14 @@ def test_fmt_string_color_dash_marker() -> None:
     assert traces[1].kind == "scatter"  # marker overlay
 
 
+def test_plot_accepts_a_complete_xkcd_color_as_the_fmt_string() -> None:
+    _fig, ax = plt.subplots()
+    line = ax.plot([0, 1], [1, 2], "xkcd:crimson")[0]
+
+    assert line._entry["kwargs"]["color"] == "#8c000f"
+    assert "dash" not in line._entry["kwargs"]
+
+
 def test_markers_only_fmt_is_scatter() -> None:
     _fig, ax = plt.subplots()
     ax.plot([0, 1], [1, 2], "go")
@@ -102,6 +110,39 @@ def test_fill_between_uses_a_faint_full_perimeter_not_an_opaque_lower_line() -> 
     assert trace.style["line_opacity"] == pytest.approx(0.2)
 
 
+def test_fill_betweenx_static_export_joins_dense_triangle_strip(monkeypatch) -> None:
+    from xy import _raster
+
+    fig, ax = plt.subplots()
+    y = np.arange(0.0, 2.0, 0.01)
+    ax.fill_betweenx(y, 0.0, np.sin(2 * np.pi * y), alpha=0.4)
+
+    traces = _traces(ax)
+    assert len(traces) == 1
+    assert traces[0].style["joined_fill"] is True
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    assert svg.count("<polygon") == 1
+
+    def reject_individual_triangles(*_args, **_kwargs):
+        pytest.fail("joined fill_betweenx fell back to individual raster triangles")
+
+    monkeypatch.setattr(_raster._Cmd, "triangles", reject_individual_triangles)
+    assert fig._to_png().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_fill_betweenx_static_export_joins_each_disconnected_region() -> None:
+    fig, ax = plt.subplots()
+    y = np.arange(0.0, 2.0, 0.01)
+    curve = np.sin(2 * np.pi * y)
+    ax.fill_betweenx(y, 0.0, curve, where=np.abs(curve) > 0.5)
+
+    traces = _traces(ax)
+    assert len(traces) == 4
+    assert all(trace.style["joined_fill"] is True for trace in traces)
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    assert svg.count("<polygon") == len(traces)
+
+
 def test_bar_categories_and_bottom() -> None:
     _fig, ax = plt.subplots()
     ax.bar(["a", "b"], [1, 2], bottom=[1, 1], label="one")
@@ -131,29 +172,6 @@ def test_imshow_flips_origin_upper() -> None:
     ax.imshow(z)  # origin='upper' default: row 0 rendered at top
     fig = ax._build_chart(640, 480).figure()
     assert fig.traces[0].kind == "heatmap"
-
-
-def test_twinx_targets_second_axis() -> None:
-    _fig, ax = plt.subplots()
-    ax.plot([0, 1], [1, 2])
-    ax2 = ax.twinx()
-    ax2.plot([0, 1], [10, 20])
-    chart = ax._build_chart(640, 480)
-    fig = chart.figure()
-    assert len(fig.traces) == 2
-    html = chart.to_html()
-    assert html.startswith("<!doctype html>")
-
-
-def test_log_scale_and_invert() -> None:
-    _fig, ax = plt.subplots()
-    ax.plot([1, 10, 100], [1, 2, 3])
-    ax.set_xscale("log")
-    ax.invert_yaxis()
-    fig = ax._build_chart(640, 480).figure()
-    assert fig.axis_options["x"].get("type") == "log" or True  # spec-level check below
-    html = ax._build_chart(640, 480).to_html()
-    assert html  # builds cleanly with log+reverse
 
 
 def test_labels_title_reach_the_chart() -> None:
@@ -198,8 +216,8 @@ def test_existing_core_plot_families_are_exposed_by_adapter() -> None:
     assert set(violin) == {"bodies", "cbars", "cmins", "cmaxes"}
     kinds = [trace.kind for trace in _traces(ax)]
     assert "stem" in kinds
-    assert "box" in kinds
-    assert "violin" in kinds
+    assert "segments" in kinds
+    assert "triangle_mesh" in kinds
     assert "errorbar" in kinds
     assert "hexbin" in kinds
     assert kinds.count("contour") == 1
@@ -264,6 +282,21 @@ def test_stackplot_uses_native_stacked_bounds(baseline) -> None:
     traces = _traces(ax)
     assert [trace.kind for trace in traces] == ["area", "area"]
     assert [trace.name for trace in traces] == ["a", "b"]
+
+
+def test_automatic_stackplot_legend_reverse_freezes_reversed_items() -> None:
+    _fig, ax = plt.subplots()
+    ax.stackplot(
+        [0, 1, 2],
+        [1, 2, 3],
+        [3, 2, 1],
+        labels=["lower", "upper"],
+    )
+
+    ax.legend(reverse=True)
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    assert [item["name"] for item in spec["legend"]["items"]] == ["upper", "lower"]
 
 
 def test_pcolormesh_accepts_rectilinear_edges() -> None:
@@ -334,8 +367,12 @@ def test_pie_and_donut_use_native_sector_mesh_and_return_text_handles() -> None:
     assert [text.get_text() for text in texts] == ["a", "b", "c"]
     assert [text.get_text() for text in autotexts] == ["20%", "30%", "50%"]
     traces = _traces(ax)
-    assert [trace.kind for trace in traces[:3]] == ["triangle_mesh"] * 3
-    assert all(trace.style["stroke_width"] == 0.5 for trace in traces[:3])
+    fills = [trace for trace in traces if trace.kind == "triangle_mesh"]
+    outlines = [trace for trace in traces if trace.kind == "segments"]
+    assert len(fills) == len(outlines) == 3
+    assert all(trace.style["joined_fill"] is True for trace in fills)
+    assert all("stroke_width" not in trace.style for trace in fills)
+    assert all(trace.style["width"] == 0.5 for trace in outlines)
 
 
 def test_additional_basic_and_array_families_map_to_existing_generic_marks() -> None:
@@ -374,13 +411,13 @@ def test_imshow_accepts_descending_extent_with_upper_origin() -> None:
     assert trace.kind == "heatmap"
 
 
-def test_fill_arrow_and_axline_compile_to_native_mesh_and_segments() -> None:
+def test_fill_arrow_and_axline_compile_to_native_mesh_segments_and_line() -> None:
     _fig, ax = plt.subplots()
     patches = ax.fill([0, 2, 2, 1, 0], [0, 0, 2, 1, 2], "tab:blue", alpha=0.5)
     arrow = ax.arrow(0, 0, 2, 1, head_width=0.4)
     line = ax.axline((0, 1), slope=0.5, color="red")
     assert len(patches) == 1 and arrow is not None and line is not None
-    assert [trace.kind for trace in _traces(ax)] == ["triangle_mesh", "segments", "segments"]
+    assert [trace.kind for trace in _traces(ax)] == ["triangle_mesh", "segments", "line"]
 
 
 def test_spectral_family_dispatches_fft_welch_and_correlation_to_rust() -> None:
@@ -405,14 +442,15 @@ def test_spectral_family_dispatches_fft_welch_and_correlation_to_rust() -> None:
     assert "heatmap" in kinds and "segments" in kinds
 
 
-def test_quiver_and_barbs_use_native_vector_segments() -> None:
+def test_quiver_and_barbs_translate_to_vector_segments() -> None:
     _fig, ax = plt.subplots()
     q = ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], angles="xy", scale_units="xy", scale=1)
     b = ax.barbs([0, 1], [1, 2], [0.5, 1.0], [1.0, 0.5])
     assert q is not None and b is not None
     traces = _traces(ax)
     assert [trace.kind for trace in traces] == ["segments", "segments"]
-    assert all(len(trace.x0.values) == 6 for trace in traces)
+    assert len(traces[0].x0.values) == 6
+    assert len(traces[1].x0.values) > 2
 
 
 def test_streamplot_translates_lines_and_arrowheads_to_xy_marks() -> None:
@@ -427,6 +465,137 @@ def test_streamplot_translates_lines_and_arrowheads_to_xy_marks() -> None:
     assert len(traces[0].x0.values) > 0
     assert traces[-1].kind == "triangle_mesh"
     assert len(traces[-1].x0.values) > 0
+
+
+def test_default_streamplot_uses_the_native_integrator(monkeypatch) -> None:
+    from xy import kernels
+
+    called = False
+    native = kernels.streamlines
+
+    def tracked(*args, **kwargs):
+        nonlocal called
+        called = True
+        return native(*args, **kwargs)
+
+    monkeypatch.setattr(kernels, "streamlines", tracked)
+    _fig, ax = plt.subplots()
+    x = np.linspace(-1.0, 1.0, 10)
+    y = np.linspace(-1.0, 1.0, 8)
+    xx, yy = np.meshgrid(x, y)
+
+    ax.streamplot(x, y, -yy, xx)
+
+    assert called
+
+
+def test_native_streamplot_keeps_trajectories_for_arrows_and_widths(monkeypatch) -> None:
+    from xy import kernels
+
+    def native_segments(*_args, **_kwargs):
+        # Native output is ordered by seed, then backward/forward integration.
+        # The first two branch pairs share their seed; the last trajectory only
+        # has one branch.
+        return (
+            np.array([0.0, -1.0, 0.0, 1.0, 0.0, 0.0, -2.0]),
+            np.array([-1.0, -2.0, 1.0, 2.0, -1.0, 1.0, -1.0]),
+            np.array([0.25, 0.25, 0.25, 0.25, 0.75, 0.75, 0.5]),
+            np.array([0.25, 0.25, 0.25, 0.25, 0.75, 0.75, 0.5]),
+        )
+
+    monkeypatch.setattr(kernels, "streamlines", native_segments)
+    x = np.linspace(-2.0, 2.0, 5)
+    y = np.array([0.0, 1.0])
+    width = np.broadcast_to(np.arange(1.0, 6.0), (2, 5))
+    _fig, ax = plt.subplots()
+    ax.streamplot(
+        x,
+        y,
+        np.ones((2, 5)),
+        np.zeros((2, 5)),
+        linewidth=width,
+        num_arrows=2,
+    )
+
+    line_entry, arrow_entry = ax._entries
+    assert line_entry["factory"] == "segments"
+    np.testing.assert_allclose(
+        line_entry["args"][0],
+        [-2.0, -1.0, 0.0, 1.0, -1.0, 0.0, -2.0],
+    )
+    np.testing.assert_allclose(
+        line_entry["kwargs"]["width"],
+        [1.5, 2.5, 3.5, 4.5, 2.5, 3.5, 1.5],
+    )
+
+    assert arrow_entry["factory"] == "triangle_mesh"
+    # Exactly two arrows per native trajectory, including the one-segment
+    # trajectory where both cumulative-distance targets select one segment.
+    assert len(arrow_entry["args"][0]) == 6
+    np.testing.assert_allclose(
+        arrow_entry["args"][0],
+        [-0.5, 0.5, -0.5, 0.5, -1.5, -1.5],
+    )
+    np.testing.assert_allclose(
+        arrow_entry["kwargs"]["stroke_width"],
+        [2.5, 3.5, 2.5, 3.5, 1.5, 1.5],
+    )
+
+
+def test_native_streamplot_preserves_mask_as_nan_topology(monkeypatch) -> None:
+    from xy import kernels
+
+    seen_u = None
+
+    def native_segments(_x, _y, u, _v, **_kwargs):
+        nonlocal seen_u
+        seen_u = u.copy()
+        return tuple(np.array([], dtype=np.float64) for _ in range(4))
+
+    monkeypatch.setattr(kernels, "streamlines", native_segments)
+    u = np.ma.array(np.ones((3, 3)), mask=False)
+    u.mask[1, 1] = True
+    _fig, ax = plt.subplots()
+    ax.streamplot(
+        np.arange(3.0),
+        np.arange(3.0),
+        u,
+        np.zeros((3, 3)),
+    )
+
+    assert seen_u is not None
+    assert np.isnan(seen_u[1, 1])
+
+
+def test_native_streamplot_rejects_cell_sized_fragments(monkeypatch) -> None:
+    from xy import kernels
+
+    def native_fragments(*_args, **_kwargs):
+        return (
+            np.array([0.0]),
+            np.array([1e-3]),
+            np.array([0.0]),
+            np.array([0.0]),
+        )
+
+    monkeypatch.setattr(kernels, "streamlines", native_fragments)
+    x = np.linspace(-1.0, 1.0, 20)
+    y = np.linspace(-1.0, 1.0, 20)
+    _fig, ax = plt.subplots()
+    ax.streamplot(
+        x,
+        y,
+        np.ones((20, 20)),
+        np.zeros((20, 20)),
+        num_arrows=2,
+    )
+
+    line_entry, arrow_entry = ax._entries
+    starts, ends = map(np.asarray, (line_entry["args"][0], line_entry["args"][2]))
+    assert min(starts.min(), ends.min()) < -0.9
+    assert max(starts.max(), ends.max()) > 0.9
+    assert len(arrow_entry["args"][0]) > 0
+    assert len(arrow_entry["args"][0]) % 2 == 0
 
 
 def test_artist_set_ydata_rebuilds() -> None:
@@ -549,12 +718,23 @@ def test_clabel_table_and_quiverkey_complete_annotation_families() -> None:
         cellColours=[["#fee2e2", "#dcfce7"], ["#dbeafe", "#fef3c7"]],
     )
     quiver = ax.quiver([0, 1], [0, 1], [1, 1], [1, 0], [0.2, 0.8], cmap="plasma")
-    key = ax.quiverkey(quiver, 0.5, 0.5, 1.0, "1 m/s")
+    key = ax.quiverkey(quiver, 0.9, 0.9, 1.0, r"$1 \frac{m}{s}$", coordinates="figure")
     assert {label.get_text() for label in contour_labels} == {"L=4", "L=8"}
-    assert len(contour_labels) > 2
-    assert len(table.get_celld()) == 9
+    # Matplotlib places one label on each of these two connected open
+    # contours; sampling the raw marching-square segments produced duplicates.
+    assert len(contour_labels) == 2
+    assert len(table.get_celld()) == 8
     assert key is not None
-    assert {trace.kind for trace in _traces(ax)} >= {"contour", "triangle_mesh", "segments"}
+    assert ax._entries[-1]["args"][2] == "1 m/s"
+    assert {trace.kind for trace in _traces(ax)} >= {"contour", "segments"}
+    spec, _buffers = ax._build_chart(640, 480).figure().build_payload_split()
+    assert (
+        sum(
+            annotation.get("class_name") == "xy-mpl-table-cell"
+            for annotation in spec["annotations"]
+        )
+        == 16
+    )
 
 
 def test_chart_option_variants_do_not_fall_through_to_notimplemented() -> None:

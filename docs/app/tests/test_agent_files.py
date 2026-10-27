@@ -11,6 +11,7 @@ from xy_docs.config import DOCS_CONFIG
 from xy_docs.constants import LLMS_FULL_TXT_PATH, PUBLIC_DOCS_URL
 from xy_docs.plugins import (
     XYDocsAgentFilesPlugin,
+    _markdown_directive,
     build_llms_full_txt,
     build_llms_txt,
     markdown_asset_path,
@@ -18,6 +19,7 @@ from xy_docs.plugins import (
 )
 from xy_docs.prerender import XyDocsMarkdownPlugin
 from xy_docs.sidebar import xy_docs_sidebar
+from xy_docs.xy_docs import _llms_txt_directive
 
 
 def _headings(content: str, level: int) -> list[str]:
@@ -48,8 +50,31 @@ def test_llms_txt_indexes_every_page_under_the_public_url() -> None:
     """The index links llms-full.txt and each page's public Markdown URL."""
     content = build_llms_txt(DOCS_CONFIG)
     assert f"({PUBLIC_DOCS_URL}{LLMS_FULL_TXT_PATH})" in content
+    assert len(content) < 50_000
+    assert content.startswith(
+        "# XY Documentation\n\n> XY is a high-performance plotting library for Python and Reflex."
+    )
+    assert "\n## Docs\n\n" in content
+    expected_sections = (
+        "Overview",
+        "Core Concepts",
+        "Styling",
+        "Chart Gallery",
+        "Components",
+        "Integrations",
+        "Guides",
+        "Advanced",
+        "API Reference",
+    )
+    positions = [content.index(f"### {section}\n") for section in expected_sections]
+    assert positions == sorted(positions)
+    chart_gallery = content.split("### Chart Gallery\n", maxsplit=1)[1].split(
+        "### Components\n", maxsplit=1
+    )[0]
+    assert f"({PUBLIC_DOCS_URL}/overview/gallery.md)" in chart_gallery
     for page in discover_docs(DOCS_CONFIG):
         assert f"({PUBLIC_DOCS_URL}/{markdown_asset_path(page)})" in content
+        assert content.count(f"({PUBLIC_DOCS_URL}/{markdown_asset_path(page)})") == 1
 
 
 def test_llms_full_txt_keeps_section_headers_above_page_content() -> None:
@@ -83,7 +108,24 @@ def test_component_api_is_present_in_every_agent_markdown_export() -> None:
         assert "### xy.y_axis" in content
         assert "| Prop | Type | Description |" in content
 
-    assert published_markdown.startswith("---\n")
+    assert published_markdown.startswith(f"{_markdown_directive()}\n\n---\n")
+
+
+def test_every_page_markdown_has_the_agent_discovery_directive() -> None:
+    """Every direct and trailing-slash Markdown asset advertises llms.txt."""
+    directive = _markdown_directive()
+    assets = XyDocsMarkdownPlugin(docs=DOCS_CONFIG).get_static_assets()
+    assert assets
+    assert all(content.startswith(f"{directive}\n\n") for _path, content in assets)
+
+
+def test_html_shell_has_the_agent_discovery_directive() -> None:
+    """The hidden HTML directive uses the canonical XY llms.txt URL."""
+    rendered = str(_llms_txt_directive())
+    assert "For AI agents: the complete XY documentation index is at" in rendered
+    assert f"{PUBLIC_DOCS_URL}/llms.txt" in rendered
+    assert "Markdown versions are available" in rendered
+    assert "sr-only" in rendered
 
 
 def test_agent_files_publish_under_the_frontend_path(

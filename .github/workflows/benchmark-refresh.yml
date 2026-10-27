@@ -18,12 +18,20 @@ on:
         type: string
         default: "45"
 
+# Limit this manual benchmark workflow to repository reads.
+permissions:
+  contents: read
+
 jobs:
   cross-library:
     name: Cross-library benchmark (Ubuntu, native)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
@@ -39,7 +47,7 @@ jobs:
         # competitors; unavailable rows remain explicit in the report.
         run: |
           uv venv
-          uv pip install --constraint benchmarks/requirements-ci.lock -e ".[dev]"
+          uv pip install --constraint benchmarks/requirements-ci.lock -e . --group dev
           uv pip install --constraint benchmarks/requirements-ci.lock \
             matplotlib seaborn plotly kaleido bokeh altair datashader \
             hvplot plotly-resampler psutil

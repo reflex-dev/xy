@@ -45,6 +45,14 @@ def _load_hatch_build():
 hb = _load_hatch_build()
 
 
+def test_emscripten_destination_uses_pyodide_loader_suffix(monkeypatch) -> None:
+    # The wheel must contain libxy_core.so even when cibuildwheel runs on macOS;
+    # Pyodide's ctypes loader does not look for the build host's `.dylib`.
+    monkeypatch.setattr(hb.sys, "platform", "darwin")
+    assert hb._lib_filename("wasm32-unknown-emscripten") == "libxy_core.so"
+    assert hb._lib_filename() == "libxy_core.dylib"
+
+
 def _release_dir(base: Path, triple: str) -> Path:
     d = base / "target" / triple / "release"
     d.mkdir(parents=True)

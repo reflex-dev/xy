@@ -9,10 +9,11 @@ bytes for the export pair), so the gap between a ``*_pyplot`` row and its
 fmt-string parsing, and figure-lifecycle bookkeeping. Everything below the
 shim is shared engine work and moves both rows together.
 
-``tests/pyplot/test_perf_guardrail.py`` remains the hard relative gate on
-this promise; these rows track it continuously so a structural regression in
-the shim (an O(n) copy, per-build revalidation) shows up attributed to the
+These rows track the promise continuously so a structural regression in the
+shim (an O(n) copy, per-build revalidation) shows up attributed to the
 ``*_pyplot`` arm instead of surfacing as an unexplained engine slowdown.
+Deterministic invariants behind that promise remain hard pytest gates in
+``tests/pyplot/test_perf_guardrail.py``.
 
 Run locally with:
 
@@ -150,17 +151,18 @@ def export_data() -> tuple[np.ndarray, np.ndarray]:
 
 # -- paired build arms --------------------------------------------------------
 #
-# The raw arm mirrors the shim's implicit defaults (explicit x/y axes, the
-# 640x480 canvas) so the pair differs only in which API expressed the chart.
+# The raw arm mirrors the shim's implicit defaults (explicit x/y axes,
+# Matplotlib's 5% line margins, and the 640x480 canvas) so the pair differs
+# only in which API expressed the chart.
 # The pyplot arm includes plt.close("all") because figure-registry bookkeeping
-# is part of the shim's per-figure cost — the exact cost the guardrail bounds.
+# is part of the shim's per-figure cost — the exact cost these pairs track.
 
 
 def _raw_line_payload(x: np.ndarray, y: np.ndarray) -> int:
     c = xy.chart(
         xy.line(x=x, y=y, color="#1f77b4"),
-        xy.x_axis(),
-        xy.y_axis(),
+        xy.x_axis(margin=0.05),
+        xy.y_axis(margin=0.05),
         width=WIDTH,
         height=HEIGHT,
     )
@@ -359,7 +361,10 @@ def test_build_styled_panel_pyplot(benchmark, panel_data):
     """
     x, actual, target, sample = panel_data
     payload_bytes = benchmark(_pyplot_styled_panel_payload, x, actual, target, sample)
-    assert payload_bytes == _raw_styled_panel_payload(x, actual, target, sample)
+    raw_payload_bytes = _raw_styled_panel_payload(x, actual, target, sample)
+    # Pyplot preserves Matplotlib's axes-title y/pad geometry as two float32
+    # values. The raw title= API intentionally uses its fixed legacy fallback.
+    assert payload_bytes == raw_payload_bytes + 2 * np.dtype(np.float32).itemsize
 
 
 # -- export pair ----------------------------------------------------------------

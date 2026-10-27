@@ -87,6 +87,14 @@ Object.assign(ChartView.prototype, {
             || !["x0", "x1", "y0", "y1"].every((k) => Number.isFinite(r[k]))) {
           return "invalid selection range";
         }
+        // Optional band discriminator: box (omitted) vs the x/y-range brushes,
+        // which persist spanning the full plot with only their edge borders.
+        for (const k of Object.keys(r)) {
+          if (!["x0", "x1", "y0", "y1", "mode"].includes(k)) return `unknown key ${k}`;
+        }
+        if (r.mode !== undefined && r.mode !== "x" && r.mode !== "y") {
+          return "invalid selection range mode";
+        }
       } else if (keys[0] === "polygon") {
         const p = sel.polygon;
         if (!Array.isArray(p) || p.length < 3
@@ -138,12 +146,19 @@ Object.assign(ChartView.prototype, {
     }
     if (patch.selection !== undefined) {
       const sel = patch.selection;
-      const selOpts = { history: opts.history, interactionId, source };
+      const selOpts = {
+        history: opts.history,
+        interactionId,
+        source,
+        dispatch: opts.dispatch,
+        broadcast: opts.broadcast,
+      };
       if (sel === null) {
         this._clearSelection(selOpts);
       } else if (sel.range) {
         const { x0, x1, y0, y1 } = sel.range;
-        this._sendSelect([x0, y0], [x1, y1], selOpts);
+        const mode = sel.range.mode === "x" || sel.range.mode === "y" ? sel.range.mode : "box";
+        this._sendSelect([x0, y0], [x1, y1], { ...selOpts, mode });
       } else if (sel.polygon) {
         this._sendSelectPolygon(sel.polygon.map((point) => [...point]), selOpts);
       }
@@ -227,6 +242,7 @@ Object.assign(ChartView.prototype, {
   // history, reported in state only as the opaque marker.
   _applyRowsSelection(msg, buffers) {
     this._clearLassoOverlay();
+    this._clearBoxOverlay();
     // A rows document replaces the whole selection. The message carries
     // buffers only for the traces it names, so deactivate every existing
     // mask first — otherwise a prior selection keeps highlighting traces
@@ -280,9 +296,9 @@ Object.assign(ChartView.prototype, {
       const dim = this._axisDim(axisId);
       const band = document.createElement("div");
       band.dataset.xyAxisBand = axisId;
-      band.style.cssText =
-        "position:absolute;z-index:2;touch-action:none;" +
-        `cursor:${this._axisBandCursor(axisId, dim)};`;
+      band.style.cssText = "position:absolute;z-index:2;touch-action:none;";
+      band.style.setProperty("--xy-axis-band-cursor", this._axisBandCursor(axisId, dim));
+      this._applySlot(band, "axis_band");
       this.root.appendChild(band);
       this._axisBands[axisId] = band;
       this._bindAxisBand(band, axisId, dim);
@@ -338,6 +354,23 @@ Object.assign(ChartView.prototype, {
 
   _bindAxisBand(band, axisId, dim) {
     let drag = null;
+    // The authored inline `cursor`, read once here — after `_applySlot` has
+    // written `styles={"axis_band": ...}` and before any gesture can run. It is
+    // a property of the band, not of a drag: snapshotting it per-pointerdown
+    // let a second pointer landing mid-pan capture the controller's own
+    // transient `grabbing` and replay it back as author intent, latching the
+    // cursor for the life of the view and shadowing any authored slot style.
+    const authoredCursor = {
+      value: band.style.getPropertyValue("cursor"),
+      priority: band.style.getPropertyPriority("cursor"),
+    };
+    const restoreAuthoredCursor = () => {
+      if (authoredCursor.value) {
+        band.style.setProperty("cursor", authoredCursor.value, authoredCursor.priority);
+      } else {
+        band.style.removeProperty("cursor");
+      }
+    };
 
     this._listen(band, "wheel", (e) => {
       if (!this._interactionFlag("navigation", true)) return;
@@ -366,7 +399,7 @@ Object.assign(ChartView.prototype, {
         interactionId: ++this._interactionSeq,
         changedAxes: [],
       };
-      try { band.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+      drag.capture = this._captureGesturePointer(band, e, end);
       this.tooltip.style.display = "none";
       e.preventDefault();
     });
@@ -381,7 +414,7 @@ Object.assign(ChartView.prototype, {
       && this._axisPolicy("zoom_axes").includes(axisId);
 
     this._listen(band, "pointermove", (e) => {
-      if (!drag || e.pointerId !== drag.pointerId) return;
+      if (!drag || !drag.capture.guard(e)) return;
       const dx = e.clientX - drag.sx;
       const dy = e.clientY - drag.sy;
       if (!drag.mode) {
@@ -394,7 +427,7 @@ Object.assign(ChartView.prototype, {
         drag.mode = wantPan
           ? (canBandPan() ? "pan" : canBandSpanZoom() ? "span" : "none")
           : (canBandSpanZoom() ? "span" : canBandPan() ? "pan" : "none");
-        if (drag.mode === "pan") band.style.cursor = "grabbing";
+        if (drag.mode === "pan") band.style.setProperty("cursor", "grabbing");
       }
       if (drag.mode === "pan") {
         const ranges = Object.fromEntries(
@@ -453,9 +486,18 @@ Object.assign(ChartView.prototype, {
       if (!drag || e.pointerId !== drag.pointerId) return;
       const finished = drag;
       drag = null;
-      band.style.cursor = this._axisBandCursor(axisId, dim);
+      finished.capture.release();
+      // `grabbing` is transient controller state. Restore the authored inline
+      // declaration so a slot style survives both completed and cancelled
+      // gestures; otherwise expose the CSS cascade. Unconditional on purpose:
+      // with interleaved pointers the gesture that wrote `grabbing` is not
+      // always the one that ends last, so gating this on `finished.mode` would
+      // leave the transient value behind.
+      restoreAuthoredCursor();
       if (finished.mode === "span") this.selRect.style.display = "none";
-      if (e.type === "pointercancel") return;
+      // Only a real release commits a coordinate-dependent gesture; a pan keeps
+      // the view it already reached however the gesture ended.
+      if (e.type !== "pointerup" && finished.mode !== "pan") return;
       if (finished.mode === "pan" && finished.changedAxes.length) {
         this._emitViewChange("pan_drag", {
           axes: finished.changedAxes,
@@ -553,20 +595,14 @@ Object.assign(ChartView.prototype, {
     if (!el) {
       this._customTooltip = null;
       delete this.tooltip.dataset.xyCustomTooltip;
-      this.tooltip.style.background = "";
-      this.tooltip.style.border = "";
-      this.tooltip.style.padding = "";
       this.tooltip.replaceChildren();
       this.tooltip.style.display = "none";
       return;
     }
     this._customTooltip = el;
     this.tooltip.dataset.xyCustomTooltip = "";
-    // Inline wins over the :where() slot defaults: the custom component owns
-    // its own chrome, the container becomes a pure positioning shell.
-    this.tooltip.style.background = "transparent";
-    this.tooltip.style.border = "none";
-    this.tooltip.style.padding = "0";
+    // The base-layer state rule turns the container into a positioning shell.
+    // Author utilities and explicit slot styles remain later cascade inputs.
     el.style.display = "";
     this.tooltip.replaceChildren(el);
   },

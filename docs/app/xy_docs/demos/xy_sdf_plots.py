@@ -8,9 +8,9 @@ from importlib.resources import files
 
 import numpy as np
 import reflex as rx
-import reflex_xy
 from PIL import Image, ImageDraw, ImageFont
 
+import reflex_xy
 import xy
 
 
@@ -112,8 +112,8 @@ DEFAULT_CONFIG = SDFPlotConfig()
 DEFAULT_PALETTE = SDFPalette()
 _FONT_PATH = files("xy_docs").joinpath("assets/InstrumentSans-wdth-wght.ttf")
 _CHART_TOKENS = {
-    "--chart-text": "var(--secondary-11)",
-    "--chart-focus": "var(--primary-9)",
+    "--chart-text": "var(--muted-foreground)",
+    "--chart-focus": "var(--ring)",
 }
 
 

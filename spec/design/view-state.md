@@ -9,7 +9,7 @@ implementation divergences. The implementation lives in
 plus hooks in `50_chartview.ts`/`52_tooltip.ts`/`53_interaction.ts`/
 `54_kernel.ts`, `python/xy/_figure.py` (message builders, `view_state()`
 cache), `widget.py`, `channel.py`, and
-`python/reflex-xy/reflex_xy/` (registry push path, `on_hover`, tooltip
+`python/reflex_xy/` (registry push path, `on_hover`, tooltip
 mount). It builds directly on the per-axis
 pan/zoom contract of PR #117 (canonical per-axis `ranges`, one clamped
 mutation path, semantic view events with `source`, `axes`, `phase`,
@@ -63,7 +63,12 @@ Rules:
   PR #117 event payload. Values are `[lo, hi]` f64 pairs.
 - `selection` is one of `{"range": {x0, x1, y0, y1}}`,
   `{"polygon": [[x, y], …]}`, or `null`. The two non-null shapes are exactly
-  the shipped `on_brush` payloads. Row-index selections (§5.1
+  the shipped `on_brush` payloads. A `range` may carry an optional
+  `"mode": "x" | "y"` discriminator marking an x-range / y-range brush (a plain
+  box omits it); it only shapes the persisted overlay — the range brush stays
+  drawn until cleared, spanning the full plot on its free axis with just the two
+  edge borders — and never changes the selected point set, which is fully
+  determined by `{x0, x1, y0, y1}`. Row-index selections (§5.1
   `select(rows=...)`) are deliberately *not* representable here: an arbitrary
   per-trace index set can be arbitrarily large, and snapshots must stay a
   handful of floats. Rows-selections are therefore non-durable (§5.1).
@@ -216,16 +221,23 @@ X" flow composes it from what it already has: record the state it cares
 about from `on_view_change`, restore it with `set_view` — an absolute patch,
 which does converge room-wide.
 
-Path: figure lock → one wire message (§8) → pushed room-wide as a `msg`
-event on the `/_xy` namespace → every client in the room applies it through
-the §3 mutation path with `source: "api"`. Multi-client semantics are
-therefore identical to `append` and `registry.publish`: the room converges.
-The token stays the only chart state Reflex holds; setting a view does not
-touch the figure payload or version. Like `append`, a call holds the figure
-lock only long enough to serialize one small message and performs no network
-round-trip in the caller's thread, so it is safe from ordinary event
-handlers as well as background tasks and threads; prefer a background task
-for long programmatic sequences, as for any bulk work in a handler.
+Path: per-generation operation lease plus entry-local synchronous figure lock
+→ one wire message (§8) → pushed room-wide as a `msg` event on the `/_xy`
+namespace → every client in the room applies it through the §3 mutation path
+with `source: "api"`. Message construction and version capture are atomic with
+namespace payload/interaction kernels and an append's mutation and version
+bump, while different figures remain independent. Namespace work that also
+needs the generation's async lock always acquires async then synchronous;
+caller-thread view writes acquire only the synchronous lock, so the order has
+no reverse edge. Multi-client semantics are therefore identical to `append`
+and `registry.publish`: the room converges. The token stays the only chart state
+Reflex holds; setting a view does not mutate the figure payload or advance its
+version, though the message envelope stamps the generation it was built
+against. Like `append`, a call holds the figure lock only long enough to
+serialize one small message and performs no network round-trip in the caller's
+thread, so it is safe from ordinary event handlers as well as background tasks
+and threads; prefer a background task for long programmatic sequences, as for
+any bulk work in a handler.
 
 `on_view_change` handlers still fire for api-sourced changes (an app may
 need to persist them) but carry `source: "api"`, so a state bridge that
@@ -366,6 +378,10 @@ Locked in before implementation, in the PR #117 fail-first style:
   the pre-reset view.
 - **Ordering:** `on_brush` before `on_select` holds for programmatic
   geometric selects.
+- **Browsing-context release:** every capture-owning gesture follows the same
+  loss detector. Pans end once at the last in-frame view; selection/box-zoom
+  and lasso-handle edits restore committed state; axis and modebar drags do
+  not resume on buttonless re-entry.
 - **Rows non-durability:** a rows-selection never enters the history stack,
   `view_state()` reports the `{"rows": true}` marker rather than indices,
   and Back after a rows-select restores the prior geometric state.

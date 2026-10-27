@@ -48,7 +48,7 @@ and are skipped in the browser menu (`js/src/53_interaction.ts:1020-1038`, where
 configured name with no entry). With no `export` spec the menu falls back to
 `["png", "svg", "csv"]`; an explicit empty list hides the download items.
 
-There is no Reflex-side export API. `python/reflex-xy/` renders kernel-lessly in
+There is no Reflex-side export API. `python/reflex_xy/` renders without a kernel in
 the browser; export runs on the composed chart object in Python.
 
 ## 2. Formats and backends
@@ -69,6 +69,20 @@ raster-only option that was passed non-default.
 `_png.encode` auto-selects an indexed-palette PNG (color type 3 + `tRNS`) when
 the image has ≤256 distinct RGBA colors. `optimize=True` selects this
 size-oriented path; `optimize=False` (default) takes the fused Rust encode.
+
+The raster exporters build their payload through the private
+`Figure._build_raster_payload`, which sets `point_overlay=False`: a density
+trace ships its grid without the retained real-point sample
+(`DENSITY_SAMPLE_TARGET`). This is not a rendering choice — `_raster._emit_grid`
+draws density traces from the grid alone and never reads `density["sample"]`, so
+the overlay was an O(N) sampling pass and two gathers whose result no pixel
+consumed. Raster output is byte-identical with and without it. The omission is
+recorded as `density["overlay_omitted"] = "static_raster"` so a raster payload
+still explains itself (§28); the `rows_exceed_u32` reason takes precedence when
+both apply. The public
+`build_payload`/`build_payload_split` still ship the overlay: the browser client
+(`js/src/50_chartview.ts`) and the SVG renderer's payload path both go through
+them, and the client *does* draw it (T9).
 
 `_pdf.py` accepts only the SVG that `_svg.py` emits and raises
 `ValueError("unsupported SVG feature: ...")` on anything else, so generator
@@ -154,7 +168,8 @@ tokens statically from `spec["dom"]["style"]` — the tokens the chart declared 
 Python (`_svg._resolve_static_css_vars`). The live client instead reads
 *computed* CSS off the chart root (`readTheme`, `js/src/20_theme.ts:51`) and
 re-reads it on scheme change or a class mutation via `refreshTheme()`
-(`js/src/50_chartview.ts:4037`). That refresh is **local to the browser**: no
+(`js/src/50_chartview.ts:476-482`); `data-theme` and inline-style changes are
+observed as well. That refresh is **local to the browser**: no
 theme snapshot ever travels back. The eight client→kernel request types are
 enumerated exhaustively in [wire-protocol.md](../design/wire-protocol.md) §2, and
 their fields are view geometry, screen dimensions, trace/vertex indices,
@@ -216,8 +231,76 @@ Writes are atomic per file (same-directory temp file, fsync, `os.replace`), so a
 reader never observes a partial image. Failure mid-batch is not transactional:
 files already written stay on disk. The return value is the list of written
 byte strings, in input order.
+## 9. What styling survives which export path
 
-## 9. Standalone HTML delivery (`to_html`)
+XY has five styling mechanisms (`spec/api/styling.md` § The five ways to style)
+and three rendering families. They do not intersect uniformly, and until this
+section existed the gaps were discoverable only by exporting and looking. An
+undocumented asymmetry reads as a bug; a documented one is a contract.
+
+The families are **browser** (standalone HTML, the notebook iframe, the widget,
+the Reflex adapter, and Chromium capture, which screenshots the same document),
+**native raster** (`_raster.render_raster` → PNG/JPEG/WebP), and **native
+vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
+
+| Mechanism | Browser | Native raster | Native vector | Enforcement |
+| --- | --- | --- | --- | --- |
+| `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
+| `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
+| `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
+| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text subset, 9 slots | text subset, 9 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
+| `class_names={slot: "..."}` | yes, all 48 slots | **dropped** | **dropped** | silent — the SVG writer emits no `class` at all |
+| `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
+| `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
+| `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel; use `styles={"colorbar_title"/"colorbar_tick": ...}` |
+
+### Why two of those rows are silent, and why that is the right default
+
+`custom_css` raises because it is an author stylesheet: there is no honest
+partial application of it, and the caller can switch to `Engine.chromium` in one
+edit. The message says so. SVG rejects it for *every* engine, because a browser
+screenshot cannot produce vector output — that row is a hard "never", not a
+default.
+
+`class_names` is dropped rather than raising, because raising would break every
+native export of a chart that carries Tailwind classes for its live view, which
+is the normal way to use both surfaces together. A class name is also the one
+surface a file genuinely cannot honor: it selects a rule out of a stylesheet,
+and an exported file has no stylesheet to select from.
+
+### Which per-slot styles reach a file, and why only those
+
+A slot reaches the native writers when it names chrome a static file actually
+contains. `_svg.STATIC_STYLED_SLOTS` is that list: `title`, `axis_title`,
+`tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`,
+`colorbar_title`, and `colorbar_tick`. The remaining slots are live-only chrome
+— `tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*` — or containers
+with no painted text of their own; there is nothing in a PNG for them to style.
+
+Within a supported slot the writers read a property subset, not a cascade:
+`font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`,
+`opacity`, and the text paint (`fill`, or `color`). The native raster's atlas is
+a single baked face, so it honors size and paint and leaves the typeface
+properties to the vector writers — the one documented divergence, and
+`tests/test_export_style_survival.py` pins it. A declaration outside the subset
+stays browser-only.
+
+Where two surfaces name the same chrome, the narrower selector wins: an axis's
+own `label_color` beats `styles={"axis_title": ...}`, which beats the
+chart-wide default.
+
+### The legend's three spellings
+
+`styles={"legend": ...}`, `xy.legend(style=...)`, and the `--chart-legend-bg`
+theme token all target the legend frame. They are merged into one declaration
+block — token, then slot, then component, narrowest last — before either native
+writer sees it (`_svg.legend_options_with_slot`), so spellings that agree in the
+browser agree in a PNG. An explicit `background` paints **opaque**, matching the
+browser's `background:var(--chart-legend-bg, …)`; `--xy-legend-frame-alpha`
+remains the separate knob for the default grey frame.
+
+
+## 10. Standalone HTML delivery (`to_html`)
 
 A standalone export is one self-contained file: the IIFE render client
 (`static/standalone.js`), the spec JSON, and the data blob as 3-byte-aligned
@@ -259,3 +342,7 @@ A shared-external-client mode (`<script src>` + sibling bundle, plotly's
 shipped: the multi-chart-page economics it buys are already served by the
 reflex adapter (client as a cached compressed chunk), and it would widen the
 CSP and add sibling-file lifecycle for a single-file product surface.
+
+The default uncompressed HTML path retains the single-join assembly used by
+current main: the client, spec and base64 chunks are appended as separate parts
+and copied once. Compression uses its own loader without changing that path.

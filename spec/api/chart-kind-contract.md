@@ -24,9 +24,10 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 Establish the primitive once; the charts sharing it are mostly wiring.
 
 The registry is the authority on what exists. `MARK_KINDS` (`js/src/55_marks.ts`)
-holds eighteen kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
-`column`, `contour`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `histogram`,
-`line`, `scatter`, `segments`, `stem`, `triangle_mesh`, `violin` — each with a
+holds twenty kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
+`column`, `contour`, `error_band`, `errorbar`, `funnel`, `heatmap`, `hexbin`,
+`histogram`, `line`, `ribbon`, `scatter`, `segments`, `stem`, `triangle_mesh`,
+`violin` — each with a
 matching `_emit_<K>` in `_payload.py`. `density` is a *tier* of `scatter`, not a
 kind. Public builders that reuse an existing kind add no registry entry:
 `hist` → `histogram`, and `step`/`stairs`/`ecdf` → `line`.
@@ -50,11 +51,196 @@ by the string `K` on the wire (`trace.kind`).
   into the `ColumnStore` and appends a `Trace`. Reuse `_ingest_xy` for the
   equal-length (x,y) contract; a non-xy mark ingests its own columns.
 - **Channels** (optional): if the mark has per-mark color/size, reuse
-  `channels.ship_channels(trace, sel, ship_scalar, ship_u8, palette)` — the same
-  wire shape scatter and heatmap use, so continuous/categorical color and size
-  come from one path. Most kernels should call the `Figure._ship_channels(t, sel,
-  pw.ship_scalar, pw.ship_u8)` wrapper in `_payload.py`, which supplies
-  `DEFAULT_PALETTE`.
+  `channels.ship_channels(trace, sel, ship_scalar, ship_u8)` — the same wire
+  shape scatter and heatmap use, so continuous/categorical color and size come
+  from one path. Most kernels should call the `Figure._ship_channels(t, sel,
+  pw.ship_scalar, pw.ship_u8)` wrapper in `_payload.py`. A categorical channel
+  carries its own palette (`ColorChannel.palette`, resolved at build against the
+  figure's cycle), so no palette is threaded through the ship call.
+
+#### The ribbon geometry contract
+
+A `ribbon` is a flow band: it leaves a vertical span on one x and arrives at a
+vertical span on another, carrying a colour at each end. It is the primitive
+behind Sankey, and behind alluvial, chord and parallel-categories later.
+
+Three renderers draw it — SVG emits true cubics, the raster flattens them, WebGL
+evaluates them per vertex — so this section is normative and a fourth renderer
+implements it without reading the other three.
+
+**On the wire.** The six geometry slots are saturated; there is no `base`:
+
+| Field | Meaning | Axis |
+| --- | --- | --- |
+| `kind` | `"ribbon"` | |
+| `tier` | always `"direct"` — a Sankey is small-N by nature, and no decimation or density tier is meaningful for a flow band | |
+| `x0` | source face x | x |
+| `x1` | target face x | x |
+| `y0`, `y1` | source span, lower and upper edge | y |
+| `x`, `y` | **target** span, lower and upper edge — y values in the `x`/`y` slots, which is why `_range_columns` needs a ribbon branch | y |
+| `color` | channel record for the **source** end — always **resolved paint** (`constant` or `direct_rgba`): numeric encodings are sampled through the shared exporter LUT at the factory (`channels.resolve_direct_rgba`), because the ribbon program's `a_rgba2` shares its attribute slot with `a_style` and has no cval/LUT path, and a small-N direct-tier mark makes CPU sampling free | |
+| `color_target` | channel record for the **target** end, same resolved-paint rule; absent means flat, painted with `color` | |
+| `tooltip_rows` | optional per-band semantic objects; Sankey links carry `source`, `target`, `value`, while node bands carry `node`, `value`. The values are deliberately JSON scalars: these are small-N semantic readouts (labels and one flow value per band), not geometry that scales with data, which is what §29's raw-buffer rule exists for | |
+
+**The curve.** A cubic in *axis-transformed space* with both control points at
+the horizontal midpoint `xm = (x0 + x1) / 2`, each holding its own end's y —
+d3's `curveBumpX`, which d3-sankey and ECharts likewise evaluate on
+already-scaled coordinates. The band therefore leaves and arrives horizontally
+on screen, and its width is measured vertically the whole way across.
+Transformed space, not data space, because only that choice lets all three
+renderers draw literally the same curve on every axis type: an SVG `C` is
+necessarily a cubic in pixel space and the client sweeps one in clip space —
+both affine images of transformed space, where cubics are invariant — while a
+data-space cubic on a log axis is a shape neither can represent exactly. The
+raster therefore transforms the six endpoint values *first* and flattens the
+cubic they define, never the reverse. Under affine axes the two orders
+coincide, so this distinction is invisible on the linear 0..1 axes a Sankey
+actually uses. CPU hover bisects the same transformed-space cubic.
+
+```
+upper edge: (x0, y1) C (xm, y1) (xm, y)  -> (x1, y)
+lower edge: (x1, x)  C (xm, x)  (xm, y0) -> (x0, y0)
+closed path: M x0,y1  C…  L x1,x  C…  Z
+```
+
+The raster flattens each edge at 96 steps; the client sweeps a triangle strip of
+the same 96 segments. Both consume the same Python reference,
+`_scene.ribbon_polygon`, so a divergence is a test failure rather than a
+rendering difference.
+
+**Paint.** The gradient runs along the **flow axis**, from `x0` to `x1` — not
+along a value axis, which is what separates a ribbon from every other filled
+mark and is why `style.fill` gradients are rejected on it (per-end colour is a
+channel, not per-trace style). The interpolation covers all **four** channels:
+ends that differ only in alpha still ramp (SVG rides per-stop `stop-opacity`,
+already in the PDF allowlist; the raster's gradient stops are RGBA; the client
+mixes RGBA per fragment). Only when the two ends resolve to the same RGBA do
+the renderers emit a flat fill, not a two-stop gradient, so a plain Sankey
+stays cheap in every output format.
+
+**Outline.** `style.stroke` / `stroke-width` / `stroke-opacity` draw an
+outline over the closed band — both curved edges *and* the two vertical end
+faces, in every renderer (the exporters stroke the closed path; the client
+takes the smaller of the side and flow-parameter device-pixel distances). An
+omitted stroke colour means **match the band's own fill** per band — the
+`edgecolors="face"` rule the point and rect programs already follow — because
+a per-band ribbon has no single trace colour to fall back to. That paint is
+the band's **source-end** colour, flat: `cmd.stroke` and SVG's `stroke=` take
+one colour per band, so the client must not ramp an outline the exporters
+cannot. The alpha stack is the stroke paint's own alpha × `opacity` ×
+`stroke_opacity`, as for every other stroked mark. `stroke-dasharray` is
+**not** in the ribbon property set.
+
+`opacity`, `stroke` and `stroke_width` are **per-trace scalars**; the factory
+refuses arrays rather than shipping channels one renderer would drop. The
+ribbon program cannot bind the per-instance style attribute (`a_rgba2`
+occupies its slot), and a capability the live chart cannot draw must be
+absent everywhere, not exporter-only. Nothing is lost: per-band *alpha* rides
+the RGBA rows of `color`/`color_target` — which every renderer interpolates
+along the band — and the implicit match-fill outline is already per-band.
+
+**Picking is deferred.** `pointPick` is false: the GPU id-pass is wired to
+`gl.POINTS`. Hover resolves on the CPU by evaluating the same cubic at the
+cursor's data x and testing vertical containment, so tooltips work and box or
+lasso selection is correctly absent rather than present and wrong. When
+`tooltip_rows` is present, the client and kernel exact-pick path preserve those
+semantic fields so a Sankey tooltip describes the flow or node rather than its
+internal placement coordinates.
+
+#### The funnel geometry contract
+
+A `funnel` is a run of symmetric quads: one segment per stage of an ordered
+process, centered on zero along a cross axis, with independent cross widths at
+each end so a segment can taper. It is the primitive behind funnel charts and
+a straight, transposable sibling of the ribbon; a future pyramid or population
+chart reuses it.
+
+Three renderers draw it and must agree exactly: the client's funnel program
+(`FUNNEL_VS` + the shared `RIBBON_FS`, `js/src/40_gl.ts`), and both static
+exporters through `_scene.funnel_quad` — the single corner reference the
+golden tests pin. This section is normative — a fourth renderer implements it
+without reading the other three.
+
+**On the wire.** All layout happens in Python at build time
+(`python/xy/_funnel.py` — validation, conversion arithmetic, quad
+construction, the label ladder), the way `_sankey` owns the Sankey placement;
+renderers only ever see quads plus semantics:
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `"funnel"` |
+| `tier` | always `"direct"` — one quad per stage is small-N by nature, and neither decimation nor a density tier means anything for it (§28) |
+| `orientation` | `"vertical"` (stage axis = y) or `"horizontal"` (stage axis = x) |
+| `pos0`, `pos1` | segment edges along the stage axis, shipped on that axis's scale. Stage order is the DECLARED order; positions come from the categorical stage axis |
+| `lo0`, `hi0` | cross-axis edges at `pos0`, on the cross axis's scale |
+| `lo1`, `hi1` | cross-axis edges at `pos1` — internally these ride the trace's generic `x`/`y` slots, which is why `_range_columns` has a funnel branch |
+| `n_marks` | quad count (= stage count) |
+| `color` | per-stage paint channel: `constant`, `categorical` (codes + palette, categories in DECLARED stage order — the funnel factory builds this by hand because generic factorization sorts labels alphabetically), or `direct_rgba` |
+| `tooltip_rows` | one semantic row per stage: `stage` (the stage NAME, a string) plus the numeric fields `value`, `prior`, `share`, `conversion`, `dropoff` are the EVENT payload; `value_text`, `prior_text`, `share_text`, `conversion_text`, `dropoff_text` are their preformatted twins (`prior_text` is `null` on stage 0, which has no prior) and are what a tooltip prints. The kernel owns `value_format`/`percent_format` because the client has no `str.format`, so a label, a tooltip and a static export cannot disagree. A ratio whose denominator is zero — or which would overflow to infinity — is `null` numerically and an em dash in its `*_text`. Small-N readouts, not geometry, per §29's raw-buffer rule |
+
+**Geometry.** Corners run A=(`lo0`@`pos0`) B=(`hi0`@`pos0`) C=(`hi1`@`pos1`)
+D=(`lo1`@`pos1`), transposed per orientation. Edges are STRAIGHT in
+axis-transformed space: the exporters map the six edge values first and join
+them with lines (`_scene.funnel_quad` consumes mapped values), and the client
+lerps between per-vertex `xyMap` results in clip space — the affine image of
+transformed space, so all three draw literally the same line on every axis
+type. CPU hover lerps the same edges in transformed space and returns the
+QUAD (= stage) index.
+
+**Labels.** The ladder in `_funnel.decide_labels` resolves every label to
+`inside`, `outside` or `hidden` at build time and ships the decision; no
+renderer re-places text. A value label tries its segment's box first, then the
+lane beside the funnel, then hides. Hiding is a §28 decimation decision and is
+recorded here: a label is dropped only when the space it needs is not there,
+and the tooltip and event payload still carry every number.
+
+Two rules the vertical layout depends on, both found by labels overlapping in
+review:
+
+- Value labels sit at the stage centers and drop-off labels at the boundaries
+  *between* them, so the two ladders **interleave at half the stage pitch**,
+  not a whole one. A drop-off label whose half pitch cannot hold a text line
+  keeps its row only where neither neighbouring value label reaches into the
+  span it starts at. The value label wins that tie — it is the datum, the
+  drop-off is arithmetic derived from it. A horizontal funnel is exempt: its
+  value labels ride above their own segment rather than in the boundary lane.
+- The ladder cannot see the real plot rectangle (only the renderers lay it
+  out), so it estimates from the configured chart size. The estimate must be
+  PESSIMISTIC: over-stating the room prints text on top of text, while
+  under-stating it only hides a label the tooltip still carries. Vertically
+  the title band, tick labels and margins cost a roughly fixed ~90px rather
+  than a fixed fraction, so the estimate subtracts a band instead of scaling
+  (`_funnel.estimate_plot_px`) — a fraction was 65% optimistic at height 180.
+
+**Paint.** One flat color per stage; there is no along-segment gradient (that
+is the ribbon's contract, and its `a_rgba2` slot is exactly what a funnel does
+not need). `opacity`, `stroke`, `stroke_width` are per-trace scalars, refused
+as arrays; `style.fill` is absent from the property set (per-stage paint is
+the channel). An omitted stroke color outlines each segment with its own fill
+(`edgecolors="face"`), resolved per stage in every renderer. The client's
+segment edges get `fwidth` coverage antialiasing from the shared ribbon
+fragment stage — the GL context is `antialias: false`, and without coverage
+the funnel's long diagonals staircase (found in review).
+
+**Interaction.** `pointPick` is false (the GPU id pass draws points from the
+generic slots — trailing cross edges, garbage ids); hover is the CPU
+containment path, so box/lasso selection is absent rather than wrong, as for
+ribbon. The registry entry sets `stageNav`: the per-stage centers join the
+keyboard traversal groups, so arrow keys walk the declared order and the
+announcement reads "Stage i of n" plus the stage's semantic row.
+
+**Animation.** Update interpolation and the grow entrance run on the CPU:
+one quad per stage means mixing six small arrays and re-writing the live
+buffers per frame (`_mixFunnelGeometry`) costs less than a second attribute
+set, and the shader stays untouched. `_preparePositionInterpolation`
+dispatches `funnel` to its own prep, which re-encodes the OLD trace's
+currently displayed geometry (mid-flight retargets included) into the new
+columns' metas; unmatched stages start at their destination. The default
+entrance is `grow` — cross edges expand out of the segment spine, the bar
+family's baseline rule transposed.
+
+Deferred, recorded in the roadmap: GPU picking, box/lasso selection, and
+multi-series comparison grouping (facets are the current answer).
 
 #### Shared-geometry marks: the hexbin centers-only contract
 
@@ -155,13 +341,15 @@ style, per-cell data on the wire, one ring definition the other renderers cite.
 
 The rectangle family deliberately has two wire shapes:
 
-- **Full rectangles** (`histogram` today, and later irregular cells/candles):
+- **Full rectangles** (`histogram`, plus bars with unequal per-item widths):
   four edge columns, `x0/x1/y0/y1`. Use this when widths are irregular or both
-  axes need independent per-mark edges.
+  axes need independent per-mark edges. Under polar, a bar's four edges are an
+  annular sector rather than a Cartesian rectangle.
 - **Compact bars** (`bar`/`column`): one position column, one endpoint value
   column, an optional baseline column or scalar `value0_const`, and scalar
-  `width`. This keeps common bars to two data columns instead of four while
-  preserving the same rect fragment shader and legend/color path.
+  `width`. Equal per-item widths collapse to this path. This keeps common bars
+  to two data columns instead of four while preserving the same rect fragment
+  shader and legend/color path.
 
 Do not regress bars back to full rectangles for convenience; the 10k-category
 benchmark tracks this as part of the core 2D payload budget.
@@ -173,6 +361,10 @@ benchmark tracks this as part of the core 2D payload budget.
   mark-blind. A new kind inherits them without writing any interaction code, but
   they are not unconditional: `navigation`/`pan`/`zoom` default to on and can be
   turned off — or scoped to specific axes — per figure.
+  Polar is coordinate-system-specific: hover and reset ship, fixed-minimum
+  radial zoom is opt-in (`zoom` resolves to `False` under `coords="polar"`;
+  `wind_rose` ships `True`), and theta pan/rotation, box zoom, selection, brush,
+  and crosshair are disabled.
   [interaction.md](interaction.md) is the authority on the switches, per-axis
   policy, defaults, gesture map, and event payloads.
 - **Responsive sizing**: `width/height:"100%"` + ResizeObserver.
@@ -182,8 +374,9 @@ benchmark tracks this as part of the core 2D payload budget.
   decision with hysteresis, drilled-subset versioning (`drill_seq`), window
   encoding, screen-derived grid shaping, entry/exit fades, the density-source
   cache, and eased normalization. An *aggregating* kind supplies its own
-  aggregate kernel (density uses `bin_2d`; a 1D histogram supplies 1D binning)
-  and reuses this framework around it.
+  aggregate kernel (density uses `bin_2d` for counts plus `bin_2d_mean_color`
+  for the per-cell mean point color, LOD doc §2; a 1D histogram supplies 1D
+  binning) and reuses this framework around it.
 - **Transport**: data-less JSON spec + one binary blob; no JSON numbers (§29).
 - **Ticks / axes / time axis / autorange**: keyed on axis kind, not mark kind.
 
@@ -197,6 +390,33 @@ this contract): `pointPick` (participates in the point-geometry GPU pick pass),
 colors, §36). The registry and `markOf()` are exported (`xy.MARK_KINDS`)
 — it is the public extension surface.
 
+## Contributing a kind from outside the repo
+
+The checklist above is for kinds that join the core: six touch points across
+Python, the client, and the docs. A kind that only needs to *compose* existing
+primitives does not have to pay it. `xy.register_mark` (`python/xy/plugins.py`,
+dossier §24) takes a `calc` over declared columns plus a `build` that returns
+built-in `Mark` objects, and `components._plugin_applier` runs the result
+through the same appliers, axis assignment, and post-processing as a hand-built
+mark. `_MARK_APPLIERS` is consulted first, so a plugin can never shadow a
+built-in.
+
+The dividing line is whether the kind needs a **new primitive**. A candlestick,
+a dumbbell, a high-low band — all compositions, all plugin territory. A kind
+that needs geometry no shader draws yet is a core kind and takes the checklist.
+
+A **ribbon** was listed here as plugin territory until Sankey was built, and the
+attempt is what moved it. A ribbon carries two colours — one per end — and no
+existing primitive can hold that. The seam-free `triangle_mesh` path in both
+exporters is gated on a single uniform fill (`_svg.py`, `_raster.py`:
+`np.all(fills == fills[0])`), so per-triangle colour falls out of the fast path
+and re-introduces an antialiasing seam on every shared edge; and on the client
+`MESH_VS` reads colour per *instance*, so a mesh triangle is flat-shaded by
+construction and cannot interpolate at all. Two renderers, two independent
+reasons, same conclusion: the gradient ribbon is a primitive, not a composition. Composition is one level deep on purpose: plugins compose built-ins,
+not each other, which keeps the registry a lookup rather than a dependency
+graph.
+
 ## Extension points not yet generalized (do it when the case lands)
 
 These are still shaped for the marks that exist. Generalize them when a real new
@@ -206,9 +426,13 @@ usually wrong). Each has an explicit trigger:
 - **Picking** (`_renderPick`, `_pickAt`): point-geometry only today
   (`pointPick`). *Trigger: first pickable non-point mark (bar/candle)* — add a
   `pick` step to `MARK_KINDS` and give the mark its own ID-pass geometry.
-- **Legend** (`_buildLegend`): keyed on *channel modes* (density / categorical /
+- **Legend** (`_buildLegend`): keyed on *channel modes* (categorical /
   continuous / named-series), not mark kinds — a colored bar inherits swatches
-  for free. *Trigger: a mark needing a swatch that isn't channel-shaped.*
+  for free. A density-tier surface gets no gradient swatch of its own: count is
+  encoded as alpha, not color (LOD doc §2), so a colormap gradient would read as
+  "color == density" and mislead; a named density trace falls through to the
+  plain named-series swatch, matching the static exporters. *Trigger: a mark
+  needing a swatch that isn't channel-shaped.*
 - **Decimation** (`interaction.decimate_view`): line and area-like marks use the
   shared M4 path on first payload; errorbar/stem segments reduce to a
   pixel-derived cap at emit time. Contour is NOT pixel-bounded: its segment
@@ -222,6 +446,11 @@ usually wrong). Each has an explicit trigger:
   `MARK_KINDS` at that call site.
 - **Trace shape & autorange**: `Trace(x, y)` remains the conventional center/value
   pair, while rectangle and segment marks carry explicit `x0/x1/y0/y1` columns.
+  For oriented bar-like marks the convention follows the orientation: the
+  position axis holds the band center and the value axis holds the value end
+  (`x1` for horizontal bars, `y1` for vertical), because the exact pick readout
+  (§16) projects these columns and must agree with the client's instant local
+  row — a horizontal bar must never read back its x midpoint (half the value).
   `Figure._range_columns()` already includes those geometry extents, so error
   bars, boxes, violins, contours, and other multi-column marks do not autorange
   to their midpoint only. *Trigger: a future mark whose extent is not expressible
@@ -239,6 +468,29 @@ usually wrong). Each has an explicit trigger:
   viewport message the kernel answers per trace, and bump PROTOCOL once, instead
   of accreting a message type per tier.
 
+## Structural probe (compile-gate contract)
+
+`xy.structural_probe()` is a context manager under which figures build in
+**structural-probe mode** (`Figure._structural_probe`): a mark whose data
+channels are all empty must validate its *configuration* — enums, numeric
+bounds, colormaps, range/level shapes — and then return without appending
+traces, instead of refusing zero rows or aggregating. Compile gates (the
+Reflex plan probe, reflex-integration.md §3.6) rely on this to validate
+chart structure with **no data and no invented data**: a probe failure
+always indicts structure, and data-dependent work (binning, quantiles,
+marching, range filtering) never runs at page evaluation. Non-empty
+channels behave identically in and out of probe mode, and outside the
+context the data-requiring validators keep their at-least-one-value
+contracts. Real-data shape couplings (x/y lengths, `edges = len+1`, z
+2-D-ness) are checked when data binds, not by the probe.
+
+Mark-author obligation: every builder that refuses empty data orders config
+validation before its data work and gates its zero-row refusal on
+`self._structural_probe` (see `stairs`/`ecdf`/`histogram`/`box`/`violin`/
+`hexbin`/`contour`/`heatmap`/`funnel` in `marks.py`). Pinned by
+`tests/test_validation_timing.py` (compiles empty under probe, still
+refuses empty normally, still raises config errors under probe).
+
 ## Checklist for a new kind
 
 1. Internal `Figure.<K>(...)` builder (`marks.py`) + `_emit_<K>` (kernel
@@ -248,7 +500,10 @@ usually wrong). Each has an explicit trigger:
    `components._MARK_APPLIERS`, and a `*_chart` fn.
 4. Tests: payload shape + tier decision (pytest); a render probe in
    `scripts/render_smoke_nonumpy.py` asserting it lights pixels.
-5. If aggregating: an aggregate kernel (native Rust core) and wire
-   it through the `lod` framework rather than a bespoke path.
+5. If aggregating: add an aggregate kernel (native Rust core) and wire it
+   through the `lod` framework rather than a bespoke path. If the builder
+   refuses empty input for any reason, honor the structural-probe contract
+   above (config first, probe-gated zero-row early-out, entries in
+   `tests/test_validation_timing.py`).
 6. Roadmap and contract docs: record the kind as implemented and note any
    compatibility-depth follow-ups.

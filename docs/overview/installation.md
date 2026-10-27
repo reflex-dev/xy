@@ -39,7 +39,7 @@ the current 0.0.1 upload, not whether XY supports the platform.
 | Linux | glibc (`manylinux_2_17`) | `x86_64`, `aarch64`, `armv7l` | Supported | Included |
 | Linux | musl (`musllinux_1_2`, including Alpine) | `x86_64`, `aarch64`, `armv7l` | Supported | Included |
 | Windows | Native Windows | `x86_64`, `x86`, `arm64` | Supported | Not included |
-| WebAssembly | Pyodide 0.29.4 (Emscripten) | `wasm32` | Supported | Not accepted by PyPI |
+| WebAssembly | Pyodide 314 (Emscripten, PEP 783) | `wasm32` | Supported | Not in 0.0.1 (on PyPI since 0.0.3) |
 
 Windows is supported by XY's native core and release pipeline. The current
 0.0.1 PyPI upload does not include Windows wheels or a source distribution, so
@@ -47,13 +47,14 @@ Windows is supported by XY's native core and release pipeline. The current
 Windows yet. Until a Windows wheel is published, install the tagged source
 with a Rust MSVC toolchain as described below.
 
-A runtime-verified Pyodide wheel has been built for in-browser Python, but the
-`v0.0.1` wheel is not yet publicly distributed as a durable release asset.
-PyPI does not accept its `pyodide_2025_0_wasm32` platform tag, so the WASM
-wheel is not available through the normal install commands. This target runs
-XY's Python and Rust core inside Pyodide; it is separate from the
-JavaScript/WebGL client included with every chart. Track publication in
-[#97](https://github.com/reflex-dev/xy/issues/97).
+The runtime-verified WebAssembly wheel targets the standardized PEP 783
+`pyemscripten_2026_0_wasm32` platform and, as of 0.0.3, is published to PyPI
+alongside the native wheels. In-browser Python installs it by package name —
+`micropip.install("xy")`, or `%pip install xy` in a JupyterLite notebook.
+This target runs XY's Python and Rust core inside Pyodide; it is separate
+from the JavaScript/WebGL client included with every chart. See
+[Notebooks](/docs/xy/integrations/notebooks/) for how charts display on WASM
+kernels.
 
 ## What the package includes
 
@@ -61,6 +62,9 @@ The regular `xy` dependency already includes NumPy and anywidget support.
 Published platform wheels bundle the Python package, browser client, and native
 Rust compute core. Notebook display and HTML, native PNG, and SVG export do not
 require separate `notebooks` or `export` extras, Node, npm, or a CDN.
+
+The regular dependency also includes `xy.pyplot`'s dependency-free native 2-D
+mode. It does not install Matplotlib.
 
 ## Installing from Git or source
 
@@ -89,33 +93,79 @@ Rust tooling beyond the commands above.
 
 ## Optional tools and integrations
 
-- Install `pyarrow` separately when you want Arrow-backed input:
+### Matplotlib compatibility
+
+Install the Matplotlib extra for `xy.pyplot` compatibility mode:
+
+  ~~~~md tabs
+  ## uv
 
   ~~~bash
-  uv add pyarrow
+  uv add "xy[matplotlib]"
   ~~~
 
-- The separate Reflex adapter supports state-backed application charts, but it
-  is experimental and is not published on PyPI. Opt in by pairing the released
-  `xy` core with the adapter from the matching `v0.0.1` Git tag. With uv:
+  ## pip
 
   ~~~bash
-  uv add "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
+  python -m pip install "xy[matplotlib]"
+  ~~~
+  ~~~~
+
+  The extra installs the supported Matplotlib 3.11 series
+  (`matplotlib>=3.11,<3.12`). Select it before creating figures:
+
+  ~~~python
+  import xy.pyplot as plt
+
+  plt.set_mode("compat")
   ~~~
 
-  Or with pip:
+  Compat mode uses genuine Matplotlib Figure, Axes, Artist, layout, units,
+  toolkit, widget, animation, and projection semantics with XY's
+  `module://xy.backends.backend_xy` canvas and display-list renderer. It does
+  not use Agg or another Matplotlib renderer as a raster fallback.
 
-  ~~~bash
-  python -m pip install "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
-  ~~~
+  The configured default is `native`, including when Matplotlib is already
+  installed. Select `compat` explicitly to opt into the broader Matplotlib
+  frontend. Explicit `compat` fails with an installation hint if the supported
+  extra is missing. The equivalent process setting is `XY_PYPLOT_MODE=compat`.
+  Close all open figures before changing modes.
 
-  The tag keeps the unreleased adapter aligned with the public 0.0.1 core.
-  Continue with the [Reflex integration guide](/docs/xy/integrations/reflex/)
-  for its current limitations and setup.
+### Arrow input
 
-- Native PNG is the default static raster path and does not launch a browser.
-  Chromium-based PNG export is optional and discovers Chrome, Chromium, Edge,
-  or `chrome-headless-shell` on the machine; set `XY_BROWSER` to an executable
-  path when automatic discovery is not appropriate.
+Install `pyarrow` separately when you want Arrow-backed input:
+
+~~~bash
+uv add pyarrow
+~~~
+
+### Reflex integration
+
+The bundled Reflex integration supports state-backed application charts and
+remains experimental. Install the extra to select a compatible Reflex
+version. With uv:
+
+~~~bash
+uv add "xy[reflex]"
+~~~
+
+Or with pip:
+
+~~~bash
+python -m pip install "xy[reflex]"
+~~~
+
+The `xy` wheel already carries the `reflex_xy` integration; the extra adds
+only the supported Reflex dependency floor. Pin resolved versions for
+production deployments. Continue with the
+[Reflex integration guide](/docs/xy/integrations/reflex/) for its current
+limitations and setup.
+
+### Optional browser export
+
+Native PNG is the default static raster path and does not launch a browser.
+Chromium-based PNG export is optional and discovers Chrome, Chromium, Edge,
+or `chrome-headless-shell` on the machine; set `XY_BROWSER` to an executable
+path when automatic discovery is not appropriate.
 
 Next, build [your first chart](/docs/xy/overview/first-chart/).

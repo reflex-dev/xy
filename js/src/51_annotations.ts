@@ -1,4 +1,5 @@
-import { safeCssPaint } from "./20_theme";
+import { buildLutData } from "./10_colormaps";
+import { parseColor, safeCssPaint } from "./20_theme";
 import { ChartView } from "./50_chartview";
 
 // ChartView annotation layer (§ chrome): reference lines/zones already draw
@@ -22,6 +23,7 @@ const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
   "curve",
   "angle_a",
   "angle_b",
+  "elbow",
   "gap_start",
   "gap_end",
   "start_offset",
@@ -105,7 +107,14 @@ function xyArrowGeometry(x0, y0, x1, y1, style) {
   // Tangent INTO each endpoint (head/tail orientation).
   const dir1 = cx === null ? toward(p0[0], p0[1], p1[0], p1[1]) : toward(cx, cy, p1[0], p1[1]);
   const dir0 = cx === null ? toward(p1[0], p1[1], p0[0], p0[1]) : toward(cx, cy, p0[0], p0[1]);
-  return { p0, p1, control: cx === null ? null : [cx, cy], dir0, dir1 };
+  return {
+    p0,
+    p1,
+    control: cx === null ? null : [cx, cy],
+    elbow: Boolean(style.elbow),
+    dir0,
+    dir1,
+  };
 }
 
 // The shaft as a point list (quadratic Bézier sampled when curved).
@@ -114,6 +123,7 @@ function xyArrowShaftPoints(geom, samples = 24) {
   const [x1, y1] = geom.p1;
   if (!geom.control) return [[x0, y0], [x1, y1]];
   const [cx, cy] = geom.control;
+  if (geom.elbow) return [[x0, y0], [cx, cy], [x1, y1]];
   const points = [];
   for (let i = 0; i <= samples; i++) {
     const t = i / samples;
@@ -144,6 +154,116 @@ function xyTrimPolylineEnd(points, trim) {
   return out;
 }
 
+function xyCanvasRegularPolygon(ctx, cx, cy, radius, points, start = -Math.PI / 2) {
+  for (let index = 0; index < points; index++) {
+    const angle = start + index * 2 * Math.PI / points;
+    const x = cx + radius * Math.cos(angle);
+    const y = cy + radius * Math.sin(angle);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+// Canvas counterpart of POINT_FS/_SYMBOL_BUILDERS. Returns true for the two
+// line-only symbols, whose authored paint is a stroke rather than a fill.
+function xyCanvasScatterSymbol(ctx, symbol, cx, cy, diameter) {
+  const radius = diameter / 2;
+  ctx.beginPath();
+  if (symbol === 0 || symbol === 12) {
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+  } else if (symbol === 1 || symbol === 13) {
+    ctx.rect(cx - radius, cy - radius, diameter, diameter);
+  } else if (symbol === 2 || symbol === 14) {
+    const yr = Math.SQRT2 * radius;
+    const xr = symbol === 14 ? 0.6 * yr : yr;
+    ctx.moveTo(cx, cy - yr);
+    ctx.lineTo(cx + xr, cy);
+    ctx.lineTo(cx, cy + yr);
+    ctx.lineTo(cx - xr, cy);
+    ctx.closePath();
+  } else if (symbol === 3) {
+    ctx.moveTo(cx, cy - radius);
+    ctx.lineTo(cx + radius, cy + radius);
+    ctx.lineTo(cx - radius, cy + radius);
+    ctx.closePath();
+  } else if (symbol === 8) {
+    ctx.moveTo(cx, cy + radius);
+    ctx.lineTo(cx + radius, cy - radius);
+    ctx.lineTo(cx - radius, cy - radius);
+    ctx.closePath();
+  } else if (symbol === 9) {
+    ctx.moveTo(cx - radius, cy);
+    ctx.lineTo(cx + radius, cy - radius);
+    ctx.lineTo(cx + radius, cy + radius);
+    ctx.closePath();
+  } else if (symbol === 10) {
+    ctx.moveTo(cx + radius, cy);
+    ctx.lineTo(cx - radius, cy - radius);
+    ctx.lineTo(cx - radius, cy + radius);
+    ctx.closePath();
+  } else if (symbol === 4) {
+    const inner = 0.34 * radius;
+    ctx.moveTo(cx - inner, cy - radius);
+    ctx.lineTo(cx + inner, cy - radius);
+    ctx.lineTo(cx + inner, cy - inner);
+    ctx.lineTo(cx + radius, cy - inner);
+    ctx.lineTo(cx + radius, cy + inner);
+    ctx.lineTo(cx + inner, cy + inner);
+    ctx.lineTo(cx + inner, cy + radius);
+    ctx.lineTo(cx - inner, cy + radius);
+    ctx.lineTo(cx - inner, cy + inner);
+    ctx.lineTo(cx - radius, cy + inner);
+    ctx.lineTo(cx - radius, cy - inner);
+    ctx.lineTo(cx - inner, cy - inner);
+    ctx.closePath();
+  } else if (symbol === 11) {
+    const wide = 0.72 * radius;
+    const narrow = 0.28 * radius;
+    ctx.moveTo(cx - wide, cy - radius);
+    ctx.lineTo(cx, cy - narrow);
+    ctx.lineTo(cx + wide, cy - radius);
+    ctx.lineTo(cx + radius, cy - wide);
+    ctx.lineTo(cx + narrow, cy);
+    ctx.lineTo(cx + radius, cy + wide);
+    ctx.lineTo(cx + wide, cy + radius);
+    ctx.lineTo(cx, cy + narrow);
+    ctx.lineTo(cx - wide, cy + radius);
+    ctx.lineTo(cx - radius, cy + wide);
+    ctx.lineTo(cx - narrow, cy);
+    ctx.lineTo(cx - radius, cy - wide);
+    ctx.closePath();
+  } else if (symbol === 15) {
+    ctx.moveTo(cx - radius, cy);
+    ctx.lineTo(cx + radius, cy);
+    ctx.moveTo(cx, cy - radius);
+    ctx.lineTo(cx, cy + radius);
+    return true;
+  } else if (symbol === 16) {
+    const edge = Math.SQRT1_2 * radius;
+    ctx.moveTo(cx - edge, cy - edge);
+    ctx.lineTo(cx + edge, cy + edge);
+    ctx.moveTo(cx + edge, cy - edge);
+    ctx.lineTo(cx - edge, cy + edge);
+    return true;
+  } else if (symbol === 5 || symbol === 6) {
+    xyCanvasRegularPolygon(ctx, cx, cy, radius, symbol === 5 ? 6 : 5);
+  } else if (symbol === 7) {
+    for (let index = 0; index < 10; index++) {
+      const r = index % 2 === 0 ? radius : radius * 0.45;
+      const angle = -Math.PI / 2 + index * Math.PI / 5;
+      const x = cx + r * Math.cos(angle);
+      const y = cy + r * Math.sin(angle);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  } else {
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+  }
+  return false;
+}
+
 // The shaft as a filled polygon whose width interpolates from w0 to w1
 // (matplotlib's fancy/simple/wedge arrowstyles are filled tapered shafts).
 function xyTaperPolygon(points, w0, w1) {
@@ -164,7 +284,192 @@ function xyTaperPolygon(points, w0, w1) {
   return left.concat(right.reverse());
 }
 
+// Canvas-authored scatter glyphs and clipped annotation marks share the same
+// annular-sector boundary as GL/SVG marks. A rectangular canvas clip lets a
+// large marker bleed into the hole (or a chord cross a sector's missing
+// wedge), so trace the visible outer arc and return along the inner arc.
+function xyClipPolarCanvas(ctx, geom) {
+  const denom = geom.rHi - geom.rOrigin;
+  const visibleFraction = Math.abs(denom) > 1e-30
+    ? geom.hole + (1 - geom.hole) * ((geom.rLo - geom.rOrigin) / denom)
+    : geom.hole;
+  const inner = Math.max(
+    0,
+    Math.min(geom.radius, visibleFraction * geom.radius),
+  );
+  const start = -geom.angleStart;
+  const end = -geom.angleEnd;
+  const anticlockwise = geom.dir > 0;
+  ctx.beginPath();
+  ctx.moveTo(
+    geom.cx + geom.radius * Math.cos(start),
+    geom.cy + geom.radius * Math.sin(start),
+  );
+  ctx.arc(geom.cx, geom.cy, geom.radius, start, end, anticlockwise);
+  if (inner > 1e-6) {
+    ctx.lineTo(
+      geom.cx + inner * Math.cos(end),
+      geom.cy + inner * Math.sin(end),
+    );
+    ctx.arc(geom.cx, geom.cy, inner, end, start, !anticlockwise);
+  } else {
+    ctx.lineTo(geom.cx, geom.cy);
+  }
+  ctx.closePath();
+  ctx.clip();
+}
+
 Object.assign(ChartView.prototype, {
+  _authoredScatterRgba(g, index, continuousLut = null, paletteRgba = null) {
+    if (g.colorMode === 3 && g._cpu.rgba) {
+      const offset = index * 4;
+      return Array.from(g._cpu.rgba.slice(offset, offset + 4), (value: number) => value / 255);
+    }
+    if (g.colorMode === 2 && g._cpu.color && paletteRgba && paletteRgba.length) {
+      return paletteRgba[Math.round(g._cpu.color[index]) % paletteRgba.length];
+    }
+    if (g.colorMode === 1 && g._cpu.color) {
+      // The caller prepares this once per trace/redraw. Falling back to a
+      // default color is preferable to rebuilding 256 stops for every point.
+      if (!continuousLut) return g.color || [0.3, 0.47, 0.66, 1];
+      const lut = continuousLut;
+      const value = g._cpu.color[index];
+      const unit = g._cpu.color instanceof Uint8Array ? value / 255 : value;
+      const slot = Math.max(0, Math.min(255, Math.round(unit * 255))) * 4;
+      return [lut[slot] / 255, lut[slot + 1] / 255, lut[slot + 2] / 255, 1];
+    }
+    return g.color || [0.3, 0.47, 0.66, 1];
+  },
+
+  _drawAuthoredScatterMarkers(ctx) {
+    const draws = (this._authoredScatterDraws || []).filter(
+      ({ g }) => g && g.trace?.kind === "scatter" && g.authoredMarker
+    );
+    if (!draws.length) return;
+    const p = this.plot;
+    const polarGeom = this._polarGeometry();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(p.x, p.y, p.w, p.h);
+    ctx.clip();
+    if (polarGeom) xyClipPolarCanvas(ctx, polarGeom);
+    for (const { g, opacityScale } of draws) {
+      if (!g._cpu) continue;
+      const style = g.trace.style || {};
+      const markerPath = style.marker_path;
+      const markerGlyph = style.marker_glyph;
+      const zoomStyle = this._pointZoomStyle(g);
+      const colormap = g.trace.color?.colormap || "viridis";
+      if (g.colorMode === 1 && g._authoredLutName !== colormap) {
+        g._authoredLutName = colormap;
+        g._authoredLut = buildLutData(colormap);
+      }
+      const continuousLut = g.colorMode === 1 ? g._authoredLut : null;
+      const palette = g.trace.color?.palette || [];
+      const paletteRgba = g.colorMode === 2 && palette.length
+        ? palette.map((c) => parseColor(this.root, c, g.color))
+        : null;
+      for (let index = 0; index < g.n; index++) {
+        const sourceIndex = g._visMap ? g._visMap[index] : index;
+        const x = this._decodeValue(g._cpu.x, g.xMeta, sourceIndex);
+        const y = this._decodeValue(g._cpu.y, g.yMeta, sourceIndex);
+        const [px, py] = this._projectDataPoint(g.xAxis, g.yAxis, x, y, polarGeom);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+        const sizeValue = g.sizeMode === 1 && g._cpu.size
+          ? g.sizeRange[0] + (g.sizeRange[1] - g.sizeRange[0]) *
+            (g._cpu.size instanceof Uint8Array
+              ? g._cpu.size[sourceIndex] / 255
+              : g._cpu.size[sourceIndex])
+          : g.size;
+        const size = Math.max(0, Number(sizeValue) * zoomStyle.sizeFactor);
+        const rgba = this._authoredScatterRgba(g, sourceIndex, continuousLut, paletteRgba);
+        const styleOffset = sourceIndex * 4;
+        const itemStyle = g._cpuStyle && g._cpuStyle.length >= styleOffset + 4
+          ? g._cpuStyle.subarray(styleOffset, styleOffset + 4)
+          : null;
+        const itemOpacity = itemStyle ? itemStyle[0] : 1;
+        const scalarArtist = Number(style.artist_alpha);
+        const artistAlpha = itemStyle && itemStyle[1] >= 0
+          ? itemStyle[1]
+          : Number.isFinite(scalarArtist) ? scalarArtist : -1;
+        const intrinsicAlpha = artistAlpha >= 0 ? artistAlpha : rgba[3];
+        const alpha = Math.max(
+          0,
+          Math.min(1, intrinsicAlpha * itemOpacity * zoomStyle.opacity * opacityScale),
+        );
+        const paint = `rgba(${Math.round(rgba[0] * 255)},${Math.round(rgba[1] * 255)},${Math.round(rgba[2] * 255)},${alpha})`;
+        const strokeWidth = Math.max(
+          0,
+          itemStyle && itemStyle[2] >= 0
+            ? itemStyle[2] / this.dpr
+            : Number(style.stroke_width) || 0,
+        );
+        let strokeRgba = g.pointStroke || rgba;
+        if (g._cpuStroke && g._cpuStroke.length >= (sourceIndex + 1) * 4) {
+          const offset = sourceIndex * 4;
+          strokeRgba = Array.from(
+            g._cpuStroke.slice(offset, offset + 4),
+            (value: number) => value / 255,
+          );
+        }
+        const strokeIntrinsic = artistAlpha >= 0 ? artistAlpha : strokeRgba[3];
+        const strokeAlpha = Math.max(
+          0,
+          Math.min(1, strokeIntrinsic * itemOpacity * zoomStyle.strokeOpacity * opacityScale),
+        );
+        const strokePaint = g.pointStrokeFace
+          ? paint
+          : `rgba(${Math.round(strokeRgba[0] * 255)},${Math.round(strokeRgba[1] * 255)},${Math.round(strokeRgba[2] * 255)},${strokeAlpha})`;
+        const symbol = itemStyle && itemStyle[3] >= 0 ? Math.round(itemStyle[3]) : null;
+        const diameter = Math.max(0, size - strokeWidth);
+        ctx.save();
+        ctx.fillStyle = paint;
+        ctx.strokeStyle = strokePaint;
+        ctx.lineWidth = strokeWidth;
+        if (symbol !== null) {
+          const lineSymbol = xyCanvasScatterSymbol(ctx, symbol, px, py, diameter);
+          if (lineSymbol) {
+            ctx.strokeStyle = paint;
+            ctx.lineWidth = Math.max(1, strokeWidth);
+            ctx.stroke();
+          } else {
+            ctx.fill("evenodd");
+            if (strokeWidth > 0) ctx.stroke();
+          }
+        } else if (markerGlyph) {
+          ctx.font = `${diameter}px "DejaVu Sans", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(markerGlyph), px, py);
+          if (strokeWidth > 0) {
+            ctx.strokeText(String(markerGlyph), px, py);
+          }
+        } else if (markerPath) {
+          ctx.beginPath();
+          for (const contour of markerPath.contours || []) {
+            for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+              const vx = px + diameter * Number(contour[offset]);
+              const vy = py - diameter * Number(contour[offset + 1]);
+              if (offset === 0) ctx.moveTo(vx, vy);
+              else ctx.lineTo(vx, vy);
+            }
+            if (markerPath.filled) ctx.closePath();
+          }
+          if (markerPath.filled) {
+            ctx.fill("evenodd");
+            if (strokeWidth > 0) ctx.stroke();
+          } else {
+            ctx.strokeStyle = paint;
+            ctx.lineWidth = Math.max(1, strokeWidth);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  },
+
   _annotationPaint(style, fallback) {
     return safeCssPaint(this.root, style && style.color, fallback);
   },
@@ -288,24 +593,70 @@ Object.assign(ChartView.prototype, {
     ctx.fill();
   },
 
+  // A mark-owned annotation (a funnel's value/drop-off label) retires with
+  // the geometry it describes: legend-hidden category, or hidden trace. An
+  // author-written annotation carries no `owner` and is never suppressed.
+  _annotationSuppressed(ann) {
+    const owner = ann && ann.owner;
+    if (!owner) return false;
+    const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+    const index = traces.findIndex((t) => t && t.id === owner.trace);
+    if (index < 0) return false;
+    if (this._legendOffTraces && this._legendOffTraces.has(index)) return true;
+    const hidden = this._legendOffCats && this._legendOffCats.get(index);
+    return !!(hidden && hidden.has(owner.category));
+  },
+
   _drawAnnotationShapes(ctx) {
     const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
     if (!annotations.length) return;
     const p = this.plot;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(p.x, p.y, p.w, p.h);
-    ctx.clip();
+    const polarGeom = this._polarGeometry();
+    const project = (x, y) => this._projectDataPoint(
+      "x",
+      "y",
+      Number(x),
+      Number(y),
+      polarGeom,
+    );
     for (const [annotationIndex, ann] of annotations.entries()) {
+      if (this._annotationSuppressed(ann)) continue;
+      ctx.save();
+      let targetX = NaN;
+      let targetY = NaN;
+      if (ann.kind === "arrow") {
+        [targetX, targetY] = project(ann.x1, ann.y1);
+      } else if (ann.kind === "callout") {
+        [targetX, targetY] = project(ann.x, ann.y);
+      }
+      const connectorTargetInBounds =
+        Number.isFinite(targetX) && Number.isFinite(targetY) &&
+        targetX >= p.x && targetX <= p.x + p.w &&
+        targetY >= p.y && targetY <= p.y + p.h;
+      if (!connectorTargetInBounds) {
+        if (polarGeom) {
+          xyClipPolarCanvas(ctx, polarGeom);
+        } else {
+          ctx.beginPath();
+          ctx.rect(p.x, p.y, p.w, p.h);
+          ctx.clip();
+        }
+      }
       const style = ann && typeof ann.style === "object" ? ann.style : {};
       if (ann.kind === "band") {
         const vertical = ann.axis === "x";
         const a = vertical ? this._dataPxX(Number(ann.start)) : this._dataPxY(Number(ann.start));
         const b = vertical ? this._dataPxX(Number(ann.end)) : this._dataPxY(Number(ann.end));
-        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        if (!Number.isFinite(a) || !Number.isFinite(b)) {
+          ctx.restore();
+          continue;
+        }
         const lo = Math.max(vertical ? p.x : p.y, Math.min(a, b));
         const hi = Math.min(vertical ? p.x + p.w : p.y + p.h, Math.max(a, b));
-        if (hi <= lo) continue;
+        if (hi <= lo) {
+          ctx.restore();
+          continue;
+        }
         ctx.save();
         ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
         ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
@@ -318,9 +669,18 @@ Object.assign(ChartView.prototype, {
       } else if (ann.kind === "rule") {
         const vertical = ann.axis === "x";
         const pos = vertical ? this._dataPxX(Number(ann.value)) : this._dataPxY(Number(ann.value));
-        if (!Number.isFinite(pos)) continue;
-        if (vertical && (pos < p.x - 1 || pos > p.x + p.w + 1)) continue;
-        if (!vertical && (pos < p.y - 1 || pos > p.y + p.h + 1)) continue;
+        if (!Number.isFinite(pos)) {
+          ctx.restore();
+          continue;
+        }
+        if (vertical && (pos < p.x - 1 || pos > p.x + p.w + 1)) {
+          ctx.restore();
+          continue;
+        }
+        if (!vertical && (pos < p.y - 1 || pos > p.y + p.h + 1)) {
+          ctx.restore();
+          continue;
+        }
         const crisp = Math.round(pos) + 0.5;
         ctx.save();
         ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
@@ -342,17 +702,11 @@ Object.assign(ChartView.prototype, {
         ctx.stroke();
         ctx.restore();
       } else if (ann.kind === "arrow") {
-        this._drawArrowLine(
-          ctx,
-          this._dataPxX(Number(ann.x0)),
-          this._dataPxY(Number(ann.y0)),
-          this._dataPxX(Number(ann.x1)),
-          this._dataPxY(Number(ann.y1)),
-          style
-        );
+        const [arrowX0, arrowY0] = this._dataPxPoint(Number(ann.x0), Number(ann.y0));
+        const [arrowX1, arrowY1] = this._dataPxPoint(Number(ann.x1), Number(ann.y1));
+        this._drawArrowLine(ctx, arrowX0, arrowY0, arrowX1, arrowY1, style);
       } else if (ann.kind === "callout") {
-        const px = this._dataPxX(Number(ann.x));
-        const py = this._dataPxY(Number(ann.y));
+        const [px, py] = project(ann.x, ann.y);
         const resolved = this._resolvedAnnotationAnchors?.get(annotationIndex);
         const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
         const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
@@ -363,16 +717,11 @@ Object.assign(ChartView.prototype, {
         const labelY = resolved?.y ?? py + dy;
         this._drawArrowLine(ctx, labelX, labelY, px, py, style);
       } else if (ann.kind === "marker") {
-        this._drawAnnotationMarker(
-          ctx,
-          this._dataPxX(Number(ann.x)),
-          this._dataPxY(Number(ann.y)),
-          style,
-          ann
-        );
+        const [markerX, markerY] = this._dataPxPoint(Number(ann.x), Number(ann.y));
+        this._drawAnnotationMarker(ctx, markerX, markerY, style, ann);
       }
+      ctx.restore();
     }
-    ctx.restore();
   },
 
   _drawAnnotationLabels(updateLabels) {
@@ -383,8 +732,8 @@ Object.assign(ChartView.prototype, {
     const laidOut = [];
     this._resolvedAnnotationAnchors = new Map();
     for (const [annotationIndex, ann] of annotations.entries()) {
-      const text = typeof ann.text === "string" ? ann.text : "";
-      if (!text) continue;
+      const text: string = typeof ann.text === "string" ? ann.text : "";
+      if (!text || this._annotationSuppressed(ann)) continue;
       const style = ann && typeof ann.style === "object" ? ann.style : {};
       let px = null;
       let py = null;
@@ -403,8 +752,7 @@ Object.assign(ChartView.prototype, {
           px = this._dataPxX(Number(ann.x));
           py = p.y + (1 - Number(ann.y)) * p.h;
         } else {
-          px = this._dataPxX(Number(ann.x));
-          py = this._dataPxY(Number(ann.y));
+          [px, py] = this._dataPxPoint(Number(ann.x), Number(ann.y));
         }
       } else if (ann.kind === "rule") {
         if (ann.axis === "x") {
@@ -423,10 +771,8 @@ Object.assign(ChartView.prototype, {
           py = (this._dataPxY(Number(ann.start)) + this._dataPxY(Number(ann.end))) / 2;
         }
       } else if (ann.kind === "arrow") {
-        const ax0 = this._dataPxX(Number(ann.x0));
-        const ay0 = this._dataPxY(Number(ann.y0));
-        const ax1 = this._dataPxX(Number(ann.x1));
-        const ay1 = this._dataPxY(Number(ann.y1));
+        const [ax0, ay0] = this._dataPxPoint(Number(ann.x0), Number(ann.y0));
+        const [ax1, ay1] = this._dataPxPoint(Number(ann.x1), Number(ann.y1));
         px = (ax0 + ax1) / 2;
         py = (ay0 + ay1) / 2;
         // Upward unit normal of the shaft: the label lifts along it (after
@@ -436,19 +782,32 @@ Object.assign(ChartView.prototype, {
           lift = [-(ay1 - ay0) / len, (ax1 - ax0) / len];
           if (lift[1] > 0) lift = [-lift[0], -lift[1]];
         }
-      } else if (ann.kind === "callout") {
-        px = this._dataPxX(Number(ann.x));
-        py = this._dataPxY(Number(ann.y));
-      } else if (ann.kind === "marker") {
-        px = this._dataPxX(Number(ann.x));
-        py = this._dataPxY(Number(ann.y));
+      } else if (ann.kind === "callout" || ann.kind === "marker") {
+        [px, py] = this._dataPxPoint(Number(ann.x), Number(ann.y));
       }
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {
         continue;
       }
       const d = document.createElement("div");
-      d.textContent = text;
+      const mathRanges = String(style.math_italic_ranges || "")
+        .split(",")
+        .map((range) => range.split(":").map(Number))
+        .filter(([start, end]) => Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start < end);
+      if (mathRanges.length) {
+        for (const [index, char] of Array.from(text).entries()) {
+          if (mathRanges.some(([start, end]) => start <= index && index < end)) {
+            const italic = document.createElement("span");
+            italic.style.fontStyle = "italic";
+            italic.textContent = char;
+            d.appendChild(italic);
+          } else {
+            d.appendChild(document.createTextNode(char));
+          }
+        }
+      } else {
+        d.textContent = text;
+      }
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
       // Rule/band specs carry no anchor; default to the placement that keeps
@@ -520,6 +879,7 @@ Object.assign(ChartView.prototype, {
       const opacityIsShape = ann.kind !== "text" && ann.kind !== "callout";
       const labelStyle = {};
       for (const [key, value] of Object.entries(style)) {
+        if (key === "math_italic_ranges") continue;
         if (key === "opacity" && ann.kind === "text") {
           labelStyle[key] = value;
           continue;

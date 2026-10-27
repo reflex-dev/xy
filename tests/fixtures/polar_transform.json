@@ -1,0 +1,256 @@
+{
+ "_contract": "Normative (theta,r)->pixel fixtures for polar coordinates. Authored from spec/design/polar-axes.md section 3, NOT generated from any implementation. px/py are SCREEN space (y grows DOWN). GL clip space flips the y term to '+'.",
+ "_consumers": [
+  "tests/test_polar_transform.py (Python projection)",
+  "scripts/polar_parity_smoke.py (the real GLSL, via headless Chrome)"
+ ],
+ "tolerance_px": 1e-06,
+ "cases": [
+  {
+   "name": "default-cardinals",
+   "pins": "zero location at East, ccw direction, the screen-space y flip, and r=0 at centre",
+   "config": {
+    "unit": "radians",
+    "zero": "E",
+    "direction": "counterclockwise",
+    "r_range": [
+     0.0,
+     1.0
+    ]
+   },
+   "plot": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 400.0,
+    "h": 400.0
+   },
+   "points": [
+    {
+     "theta": 0,
+     "r": 1,
+     "px": 400.0,
+     "py": 200.0
+    },
+    {
+     "theta": 1.5707963267948966,
+     "r": 1,
+     "px": 200.0,
+     "py": 0.0
+    },
+    {
+     "theta": 3.141592653589793,
+     "r": 1,
+     "px": 0.0,
+     "py": 200.0
+    },
+    {
+     "theta": -1.5707963267948966,
+     "r": 1,
+     "px": 200.0,
+     "py": 400.0
+    },
+    {
+     "theta": 0,
+     "r": 0,
+     "px": 200.0,
+     "py": 200.0
+    }
+   ]
+  },
+  {
+   "name": "zero-north",
+   "pins": "theta zero rotation: theta=0 points up",
+   "config": {
+    "unit": "radians",
+    "zero": "N",
+    "direction": "counterclockwise",
+    "r_range": [
+     0.0,
+     1.0
+    ]
+   },
+   "plot": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 400.0,
+    "h": 400.0
+   },
+   "points": [
+    {
+     "theta": 0,
+     "r": 1,
+     "px": 200.0,
+     "py": 0.0
+    },
+    {
+     "theta": 1.5707963267948966,
+     "r": 1,
+     "px": 0.0,
+     "py": 200.0
+    }
+   ]
+  },
+  {
+   "name": "compass-degrees-cw",
+   "pins": "compass composition used by wind roses: 90deg=East, 180deg=South, 270deg=West",
+   "config": {
+    "unit": "degrees",
+    "zero": "N",
+    "direction": "clockwise",
+    "r_range": [
+     0.0,
+     1.0
+    ]
+   },
+   "plot": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 400.0,
+    "h": 400.0
+   },
+   "points": [
+    {
+     "theta": 0,
+     "r": 1,
+     "px": 200.0,
+     "py": 0.0
+    },
+    {
+     "theta": 90,
+     "r": 1,
+     "px": 400.0,
+     "py": 200.0
+    },
+    {
+     "theta": 180,
+     "r": 1,
+     "px": 200.0,
+     "py": 400.0
+    },
+    {
+     "theta": 270,
+     "r": 1,
+     "px": 0.0,
+     "py": 200.0
+    }
+   ]
+  },
+  {
+   "name": "non-square-rect",
+   "pins": "circle stays round via min(w,h) and is centred in the rect, not stretched",
+   "config": {
+    "unit": "radians",
+    "zero": "E",
+    "direction": "counterclockwise",
+    "r_range": [
+     0.0,
+     1.0
+    ]
+   },
+   "plot": {
+    "x": 50.0,
+    "y": 20.0,
+    "w": 600.0,
+    "h": 300.0
+   },
+   "points": [
+    {
+     "theta": 0,
+     "r": 1,
+     "px": 500.0,
+     "py": 170.0
+    },
+    {
+     "theta": 1.5707963267948966,
+     "r": 1,
+     "px": 350.0,
+     "py": 20.0
+    },
+    {
+     "theta": 3.141592653589793,
+     "r": 1,
+     "px": 200.0,
+     "py": 170.0
+    },
+    {
+     "theta": -1.5707963267948966,
+     "r": 1,
+     "px": 350.0,
+     "py": 320.0
+    }
+   ]
+  },
+  {
+   "name": "radial-range-offset",
+   "pins": "radial normalization against a non-zero r_lo",
+   "config": {
+    "unit": "radians",
+    "zero": "E",
+    "direction": "counterclockwise",
+    "r_range": [
+     10.0,
+     20.0
+    ]
+   },
+   "plot": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 400.0,
+    "h": 400.0
+   },
+   "points": [
+    {
+     "theta": 0,
+     "r": 10,
+     "px": 200.0,
+     "py": 200.0
+    },
+    {
+     "theta": 0,
+     "r": 15,
+     "px": 300.0,
+     "py": 200.0
+    },
+    {
+     "theta": 0,
+     "r": 20,
+     "px": 400.0,
+     "py": 200.0
+    }
+   ]
+  },
+  {
+   "name": "half-radius",
+   "pins": "linear radial interpolation",
+   "config": {
+    "unit": "radians",
+    "zero": "E",
+    "direction": "counterclockwise",
+    "r_range": [
+     0.0,
+     1.0
+    ]
+   },
+   "plot": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 400.0,
+    "h": 400.0
+   },
+   "points": [
+    {
+     "theta": 0,
+     "r": 0.5,
+     "px": 300.0,
+     "py": 200.0
+    },
+    {
+     "theta": 1.5707963267948966,
+     "r": 0.5,
+     "px": 200.0,
+     "py": 100.0
+    }
+   ]
+  }
+ ]
+}

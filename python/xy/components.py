@@ -37,14 +37,15 @@ import re
 import uuid
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from os import PathLike
 from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 
-from . import _validate, channels, export, styles
-from ._figure import Figure, Selection
+from . import _validate, channels, export, plugins, styles
+from ._figure import Figure, Selection, structural_probe
 from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
@@ -100,6 +101,8 @@ __all__ = [
     "errorbar_chart",
     "export_config",
     "facet_chart",
+    "funnel",
+    "funnel_chart",
     "heatmap",
     "heatmap_chart",
     "hexbin",
@@ -113,8 +116,17 @@ __all__ = [
     "legend",
     "line",
     "line_chart",
+    "mark",
     "marker",
     "modebar",
+    "pie_chart",
+    "polar_bar_chart",
+    "polar_chart",
+    "r_axis",
+    "radar_chart",
+    "ribbon",
+    "sankey",
+    "sankey_chart",
     "scatter",
     "scatter_chart",
     "segments",
@@ -126,8 +138,10 @@ __all__ = [
     "stem_chart",
     "step",
     "step_chart",
+    "structural_probe",
     "text",
     "theme",
+    "theta_axis",
     "threshold",
     "threshold_zone",
     "tooltip",
@@ -136,6 +150,7 @@ __all__ = [
     "violin",
     "violin_chart",
     "vline",
+    "wind_rose",
     "x_axis",
     "x_band",
     "y_axis",
@@ -227,6 +242,24 @@ class Axis(Component):
     tick_label_min_gap: Optional[float] = None
     side: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    # New fields append after the v0.0.3 positional surface.
+    margin: Optional[float] = None
+    tick_sides: Optional[list[str]] = None
+    tick_label_sides: Optional[list[str]] = None
+    minor_tick_values: Optional[list[float]] = None
+    minor_style: dict[str, StyleValue] = field(default_factory=dict)
+    nonpositive: Optional[Literal["clip", "mask"]] = None
+    # Polar angular configuration, set by `theta_axis`. Ignored unless the
+    # chart is `coords="polar"`; see spec/design/polar-axes.md.
+    theta_unit: Optional[str] = None
+    theta_zero: Union[str, float, None] = None
+    theta_direction: Optional[str] = None
+    # Phase-7 polar geometry. Appended to preserve the released positional
+    # dataclass surface; ignored unless the owning chart is polar.
+    sector: Optional[tuple[float, float]] = None
+    grid_shape: Optional[str] = None
+    hole: Optional[float] = None
+    r_origin: Optional[float] = None
 
 
 @dataclass
@@ -240,6 +273,11 @@ class Legend(Component):
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
+    # New fields append after ``render``: Legend is public and positional
+    # construction over the released field order must keep binding.
+    highlight: bool = True
+    toggle: bool = True
+    anchor: Optional[tuple[float, ...]] = None
 
 
 @dataclass
@@ -253,6 +291,9 @@ class Tooltip(Component):
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
+    # New fields append after ``render``: Tooltip is public and positional
+    # construction over the released field order must keep binding.
+    labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -296,9 +337,12 @@ class ExportConfig(Component):
 
 @dataclass
 class Theme(Component):
-    """Chart-wide style tokens (plot background, grid/axis/text colors)."""
+    """Chart-wide style tokens (plot background, grid/axis/text colors) and
+    the categorical color cycle — a positional list, or a `{category: color}`
+    map that pins colors to labels."""
 
     style: dict[str, StyleValue] = field(default_factory=dict)
+    palette: Union[list[str], dict[str, str], None] = None
 
 
 @dataclass
@@ -345,9 +389,23 @@ class Spring:
         }
 
 
+_UNSET: Any = object()
+
+
 @dataclass
 class Animation(Component):
-    """Declarative browser transition policy built by :func:`animation`."""
+    """Declarative browser transition policy built by :func:`animation`.
+
+    A mark-level instance cascades over the chart-level one field by field.
+    ``to_spec`` is the complete policy; ``to_override_spec`` is only what this
+    instance actually sets, which is what makes the cascade work.
+    """
+
+    # Set by :func:`animation` to the exact argument names the caller passed.
+    # ``None`` means "not recorded" — direct construction falls back to
+    # comparing against the defaults, which is right except for the odd case
+    # of explicitly passing a default value.
+    _explicit_fields = None
 
     enabled: bool | Literal["auto"] = "auto"
     delay: float = 0.0
@@ -416,6 +474,26 @@ class Animation(Component):
             "interpolate": list(policies),
         }
 
+    def to_override_spec(self) -> dict[str, Any]:
+        """Only the fields this instance sets, for cascading over a base spec.
+
+        `to_spec` is complete, so spreading it over a chart-level spec resets
+        every field the caller did not mention — silently turning off a
+        chart-level ``match="key"``, among others.
+        """
+        spec = self.to_spec()
+        explicit = self._explicit_fields
+        if explicit is None:
+            defaults = _animation_defaults()
+            explicit = {name for name, value in spec.items() if value != defaults[name]}
+        return {name: value for name, value in spec.items() if name in explicit}
+
+
+@lru_cache(maxsize=1)
+def _animation_defaults() -> dict[str, Any]:
+    """The complete default policy, and the base every cascade starts from."""
+    return Animation().to_spec()
+
 
 def _positive_animation_number(value: Any, label: str) -> float:
     number = _finite_number(value, label)
@@ -452,43 +530,65 @@ def spring(*, stiffness: float = 170.0, damping: float = 26.0, mass: float = 1.0
 
 def animation(
     *,
-    enabled: bool | Literal["auto"] = "auto",
-    delay: float = 0,
-    duration: float = 400,
-    easing: str | tuple[float, float, float, float] | Spring = "ease-out",
-    match: Literal["index", "append", "key"] = "index",
-    enter: str = "auto",
-    update: str = "interpolate",
-    interpolate: Sequence[str] = ("position", "size", "color", "domain"),
+    enabled: bool | Literal["auto"] = _UNSET,
+    delay: float = _UNSET,
+    duration: float = _UNSET,
+    easing: str | tuple[float, float, float, float] | Spring = _UNSET,
+    match: Literal["index", "append", "key"] = _UNSET,
+    enter: str = _UNSET,
+    update: str = _UNSET,
+    interpolate: Sequence[str] = _UNSET,
     on_start: Optional[Callable[[dict], None]] = None,
     on_end: Optional[Callable[[dict], None]] = None,
 ) -> Animation:
     """Configure entrance and data-update motion without per-frame callbacks.
 
+    A mark-level `animation=` cascades over the chart-level one: only the
+    arguments passed here override it, so `xy.animation(duration=90)` on a mark
+    keeps the chart's `match`, `easing`, and the rest.
+
     Args:
-        enabled: ``"auto"`` honors reduced motion; a boolean explicitly enables or disables.
-        delay: Non-negative delay before motion begins, in milliseconds.
-        duration: Non-negative animation duration, in milliseconds.
+        enabled: ``"auto"`` (default) honors reduced motion; a boolean explicitly
+            enables or disables.
+        delay: Non-negative delay before motion begins, in milliseconds. Default ``0``.
+        duration: Non-negative animation duration, in milliseconds. Default ``400``.
         easing: Named easing, four-number cubic Bézier tuple, or ``spring()`` policy.
-        match: Row identity strategy: ``"index"``, ``"append"``, or ``"key"``.
-        enter: Entrance effect, such as ``"auto"``, ``"scale"``, or ``"reveal"``.
-        update: Update effect; use ``"interpolate"`` or ``"none"``.
-        interpolate: Unique channels to interpolate during updates.
+            Default ``"ease-out"``.
+        match: Row identity strategy: ``"index"`` (default), ``"append"``, or ``"key"``.
+        enter: Entrance effect, such as ``"auto"`` (default), ``"scale"``, or ``"reveal"``.
+        update: Update effect; use ``"interpolate"`` (default) or ``"none"``.
+        interpolate: Unique channels to interpolate during updates. Default
+            ``("position", "size", "color", "domain")``.
         on_start: Optional live-host callback receiving the animation-start event.
         on_end: Optional live-host callback receiving the animation-end event.
     """
-    value = Animation(
-        enabled=enabled,
-        delay=delay,
-        duration=duration,
-        easing=easing,
-        match=match,
-        enter=enter,
-        update=update,
-        interpolate=tuple(interpolate),
-        on_start=on_start,
-        on_end=on_end,
-    )
+    if interpolate is not _UNSET:
+        try:
+            interpolate = tuple(interpolate)
+        except TypeError as exc:
+            raise ValueError("animation interpolate must be a sequence of named policies") from exc
+    passed = {
+        name: value
+        for name, value in (
+            ("enabled", enabled),
+            ("delay", delay),
+            ("duration", duration),
+            ("easing", easing),
+            ("match", match),
+            ("enter", enter),
+            ("update", update),
+            ("interpolate", interpolate),
+        )
+        if value is not _UNSET
+    }
+    # Start from the dataclass defaults and apply only what was passed, so the
+    # default values live in exactly one place.
+    value = Animation(on_start=on_start, on_end=on_end)
+    for name, setting in passed.items():
+        setattr(value, name, setting)
+    # Record the caller's exact argument names so the cascade can tell "set to
+    # the default" apart from "not set". Callbacks are host-side, not spec.
+    value._explicit_fields = frozenset(passed)
     value.to_spec()
     return value
 
@@ -506,7 +606,7 @@ def scatter(
     color: Union[str, ColorLike, ArrayLike, None] = None,
     size: Union[str, Scalar, ArrayLike, None] = 4.0,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: Any = 0.8,
@@ -518,6 +618,9 @@ def scatter(
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
+    _marker_path: Optional[dict[str, Any]] = None,
+    _marker_glyph: Optional[str] = None,
+    _legend_trace_size: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     key: Any = None,
@@ -534,7 +637,9 @@ def scatter(
         color: Constant color, values, or a column name.
         size: Constant marker size, values, or a column name.
         name: Series label used by legends and tooltips.
-        colormap: Colormap used for continuous color values.
+        colormap: Color ramp for continuous values — a built-in name, a CSS
+            ``linear-gradient(...)``, or a sequence of CSS colors (optionally
+            ``(position, color)`` pairs).
         color_domain: Explicit minimum and maximum for continuous colors.
         size_range: Minimum and maximum rendered marker sizes.
         opacity: Marker opacity from zero to one.
@@ -546,6 +651,9 @@ def scatter(
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
         _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
+        _marker_path: Internal authored marker-path payload for Matplotlib adapters.
+        _marker_glyph: Internal single-glyph marker payload for Matplotlib adapters.
+        _legend_trace_size: Whether a Matplotlib legend derives marker size from this trace.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         key: Stable row identities, or a column name resolved from ``data``.
@@ -578,6 +686,9 @@ def scatter(
             "stroke": stroke,
             "stroke_width": stroke_width,
             "_artist_alpha": _artist_alpha,
+            "_marker_path": _marker_path,
+            "_marker_glyph": _marker_glyph,
+            "_legend_trace_size": _legend_trace_size,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -850,10 +961,11 @@ def segments(
     data: TableLike = None,
     name: Optional[str] = None,
     color: Union[str, ColorLike, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -869,10 +981,13 @@ def segments(
         data: Table used to resolve column-name inputs.
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
-        colormap: Colormap used for continuous color values.
+        colormap: Color ramp for continuous values — a built-in name, a CSS
+            ``linear-gradient(...)``, or a sequence of CSS colors (optionally
+            ``(position, color)`` pairs).
         domain: Explicit minimum and maximum for continuous colors.
         width: Segment width in pixels.
         opacity: Segment opacity from zero to one.
+        dash: Optional line dash pattern.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -894,8 +1009,249 @@ def segments(
             "domain": domain,
             "width": width,
             "opacity": opacity,
+            "dash": dash,
             "x_axis": x_axis,
             "y_axis": y_axis,
+        },
+    )
+
+
+def ribbon(
+    x0: Union[str, ArrayLike, None] = None,
+    x1: Union[str, ArrayLike, None] = None,
+    source_lo: Union[str, ArrayLike, None] = None,
+    source_hi: Union[str, ArrayLike, None] = None,
+    target_lo: Union[str, ArrayLike, None] = None,
+    target_hi: Union[str, ArrayLike, None] = None,
+    *,
+    data: TableLike = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
+    color_target: Union[str, ColorLike, ArrayLike, None] = None,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
+    name: Optional[str] = None,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    style: Optional[dict[str, StyleValue]] = None,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Flow bands: a vertical span at `x0` joined to one at `x1` by a cubic.
+
+    The primitive behind `xy.sankey_chart` — and behind alluvial and chord
+    diagrams later. Each band may carry a different colour at each end
+    (`color` at the source, `color_target` at the target); the gradient runs
+    along the flow. Omitting `color_target` paints the band flat.
+
+    Args:
+        x0: Source face x coordinates or a column name.
+        x1: Target face x coordinates or a column name.
+        source_lo: Lower edge of the span at `x0`.
+        source_hi: Upper edge of the span at `x0`.
+        target_lo: Lower edge of the span at `x1`.
+        target_hi: Upper edge of the span at `x1`.
+        data: Table used to resolve column-name inputs.
+        color: Source-end colour(s).
+        color_target: Target-end colour(s); omit for a flat band.
+        colormap: Ramp for continuous colour values.
+        name: Series label used by legends and tooltips.
+        opacity: Band fill opacity from zero to one.
+        stroke: Optional band outline colour.
+        stroke_width: Band outline width in pixels.
+        style: Mark style overrides.
+        class_name: Adapter-only trace metadata.
+        x_axis: Identifier of the x axis used by this mark.
+        y_axis: Identifier of the y axis used by this mark.
+    """
+    return Mark(
+        kind="ribbon",
+        x=x0,
+        y=x1,
+        data=data,
+        name=name,
+        class_name=class_name,
+        style=_mark_style_dict(style, "ribbon style"),
+        props={
+            "source_lo": source_lo,
+            "source_hi": source_hi,
+            "target_lo": target_lo,
+            "target_hi": target_hi,
+            "color": color,
+            "color_target": color_target,
+            "colormap": colormap,
+            "opacity": opacity,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def sankey(
+    links: Any = None,
+    *,
+    nodes: Optional[Sequence[Any]] = None,
+    node_width: float = 0.02,
+    node_padding: float = 0.02,
+    align: str = "justify",
+    iterations: int = 6,
+    colors: Optional[Sequence[str]] = None,
+    link_opacity: Any = 0.4,
+    labels: bool = True,
+    label_size: float = 12.0,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Mark:
+    """A Sankey flow diagram from ``(source, target, value)`` links.
+
+    Layout — layering, crossing minimisation, value-proportional heights and
+    endpoint stacking — happens in Python at build time, the way `hist` owns
+    its binning; the renderers only ever see `ribbon` geometry. Prefer
+    `xy.sankey_chart(...)`, which also hides the axes.
+
+    Args:
+        links: ``(source, target, value)`` triples; endpoints are node names.
+        nodes: Explicit node order. Defaults to first appearance in `links`.
+        node_width: Node rectangle width as a fraction of the diagram.
+        node_padding: Vertical gap between nodes in a layer, as a fraction.
+        align: ``"justify"`` (default) flushes sinks to the last layer.
+        iterations: Crossing-minimisation sweeps.
+        colors: One CSS colour per node, in node order.
+        link_opacity: Ribbon opacity; node rectangles stay opaque.
+        labels: Draw node names beside the nodes.
+        label_size: Node label font size in px.
+        style: Style overrides for the link ribbons.
+    """
+    return Mark(
+        kind="sankey",
+        x=None,
+        y=None,
+        data=None,
+        name=None,
+        class_name=None,
+        style=_mark_style_dict(style, "sankey style"),
+        props={
+            # Validation is deferred to figure build, like every factory:
+            # compute_layout refuses an empty or missing link list by name.
+            "links": [] if links is None else list(links),
+            "nodes": None if nodes is None else list(nodes),
+            "node_width": node_width,
+            "node_padding": node_padding,
+            "align": align,
+            "iterations": iterations,
+            "colors": None if colors is None else list(colors),
+            "link_opacity": link_opacity,
+            "labels": labels,
+            "label_size": label_size,
+        },
+    )
+
+
+def funnel(
+    stage: Union[str, ArrayLike, None] = None,
+    value: Union[str, ArrayLike, None] = None,
+    *,
+    data: TableLike = None,
+    key: Any = None,
+    orientation: str = "vertical",
+    geometry: str = "area",
+    gap: Optional[float] = None,
+    neck: str = "rect",
+    min_width: float = 0.0,
+    color: Optional[str] = None,
+    colors: Optional[Sequence[str]] = None,
+    name: Optional[str] = None,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    show_values: bool = True,
+    show_conversion: bool = True,
+    show_dropoff: bool = False,
+    labels: bool = True,
+    label_size: float = 12.0,
+    value_format: str = "{:,.10g}",
+    percent_format: str = "{:.0%}",
+    animation: Animation | bool | None = None,
+    style: Optional[dict[str, StyleValue]] = None,
+    class_name: Optional[str] = None,
+) -> Mark:
+    """A funnel mark: one centered segment per stage, in declared order.
+
+    Stage order is the declared order — a funnel is a categorical business
+    process and is never sorted. Prefer `xy.funnel_chart(...)`, which also
+    hides the cross axis and puts stage 0 at the top.
+
+    Args:
+        stage: Stage names in order, or a column name resolved from ``data``.
+        value: One non-negative value per stage, or a column name.
+        data: Table used to resolve column-name inputs.
+        key: Stable per-stage identities for animation matching, or a column
+            name. Defaults to positional matching.
+        orientation: ``"vertical"`` stacks stages along y (stage 0 on top in
+            `funnel_chart`); ``"horizontal"`` runs them along x.
+        geometry: ``"area"`` draws the classic tapering silhouette (each
+            segment's far edge previews the next stage, so painted area is NOT
+            proportional to the value); ``"bar"`` draws centered
+            constant-width segments whose widths carry the values exactly.
+        gap: Gap between segments as a fraction of the stage pitch, in
+            ``[0, 1)``. ``None`` resolves per geometry: 0 for ``"area"``
+            (a continuous silhouette), 0.2 for ``"bar"`` (bar-chart spacing).
+        neck: Last area segment's far edge: ``"rect"`` holds the stage's own
+            width, ``"taper"`` runs it to a point. Area geometry only.
+        min_width: Drawn-width floor as a fraction of the widest stage, in
+            ``[0, 1]``. Keeps zero/tiny stages visible and hoverable; values
+            in labels, tooltips and events are never clamped.
+        color: One constant CSS color for every segment (no per-stage legend).
+        colors: One CSS color per stage. Defaults to the palette cycle in
+            declared stage order.
+        name: Series label. Legend rows normally come from the per-stage
+            categorical encoding instead.
+        opacity: Segment opacity from zero to one (per-trace).
+        stroke: Optional segment outline color (per-trace).
+        stroke_width: Segment outline width in pixels (per-trace).
+        show_values: Draw the value label on each segment.
+        show_conversion: Append the overall conversion (share of the first
+            stage) to each value label.
+        show_dropoff: Draw the signed stage-over-stage change at each
+            boundary (``-38%`` for a drop, ``+12%`` for growth).
+        labels: Master switch for all funnel labels.
+        label_size: Label font size in px.
+        value_format: ``str.format`` template for values.
+        percent_format: ``str.format`` template for ratios.
+        animation: Per-mark animation override; ``False`` disables animation.
+        style: Mark style overrides (opacity, stroke, stroke-width).
+        class_name: Adapter-only trace metadata; it does not style canvas
+            geometry.
+    """
+    return Mark(
+        kind="funnel",
+        x=stage,
+        y=value,
+        data=data,
+        name=name,
+        class_name=class_name,
+        key=key,
+        animation=animation,
+        style=_mark_style_dict(style, "funnel style"),
+        props={
+            "orientation": orientation,
+            "geometry": geometry,
+            "gap": gap,
+            "neck": neck,
+            "min_width": min_width,
+            "color": color,
+            "colors": None if colors is None else list(colors),
+            "opacity": opacity,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
+            "show_values": show_values,
+            "show_conversion": show_conversion,
+            "show_dropoff": show_dropoff,
+            "labels": labels,
+            "label_size": label_size,
+            "value_format": value_format,
+            "percent_format": percent_format,
         },
     )
 
@@ -910,12 +1266,13 @@ def triangle_mesh(
     *,
     data: TableLike = None,
     color: Union[str, ColorLike, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
     opacity: Any = 1.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
+    _joined_fill: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -932,12 +1289,15 @@ def triangle_mesh(
         y2: Third-vertex y coordinates or a column name.
         data: Table used to resolve column-name inputs.
         color: Constant color, values, or a column name.
-        colormap: Colormap used for continuous color values.
+        colormap: Color ramp for continuous values — a built-in name, a CSS
+            ``linear-gradient(...)``, or a sequence of CSS colors (optionally
+            ``(position, color)`` pairs).
         domain: Explicit minimum and maximum for continuous colors.
         name: Series label used by legends and tooltips.
         opacity: Triangle opacity from zero to one.
         stroke: Optional triangle outline color.
         stroke_width: Triangle outline width in pixels.
+        _joined_fill: Internal pyplot hint for suppressing shared triangle edges.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -962,6 +1322,7 @@ def triangle_mesh(
             "opacity": opacity,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_joined_fill": _joined_fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1197,6 +1558,9 @@ def box(
     show_outliers: bool = True,
     outlier_size: float = 4.0,
     style: Optional[dict[str, StyleValue]] = None,
+    whisker_style: Optional[dict[str, StyleValue]] = None,
+    median_style: Optional[dict[str, StyleValue]] = None,
+    outlier_style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -1215,7 +1579,10 @@ def box(
         orientation: ``vertical`` or ``horizontal`` orientation.
         show_outliers: Whether to render outlier points.
         outlier_size: Outlier marker size in pixels.
-        style: Mark style overrides.
+        style: Box-body fill, border, and overall opacity overrides.
+        whisker_style: Whisker stroke overrides.
+        median_style: Median-line stroke overrides.
+        outlier_style: Outlier marker fill, border, shape, and opacity overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
@@ -1236,6 +1603,9 @@ def box(
             "orientation": orientation,
             "show_outliers": show_outliers,
             "outlier_size": outlier_size,
+            "whisker_style": _mark_style_dict(whisker_style, "box whisker_style"),
+            "median_style": _mark_style_dict(median_style, "box median_style"),
+            "outlier_style": _mark_style_dict(outlier_style, "box outlier_style"),
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1310,7 +1680,7 @@ def hexbin(
     reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1369,11 +1739,13 @@ def contour(
     levels: Union[int, ArrayLike] = 10,
     filled: bool = False,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
-    color: Optional[str] = None,
-    width: float = 1.1,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
+    color: Any = None,
+    width: Any = 1.1,
     opacity: float = 0.9,
     dash_negative: bool = False,
+    extend: str = "neither",
+    corner_mask: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1390,10 +1762,12 @@ def contour(
         filled: Whether to fill intervals between contours.
         name: Series label used by legends and tooltips.
         colormap: Colormap used for contour values.
-        color: Constant isoline color.
-        width: Isoline width in pixels.
+        color: Constant isoline color or direct RGBA colors cycled by level.
+        width: Isoline width in pixels, scalar or cycled by contour level.
         opacity: Contour opacity from zero to one.
         dash_negative: Whether negative isolines use a dashed stroke.
+        extend: Whether filled contours paint values below or above the levels.
+        corner_mask: Preserve the valid triangle of a quad with one missing corner.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -1416,6 +1790,8 @@ def contour(
             "width": width,
             "opacity": opacity,
             "dash_negative": dash_negative,
+            "extend": extend,
+            "corner_mask": corner_mask,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1542,13 +1918,14 @@ def bar(
     name: Optional[str] = None,
     color: Any = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: Any = 0.85,
     corner_radius: Any = 0.0,
+    wedge_gap: float = 0.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
@@ -1569,13 +1946,17 @@ def bar(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Bar width in category units.
+        width: Scalar or per-bar widths in category units.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: ``vertical`` or ``horizontal`` orientation.
         series: Optional names for matrix-valued series.
         opacity: Bar opacity from zero to one.
         corner_radius: Bar corner radius in pixels.
+        wedge_gap: Gap between neighbouring polar wedges, in pixels — constant
+            from the hole to the rim. Deliberately a length, not an angle: an
+            angular pad's gap is ``r · dtheta`` wide and so tapers to nothing
+            toward the centre. Ignored outside ``coords="polar"``.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
         _artist_alpha: Internal Matplotlib alpha override, scalar or per bar.
@@ -1607,6 +1988,7 @@ def bar(
             "series": series,
             "opacity": opacity,
             "corner_radius": corner_radius,
+            "wedge_gap": wedge_gap,
             "stroke": stroke,
             "stroke_width": stroke_width,
             "_artist_alpha": _artist_alpha,
@@ -1625,13 +2007,14 @@ def column(
     name: Optional[str] = None,
     color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
     corner_radius: Union[float, tuple[float, float]] = 0.0,
+    wedge_gap: float = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Union[str, dict[str, str], None] = None,
@@ -1651,13 +2034,17 @@ def column(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Column width in category units.
+        width: Scalar or per-column widths in category units.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: Orientation forwarded to the bar renderer.
         series: Optional names for matrix-valued series.
         opacity: Column opacity from zero to one.
         corner_radius: Column corner radius in pixels.
+        wedge_gap: Gap between neighbouring polar wedges, in pixels — constant
+            from the hole to the rim. Deliberately a length, not an angle: an
+            angular pad's gap is ``r · dtheta`` wide and so tapers to nothing
+            toward the centre. Ignored outside ``coords="polar"``.
         stroke: Optional column outline color.
         stroke_width: Column outline width in pixels.
         fill: CSS fill value or linear gradient.
@@ -1688,6 +2075,7 @@ def column(
             "series": series,
             "opacity": opacity,
             "corner_radius": corner_radius,
+            "wedge_gap": wedge_gap,
             "stroke": stroke,
             "stroke_width": stroke_width,
             "fill": fill,
@@ -1704,7 +2092,7 @@ def heatmap(
     y: Union[str, ArrayLike, None] = None,
     data: TableLike = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     style: Optional[dict[str, StyleValue]] = None,
@@ -1765,7 +2153,9 @@ def vline(
         color: Rule color.
         width: Rule width in pixels.
         opacity: Rule opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The rule is
+            canvas-painted and is styled through ``color``, ``width``, and
+            ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1797,7 +2187,9 @@ def hline(
         color: Rule color.
         width: Rule width in pixels.
         opacity: Rule opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The rule is
+            canvas-painted and is styled through ``color``, ``width``, and
+            ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1829,7 +2221,8 @@ def x_band(
         text: Optional label displayed in the band.
         color: Band color.
         opacity: Band opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The band is
+            canvas-painted and is styled through ``color`` and ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1862,7 +2255,8 @@ def y_band(
         text: Optional label displayed in the band.
         color: Band color.
         opacity: Band opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The band is
+            canvas-painted and is styled through ``color`` and ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1899,7 +2293,7 @@ def text(
         dy: Vertical pixel offset from the anchor.
         color: Text color.
         anchor: Text alignment relative to the anchor point.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the text label.
         style: Annotation style overrides.
     """
     if not isinstance(value, str):
@@ -1937,7 +2331,7 @@ def label(
         dy: Vertical pixel offset from the anchor.
         color: Text color.
         anchor: Text alignment relative to the anchor point.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the text label.
         style: Annotation style overrides.
     """
     return text(
@@ -1985,7 +2379,8 @@ def marker(
         dx: Horizontal label offset in pixels.
         dy: Vertical label offset in pixels.
         anchor: Label alignment relative to the marker.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The marker is
+            canvas-painted and is styled through its marker arguments.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -2033,7 +2428,9 @@ def arrow(
         color: Arrow color.
         width: Arrow width in pixels.
         opacity: Arrow opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The arrow is
+            canvas-painted and is styled through ``color``, ``width``, and
+            ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -2067,7 +2464,8 @@ def threshold(
         color: Rule color.
         width: Rule width in pixels.
         opacity: Rule opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The threshold
+            rule is canvas-painted.
         style: Annotation style overrides.
     """
     axis = _annotation_axis_name(axis, "threshold axis")
@@ -2114,7 +2512,8 @@ def threshold_zone(
         text: Optional threshold label.
         color: Band color.
         opacity: Band opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The threshold
+            band is canvas-painted.
         style: Annotation style overrides.
     """
     axis = _annotation_axis_name(axis, "threshold_zone axis")
@@ -2167,7 +2566,8 @@ def callout(
         width: Pointer width in pixels.
         opacity: Callout opacity from zero to one.
         anchor: Text alignment relative to the callout point.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the callout text. The pointer is
+            canvas-painted.
         style: Annotation style overrides.
     """
     if not isinstance(value, str):
@@ -2190,6 +2590,65 @@ def callout(
     )
 
 
+# Hiding axis chrome used to mean writing seven transparent-color and
+# zero-width style properties by hand, per axis, on every chart. These
+# shorthands compile to exactly those properties, so they compose with an
+# explicit `style=` (which always wins) and need no renderer support.
+_AXIS_LINE_OFF = {"axis_width": 0, "axis_color": "#00000000"}
+# Geometry, not paint: every renderer resolves the tick-LABEL color as
+# `tick_label_color` falling back to `tick_color`, so blanking `tick_color`
+# here would erase the labels too — the opposite of what `ticks=False` means.
+# Zero length and zero width draw no tick mark in all three renderers and
+# leave the label's inherited color alone.
+_AXIS_TICKS_OFF = {"tick_length": 0, "tick_width": 0}
+_AXIS_GRID_OFF = {"grid_opacity": 0}
+_AXIS_TEXT_OFF = {"tick_label_color": "#00000000", "label_color": "#00000000"}
+
+
+def _axis_visibility_style(
+    show: Any,
+    line: Any,
+    ticks: Any,
+    grid: Any,
+    text: Any,
+    style: Any,
+    label: str,
+) -> dict[str, StyleValue]:
+    """Merge the axis visibility shorthands under an explicit `style=`.
+
+    `show=False` turns the whole axis off; the four narrower switches override
+    it in both directions, so `show=False, grid=True` keeps only the grid.
+    An explicit `style=` property always wins over a shorthand — the shorthand
+    is a default, not a lock."""
+    parts: dict[str, StyleValue] = {}
+    resolved = {
+        "line": line,
+        "ticks": ticks,
+        "grid": grid,
+        "text": text,
+    }
+    for name, value in resolved.items():
+        if value is not None:
+            resolved[name] = _strict_bool(value, f"{label} {name}")
+    if show is not None:
+        visible = _strict_bool(show, f"{label} show")
+        for name, value in resolved.items():
+            if value is None:
+                resolved[name] = visible
+    for name, off in (
+        ("line", _AXIS_LINE_OFF),
+        ("ticks", _AXIS_TICKS_OFF),
+        ("grid", _AXIS_GRID_OFF),
+        ("text", _AXIS_TEXT_OFF),
+    ):
+        if resolved[name] is False:
+            parts.update(off)
+    if not parts:
+        return styles.compile_axis_style(style, label + " style")
+    parts.update(styles.compile_axis_style(style, label + " style"))
+    return parts
+
+
 def x_axis(
     *,
     id: str = "x",
@@ -2200,18 +2659,29 @@ def x_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
     tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    minor_tick_values: Union[Sequence[float], np.ndarray, None] = None,
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
+    tick_sides: Optional[Sequence[str]] = None,
+    tick_label_sides: Optional[Sequence[str]] = None,
+    show: Optional[bool] = None,
+    line: Optional[bool] = None,
+    ticks: Optional[bool] = None,
+    grid: Optional[bool] = None,
+    text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
+    minor_style: Optional[dict[str, StyleValue]] = None,
+    nonpositive: Optional[Literal["clip", "mask"]] = None,
 ) -> Axis:
     """Configure an x axis.
 
@@ -2224,6 +2694,7 @@ def x_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2231,6 +2702,7 @@ def x_axis(
         format: Tick-label format string.
         tick_count: Requested number of ticks.
         tick_values: Explicit tick positions.
+        minor_tick_values: Explicit unlabeled minor tick positions.
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
@@ -2242,10 +2714,32 @@ def x_axis(
             bottom axis instead of seesawing around its midpoint.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
-        style: Axis style overrides.
+        tick_sides: Plot sides where tick marks are drawn. Defaults to
+            ``side``; supplying both draws mirrored ticks without moving the
+            axis labels.
+        tick_label_sides: Plot sides where tick labels are drawn. Defaults to
+            ``side`` and remains independent of ``tick_sides``.
+        show: Draw this axis at all. ``False`` hides its baseline, tick marks,
+            tick labels, title, and grid lines in one switch; the four
+            narrower switches below override it either way, so
+            ``show=False, grid=True`` leaves only the grid.
+        line: Draw the axis baseline.
+        ticks: Draw the tick marks.
+        grid: Draw this axis's grid lines (the y axis owns the horizontal
+            guides, the x axis the vertical ones).
+        text: Draw this axis's text — its tick labels and its title. (Unlike
+            ``tick_labels``, which supplies the label *strings*.)
+        style: Axis style overrides. An explicit property here always wins
+            over the switches above.
+        minor_style: Independent minor tick/grid style overrides.
+        nonpositive: Log-axis handling for non-positive mark coordinates:
+            ``"clip"`` or ``"mask"``.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
+    minor_values = None if minor_tick_values is None else [float(v) for v in minor_tick_values]
+    if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+        raise ValueError("x_axis nonpositive must be 'clip' or 'mask' on a log axis")
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
     if labels is not None and (values is None or len(labels) != len(values)):
         raise ValueError("x_axis tick_labels must match tick_values")
@@ -2259,11 +2753,13 @@ def x_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "x_axis constant"),
         domain=_axis_domain(domain, "x_axis domain"),
+        margin=_optional_nonnegative_number(margin, "x_axis margin"),
         bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
         tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
         tick_values=values,
+        minor_tick_values=minor_values,
         tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "x_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
@@ -2274,7 +2770,11 @@ def x_axis(
             tick_label_min_gap, "x_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "x"),
-        style=styles.compile_axis_style(style, "x_axis style"),
+        style=_axis_visibility_style(show, line, ticks, grid, text, style, "x_axis"),
+        tick_sides=_axis_tick_sides(tick_sides, "x"),
+        tick_label_sides=_axis_tick_label_sides(tick_label_sides, "x"),
+        minor_style=styles.compile_axis_style(minor_style, "x_axis minor style"),
+        nonpositive=nonpositive,
     )
 
 
@@ -2288,18 +2788,29 @@ def y_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
     tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    minor_tick_values: Union[Sequence[float], np.ndarray, None] = None,
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
+    tick_sides: Optional[Sequence[str]] = None,
+    tick_label_sides: Optional[Sequence[str]] = None,
+    show: Optional[bool] = None,
+    line: Optional[bool] = None,
+    ticks: Optional[bool] = None,
+    grid: Optional[bool] = None,
+    text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
+    minor_style: Optional[dict[str, StyleValue]] = None,
+    nonpositive: Optional[Literal["clip", "mask"]] = None,
 ) -> Axis:
     """Configure a y axis.
 
@@ -2312,6 +2823,7 @@ def y_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2319,6 +2831,7 @@ def y_axis(
         format: Tick-label format string.
         tick_count: Requested number of ticks.
         tick_values: Explicit tick positions.
+        minor_tick_values: Explicit unlabeled minor tick positions.
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
@@ -2330,10 +2843,32 @@ def y_axis(
             the label rotates about the pinned edge.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
-        style: Axis style overrides.
+        tick_sides: Plot sides where tick marks are drawn. Defaults to
+            ``side``; supplying both draws mirrored ticks without moving the
+            axis labels.
+        tick_label_sides: Plot sides where tick labels are drawn. Defaults to
+            ``side`` and remains independent of ``tick_sides``.
+        show: Draw this axis at all. ``False`` hides its baseline, tick marks,
+            tick labels, title, and grid lines in one switch; the four
+            narrower switches below override it either way, so
+            ``show=False, grid=True`` leaves only the grid.
+        line: Draw the axis baseline.
+        ticks: Draw the tick marks.
+        grid: Draw this axis's grid lines (the y axis owns the horizontal
+            guides, the x axis the vertical ones).
+        text: Draw this axis's text — its tick labels and its title. (Unlike
+            ``tick_labels``, which supplies the label *strings*.)
+        style: Axis style overrides. An explicit property here always wins
+            over the switches above.
+        minor_style: Independent minor tick/grid style overrides.
+        nonpositive: Log-axis handling for non-positive mark coordinates:
+            ``"clip"`` or ``"mask"``.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
+    minor_values = None if minor_tick_values is None else [float(v) for v in minor_tick_values]
+    if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+        raise ValueError("y_axis nonpositive must be 'clip' or 'mask' on a log axis")
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
     if labels is not None and (values is None or len(labels) != len(values)):
         raise ValueError("y_axis tick_labels must match tick_values")
@@ -2347,11 +2882,13 @@ def y_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "y_axis constant"),
         domain=_axis_domain(domain, "y_axis domain"),
+        margin=_optional_nonnegative_number(margin, "y_axis margin"),
         bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
         tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
         tick_values=values,
+        minor_tick_values=minor_values,
         tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "y_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
@@ -2362,7 +2899,224 @@ def y_axis(
             tick_label_min_gap, "y_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "y"),
-        style=styles.compile_axis_style(style, "y_axis style"),
+        style=_axis_visibility_style(show, line, ticks, grid, text, style, "y_axis"),
+        tick_sides=_axis_tick_sides(tick_sides, "y"),
+        tick_label_sides=_axis_tick_label_sides(tick_label_sides, "y"),
+        minor_style=styles.compile_axis_style(minor_style, "y_axis minor style"),
+        nonpositive=nonpositive,
+    )
+
+
+#: Cartesian axis keywords no polar renderer implements, mapped to what a polar
+#: chart does instead. Each of these rode the wire and was then dropped on the
+#: floor by the client *and* both exporters — the same accepted-but-inert trap as
+#: a polar secondary axis or an angular `reverse`, and the reason the polar axis
+#: documentation was advertising controls that did nothing.
+#:
+#: Refused HERE, on the documented polar surface, rather than at payload build:
+#: `xy.pyplot`'s polar projection forwards rcParam-derived axis props (a
+#: `minor_style` for every Axes, `minorticks_on()` values, a `ha=` anchor) into
+#: the same figure, and refusing there would turn `projection="polar"` into an
+#: error. `_polar_axis_kwargs` strips them for that adapter instead, which is
+#: recorded in spec/matplotlib/compat.md.
+_POLAR_INERT_AXIS_KEYWORDS: dict[str, str] = {
+    "minor_tick_values": (
+        "no minor rings or spokes are drawn on a disc, so the values were accepted and "
+        "dropped. Pass the values you want drawn as tick_values"
+    ),
+    "minor_style": (
+        "no minor ticks or minor grid are drawn on a disc, so the style had nothing to "
+        "paint. Style the major rings and spokes with style="
+    ),
+    "tick_label_min_gap": (
+        "tick labels ring the disc rather than running along an edge, so there is no "
+        "collision pass for a minimum gap to feed. Radial labels are stride-thinned to "
+        "what the label spoke holds; use tick_count or tick_values to thin deliberately"
+    ),
+    "tick_label_anchor": (
+        "each tick label anchors radially — outward around the rim, and outward along "
+        "the radial label spoke — so an edge-relative anchor has nothing to act on. Use "
+        "tick_label_angle to rotate the label text"
+    ),
+}
+
+#: Tick-label strategies that only mean something to the edge-relative collision
+#: pass. `off` (hide the label text) and `none` (hide the whole axis) are honoured
+#: under polar and stay out of this set.
+_POLAR_INERT_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "preserve"})
+
+
+def _refuse_inert_polar_axis_kwargs(kwargs: dict[str, Any], vocabulary: str) -> None:
+    """Reject polar axis keywords no renderer implements, naming the alternative."""
+    for key, explanation in _POLAR_INERT_AXIS_KEYWORDS.items():
+        value = kwargs.get(key)
+        if value is None or value == {}:
+            continue
+        raise ValueError(
+            f"{vocabulary} does not support {key}={value!r}: {explanation}. "
+            "See spec/design/polar-axes.md."
+        )
+    strategy = kwargs.get("tick_label_strategy")
+    if isinstance(strategy, str) and strategy.replace("-", "_") in (
+        _POLAR_INERT_TICK_LABEL_STRATEGIES
+    ):
+        raise ValueError(
+            f"{vocabulary} does not support tick_label_strategy={strategy!r}; rim labels "
+            "have no edge-relative collision pass. 'off' (hide the tick labels) and "
+            "'none' (hide the axis) are supported. See spec/design/polar-axes.md."
+        )
+
+
+def _polar_axis_kwargs(props: Mapping[str, Any]) -> dict[str, Any]:
+    """`props` with the keywords `theta_axis`/`r_axis` refuse removed.
+
+    For adapters that build a polar axis out of a general axis-property bag they
+    do not fully control — `xy.pyplot`, whose polar Axes carries an rcParam
+    `minor_style` and whatever `minorticks_on()`/`ha=` left behind. Dropping is
+    what all three renderers already do with these values; the point of the
+    refusal is that a *hand-authored* polar axis hears about it.
+    """
+    dropped = set(_POLAR_INERT_AXIS_KEYWORDS)
+    out = {key: value for key, value in props.items() if key not in dropped}
+    strategy = out.get("tick_label_strategy")
+    if isinstance(strategy, str) and strategy.replace("-", "_") in (
+        _POLAR_INERT_TICK_LABEL_STRATEGIES
+    ):
+        out.pop("tick_label_strategy")
+    return out
+
+
+def theta_axis(
+    *,
+    unit: Optional[str] = None,
+    zero: Union[str, float, None] = None,
+    direction: Optional[str] = None,
+    sector: Optional[tuple[float, float]] = None,
+    grid_shape: Optional[str] = None,
+    **kwargs: Any,
+) -> Axis:
+    """Configure the angular axis of an `xy.polar_chart`.
+
+    Delegates to `x_axis` — the angular axis *is* the x axis under
+    ``coords="polar"`` — so the `x_axis` keywords listed below apply here too and
+    are validated by one shared path.
+
+    **Not every `x_axis` keyword survives a disc**, and the ones that do not are
+    refused here rather than accepted and dropped:
+
+    * ``minor_tick_values`` / ``minor_style`` — no minor rings or spokes are
+      drawn. Pass the values you want drawn as ``tick_values``.
+    * ``tick_label_min_gap`` and ``tick_label_strategy`` in its collision
+      spellings (``"auto"``, ``"hide"``, ``"rotate"``, ``"stagger"``,
+      ``"preserve"``) — rim labels have no edge-relative collision pass.
+      ``"off"`` (hide the labels) and ``"none"`` (hide the axis) work.
+    * ``tick_label_anchor`` — labels anchor radially. Use ``tick_label_angle``.
+
+    Three more are refused when the figure is built, because they depend on the
+    resolved data: ``type_="log"``/``"symlog"``, ``reverse=True``, and a
+    time-valued angular column. An instant and a non-linear angle have no
+    coherent projection; use ``direction=`` to reverse the direction of travel.
+
+    ``format`` **is** honoured and wins over the built-in degree/radian text, so
+    ``theta_axis(unit="degrees", format=".0f°")`` relabels the spokes.
+
+    Args:
+        unit: Angular unit of the data, ``"radians"`` (default) or ``"degrees"``.
+        zero: Direction that angle 0 points — ``"E"`` (default), ``"N"``,
+            ``"W"``, ``"S"``, or an angle in radians counterclockwise from east.
+        direction: ``"counterclockwise"`` (default) or ``"clockwise"``.
+            Compass work usually wants ``zero="N"`` with ``"clockwise"``, which
+            puts 90° at east and 180° at south.
+        sector: Visible angular interval in the declared ``unit``. The sweep
+            must be increasing and no wider than one full turn.
+        grid_shape: ``"circular"`` (default) for arc rings or ``"linear"`` for
+            polygonal rings joining the angular spokes.
+        **kwargs: Any `x_axis` keyword.
+
+    Returns:
+        An `Axis` for the angular dimension.
+    """
+    _refuse_inert_polar_axis_kwargs(kwargs, "theta_axis")
+    axis = x_axis(**kwargs)
+    if sector is not None and axis.domain is not None:
+        raise ValueError("theta_axis sector and domain describe the same limit; pass only one")
+    resolved_sector = axis.domain if sector is None else sector
+    return replace(
+        axis,
+        # On a polar angular axis, the familiar axis `domain=` spelling is an
+        # alias for the visible sector. The data/tick range remains independent
+        # (notably, categorical theta stays in category-index coordinates).
+        domain=None,
+        theta_unit=None if unit is None else _validate.theta_unit(unit, "theta_axis unit"),
+        theta_zero=None if zero is None else _validate.theta_zero(zero, "theta_axis zero"),
+        theta_direction=(
+            None
+            if direction is None
+            else _validate.theta_direction(direction, "theta_axis direction")
+        ),
+        sector=(
+            None
+            if resolved_sector is None
+            else _validate.theta_sector(resolved_sector, "theta_axis sector")
+        ),
+        grid_shape=(
+            None
+            if grid_shape is None
+            else _validate.polar_grid_shape(grid_shape, "theta_axis grid_shape")
+        ),
+    )
+
+
+def r_axis(
+    *,
+    hole: Optional[float] = None,
+    origin: Optional[float] = None,
+    **kwargs: Any,
+) -> Axis:
+    """Configure the radial axis of an `xy.polar_chart`.
+
+    Delegates to `y_axis` — the radial axis *is* the y axis under
+    ``coords="polar"`` — so the `y_axis` keywords apply. Provided so polar
+    compositions read in polar vocabulary rather than mixing x/y with theta/r.
+
+    The same four keywords `xy.theta_axis` refuses are refused here, and for the
+    same reason — no minor rings, no rim collision pass, no edge-relative label
+    anchor. ``reverse=True``, ``type_="log"``, ``type_="symlog"`` and a
+    time-valued radial column are all supported on the radius.
+
+    **Autorange.** A linear or symlog radius starts at the centre (matplotlib's
+    ``rmin=0``) and ends at the data maximum with no outer pad, so the outermost
+    ring *is* the largest datum; log autorange stays strictly positive. Two
+    exceptions: data that goes below zero keeps its ordinary padded extent
+    (a centre origin is vacuous below zero), and so does a **time** radius,
+    whose zero is 1970 — pinning it would squeeze every modern instant into a
+    hairline ring at the rim. An explicit ``margin=`` restores the outer pad;
+    an explicit ``domain=``/``bounds=`` overrides autorange entirely.
+
+    **Signed radii are positions, not directions.** A negative radius is not
+    mirrored through the centre the way matplotlib mirrors it: it is a value on
+    a range that includes it, so ``-5`` draws nearer the centre than ``0``. A
+    radius outside the visible interval is culled for points and line vertices
+    and clamped for fills and sectors (spec/design/polar-axes.md §3, §8).
+
+    Args:
+        hole: Display-space inner-radius fraction, from 0 (no hole) up to but
+            excluding 1.
+        origin: Data-space radial origin. An origin below the visible radial
+            minimum creates an annulus. Mutually exclusive with ``hole``.
+        **kwargs: Any `y_axis` keyword.
+
+    Returns:
+        An `Axis` for the radial dimension.
+    """
+    if hole is not None and origin is not None:
+        raise ValueError("r_axis hole and origin are mutually exclusive")
+    _refuse_inert_polar_axis_kwargs(kwargs, "r_axis")
+    axis = y_axis(**kwargs)
+    return replace(
+        axis,
+        hole=None if hole is None else _validate.polar_hole(hole, "r_axis hole"),
+        r_origin=None if origin is None else _validate.finite_scalar(origin, "r_axis origin"),
     )
 
 
@@ -2370,8 +3124,11 @@ def legend(
     *children: Any,
     show: bool = True,
     loc: Optional[str] = None,
+    anchor: Optional[tuple[float, ...]] = None,
     ncols: int = 1,
     title: Optional[str] = None,
+    highlight: bool = True,
+    toggle: bool = True,
     render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -2381,19 +3138,35 @@ def legend(
     Args:
         *children: Optional opaque replacement content.
         show: Whether to display the legend.
-        loc: Legend placement within or around the plot.
+        loc: Legend placement within or around the plot. ``"best"`` selects
+            automatic least-overlap placement for an unanchored Cartesian
+            chart; concrete names and ``None`` remain fixed.
+        anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.
+        highlight: Whether hovering a legend entry emphasizes its series by
+            dimming the others (live client only; exports are static).
+        toggle: Whether clicking a legend entry hides/shows its series or
+            category (live client only; exports are static).
         render: Opaque renderer supplied by an adapter.
         class_name: DOM class name applied to the legend.
         style: Legend style overrides.
     """
     show, render = _chrome_render_args(children, show, render, "legend")
+    if anchor is not None:
+        if isinstance(anchor, (str, bytes)) or len(anchor) not in (2, 4):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
+        anchor = tuple(float(value) for value in anchor)
+        if not all(math.isfinite(value) for value in anchor):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
     return Legend(
         show=_strict_bool(show, "legend show"),
-        loc=_optional_string(loc, "legend loc"),
+        loc=_validate.legend_loc(loc, "legend loc"),
+        anchor=anchor,
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),
+        highlight=_strict_bool(highlight, "legend highlight"),
+        toggle=_strict_bool(toggle, "legend toggle"),
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
         render=render,
@@ -2407,6 +3180,7 @@ def tooltip(
     fields: Optional[list[str]] = None,
     title: Optional[str] = None,
     format: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Tooltip:
@@ -2419,6 +3193,9 @@ def tooltip(
         fields: Data fields shown in each tooltip.
         title: Optional tooltip title.
         format: Per-field value formats.
+        labels: Display labels keyed by source field. Without ``fields``, they
+            rename the matching default x/y/color/size rows. Formatting and
+            title placeholders continue to use the source field names.
         class_name: DOM class name applied to the tooltip.
         style: Tooltip style overrides.
     """
@@ -2428,6 +3205,7 @@ def tooltip(
         fields=_string_list(fields, "tooltip fields"),
         title=_optional_string(title, "tooltip title"),
         format=_string_dict(format, "tooltip format"),
+        labels=_string_dict(labels, "tooltip labels"),
         class_name=_optional_string(class_name, "tooltip class_name"),
         style=_style_dict(style, "tooltip style"),
         render=render,
@@ -2636,6 +3414,7 @@ def theme(
     crosshair_color: Optional[StyleValue] = None,
     selection_color: Optional[StyleValue] = None,
     selection_fill: Optional[StyleValue] = None,
+    palette: Union[Sequence[str], Mapping[str, str], None] = None,
     **tokens: StyleValue,
 ) -> Theme:
     """Configure chart theme tokens.
@@ -2654,6 +3433,22 @@ def theme(
         crosshair_color: Hover crosshair color.
         selection_color: Selection-outline color.
         selection_fill: Selection-region fill color.
+        palette: Categorical color cycle for this chart — the colors unnamed
+            series take in order, and the colors a categorical ``color=``
+            channel assigns to its categories. Defaults to XY's CVD-safe
+            eight-slot palette; a shorter list repeats (with a warning).
+
+            A ``{category: color}`` mapping pins colors to category *labels*
+            instead of positions, so a category keeps its color across marks
+            and across facet panels — including panels where some categories
+            are absent, which a positional cycle silently recolors. Categories
+            the map does not name take the next unused default color (with a
+            warning), and unnamed series cycle the map's values in order.
+
+            Entries must be colors XY can resolve without a browser (hex,
+            ``rgb()``, ``hsl()``, named), like colormap stops: a palette is
+            indexed, and browser-only entries would collapse several categories
+            onto one fallback color in exports and density surfaces.
         **tokens: Additional supported theme tokens.
     """
     merged = _style_dict(style, "theme style")
@@ -2674,7 +3469,7 @@ def theme(
     )
     if tokens:
         merged.update(_theme_tokens(tokens, "theme tokens"))
-    return Theme(style=merged)
+    return Theme(style=merged, palette=_palette_list(palette, "theme palette"))
 
 
 def interaction_config(
@@ -2718,8 +3513,12 @@ def interaction_config(
             the axis's home extents (plain drag keeps working on a zoomed-in
             view) but never extends past them, on any mutation path.
         zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
-            box zoom, double-click reset, and modebar zoom controls. The
-            default keeps zooming enabled.
+            box zoom and hides the modebar zoom controls. The default keeps
+            zooming enabled on Cartesian charts. Polar charts default it OFF —
+            the centre of a disc is a fixed point, so zooming a pie, radial bar,
+            gauge, or radar crops its rim instead of navigating it — except
+            `wind_rose`, whose radius is a frequency count. Pass ``True`` here to
+            opt a polar chart back in.
         default_drag_action: Initial action performed by a plain plot drag.
             ``"auto"`` is the default and chooses pan first; ``"zoom"`` draws
             a rectangle and zooms to its bounds. Selection actions make their
@@ -2880,6 +3679,7 @@ class Chart(Component):
         reset_axes: Optional[tuple[str, ...]] = None,
         link_group: Optional[str] = None,
         link_axes: Optional[tuple[str, ...]] = None,
+        coords: str = "cartesian",
     ) -> None:
         """Initialize a chart composition.
 
@@ -2909,7 +3709,9 @@ class Chart(Component):
             navigation: Whether browser pan and zoom navigation is enabled.
             pan: Whether plain-drag panning is enabled.
             pan_axes: Declared axis IDs translated by pan gestures.
-            zoom: Whether viewport zoom is enabled.
+            zoom: Whether viewport zoom is enabled. Defaults to on for
+                Cartesian charts and off for polar ones (`wind_rose` excepted);
+                see :func:`interaction_config`.
             default_drag_action: Initial action performed by a plain plot drag.
             zoom_axes: Declared axis IDs changed by zoom gestures and controls.
             zoom_limits: Minimum and maximum magnification globally or by axis.
@@ -2920,6 +3722,10 @@ class Chart(Component):
             reset_axes: Declared axis IDs restored by reset.
             link_group: Identifier used to synchronize charts in the browser.
             link_axes: Axes synchronized within the link group.
+            coords: Coordinate system, ``"cartesian"`` (default) or ``"polar"``.
+                Under ``"polar"`` each mark's first channel is the angle and its
+                second is the radius. Prefer ``xy.polar_chart(...)``, which sets
+                this for you.
         """
         self.kind = kind
         self.children = children
@@ -2959,6 +3765,7 @@ class Chart(Component):
         self.reset_axes = reset_axes
         self.link_group = link_group
         self.link_axes = link_axes
+        self.coords = _validate.coords(coords, "coords")
         self._figure: Optional[Figure] = None
         self._widget: Any = None
         # Facet builds pre-seed a union category order here (per axis dim) so
@@ -3016,6 +3823,7 @@ class Chart(Component):
             title=self.title,
             x_label=xa.label if xa else None,
             y_label=ya.label if ya else None,
+            coords=self.coords,
         )
         for axis in axis_children:
             axis_id = axis.id or axis.which
@@ -3028,18 +3836,31 @@ class Chart(Component):
                 type_=axis.type_,
                 constant=axis.constant,
                 domain=axis.domain,
+                margin=axis.margin,
                 bounds=axis.bounds,
                 reverse=axis.reverse,
                 format=axis.format,
                 tick_count=axis.tick_count,
                 tick_values=axis.tick_values,
+                minor_tick_values=axis.minor_tick_values,
                 tick_labels=axis.tick_labels,
                 tick_label_angle=axis.tick_label_angle,
                 tick_label_strategy=axis.tick_label_strategy,
                 tick_label_anchor=axis.tick_label_anchor,
                 tick_label_min_gap=axis.tick_label_min_gap,
                 side=axis.side,
+                tick_sides=axis.tick_sides,
+                tick_label_sides=axis.tick_label_sides,
                 style=axis.style,
+                minor_style=axis.minor_style,
+                nonpositive=axis.nonpositive,
+                theta_unit=axis.theta_unit,
+                theta_zero=axis.theta_zero,
+                theta_direction=axis.theta_direction,
+                sector=axis.sector,
+                grid_shape=axis.grid_shape,
+                hole=axis.hole,
+                r_origin=axis.r_origin,
             )
         # Facet builds pre-seed the union category order (set as a private
         # attribute by FacetChart) so shared categorical domains align the
@@ -3052,6 +3873,13 @@ class Chart(Component):
         fig.style = {}
         for theme_node in themes:
             fig.style.update(theme_node.style)
+            # Marks bake their color when they are applied, so the palette has
+            # to be in place first — it is, every mark is applied below.
+            # Re-validated: `Theme` is a public dataclass as well as `theme()`'s
+            # return type, so direct construction must not put an unvalidated
+            # palette on the figure (same reason `ExportConfig` re-validates).
+            if theme_node.palette is not None:
+                fig.palette = _palette_list(theme_node.palette, "theme palette")
         fig.style.update(self.style)
         chart_animation = animations[-1] if animations else None
         if chart_animation is not None:
@@ -3133,7 +3961,7 @@ class Chart(Component):
         colorbar_candidates: list[dict[str, Any]] = []
         for m in marks:
             data = m.data if m.data is not None else self.data
-            applier = _MARK_APPLIERS.get(m.kind)
+            applier = _MARK_APPLIERS.get(m.kind) or _plugin_applier(m.kind)
             if applier is None:
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
             x_axis_id, y_axis_id = _mark_axis_ids(m, axes)
@@ -3159,6 +3987,16 @@ class Chart(Component):
                 class_name = _optional_string(m.class_name, f"{m.kind} class_name")
                 for trace in new_traces:
                     trace.style["class_name"] = class_name
+            color_label = _continuous_color_label(m)
+            if color_label is not None:
+                for trace in new_traces:
+                    channel = getattr(trace, "color_ch", None)
+                    if (
+                        channel is not None
+                        and channel.mode == "continuous"
+                        and channel.label is None
+                    ):
+                        channel.label = color_label
             _merge_tooltip_aliases(tooltip_aliases, m, new_traces)
             _merge_tooltip_sources(tooltip_sources, m, new_traces)
             colorbar_candidate = _declarative_colorbar_options(m, new_traces)
@@ -3176,8 +4014,17 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.anchor is not None:
+                fig.legend_options["anchor"] = list(node.anchor)
             if node.title is not None:
                 fig.legend_options["title"] = node.title
+            if not _strict_bool(node.highlight, "legend highlight"):
+                # Highlight-on-hover defaults on; only the opt-out crosses the
+                # wire so existing specs stay byte-identical.
+                fig.legend_options["highlight"] = False
+            if not _strict_bool(node.toggle, "legend toggle"):
+                # Click-to-toggle likewise defaults on, opt-out only.
+                fig.legend_options["toggle"] = False
             if node.style:
                 # Carry the frame/frameon styling into the static-export spec so
                 # the raster/SVG legend can honor frameon=False (transparent bg).
@@ -3213,6 +4060,20 @@ class Chart(Component):
             fig.export_options = export_options or None
         if tooltips:
             node = tooltips[-1]
+            # ``Tooltip`` is public as a dataclass as well as the return type
+            # of ``tooltip()``. Re-run the shared validators so direct
+            # construction or later mutation cannot put malformed fields,
+            # labels, styles, or booleans on the wire.
+            node = tooltip(
+                show=node.show,
+                render=node.render,
+                fields=node.fields,
+                title=node.title,
+                format=node.format,
+                labels=node.labels,
+                class_name=node.class_name,
+                style=node.style,
+            )
             _apply_chrome_node(fig, "tooltip", node.class_name, node.style)
             fig.show_tooltip = node.show
             fig.tooltip = _tooltip_spec(node, tooltip_aliases, tooltip_sources)
@@ -3334,9 +4195,20 @@ class Chart(Component):
             self._widget = FigureWidget(self.figure(), **widget_kwargs)
         return self._widget
 
-    def show(self) -> Any:
-        """Display the chart: returns the live widget (see `widget`)."""
-        return self.widget()
+    def show(self, display: Optional[str] = None) -> Any:
+        """Display the chart: the live widget, or a standalone-HTML view.
+
+        ``display`` picks the notebook host — ``"widget"`` (anywidget comm;
+        Python callbacks live), ``"html"`` (the same isolated iframe as
+        `_repr_html_`; interactive in the browser, no kernel channel), or
+        ``None``/``"auto"``, which follows ``XY_NOTEBOOK_DISPLAY`` and falls
+        back to ``"html"`` only on WASM kernels (JupyterLite/Pyodide), whose
+        prebuilt frontends cannot load the anywidget extension `%pip`
+        installs kernel-side.
+        """
+        if export.notebook_display_mode(display) == "widget":
+            return self.widget()
+        return export.HtmlView(self._repr_html_())
 
     # -- programmatic view state (kernel-connected; view-state.md §5.1) ------
 
@@ -3371,7 +4243,10 @@ class Chart(Component):
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]
 
-        display(self.widget())
+        if export.notebook_display_mode() == "widget":
+            display(self.widget())
+        else:
+            display({"text/html": self._repr_html_()}, raw=True)
 
     def to_html(
         self,
@@ -3663,6 +4538,20 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
         raise
 
 
+# First prefix at which `_encode_transition_keys` tests digest uniqueness, then
+# doubling. Small enough that the common duplicate — an id column that is not
+# actually unique — is caught in about a millisecond, large enough that the
+# vectorized test is never run on a handful of rows where the per-row
+# dictionaries it replaced would have been cheaper anyway.
+_TRANSITION_KEY_CHECK_STRIDE = 4096
+# Growth factor between those prefixes. The intermediate tests are pure
+# insurance, so they are kept far below the final full test's cost: at x8 they
+# sum to about an eighth of it, where x2 would have tripled the total uniqueness
+# work and cost the success path ~8%. The price is that a duplicate is seen
+# within 8x rather than 2x the rows needed to reach it.
+_TRANSITION_KEY_CHECK_GROWTH = 8
+
+
 def _transition_key_token(value: Any, index: int) -> bytes:
     """Canonical, type-sensitive bytes for one supported stable key."""
     if isinstance(value, np.generic):
@@ -3689,29 +4578,236 @@ def _transition_key_token(value: Any, index: int) -> bytes:
     )
 
 
+_TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES = 256 * 1024 * 1024
+_TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO = 8
+
+
+_TRANSITION_KEY_SEQUENCE_KINDS = {
+    str: {"U"},
+    bytes: {"S"},
+    bool: {"b"},
+    int: {"i", "u"},
+    float: {"f"},
+}
+
+
+def _column_ndarray(value: Any) -> np.ndarray | None:
+    """Unwrap a dtype-carrying column (pandas/polars Series) as plain NumPy.
+
+    `data=df, key="id"` resolves to a Series, not an ndarray, so without this
+    the whole native path would be unreachable from the documented idiom.
+    """
+    if isinstance(value, (str, bytes)) or not hasattr(value, "to_numpy"):
+        return None
+    try:
+        arr = value.to_numpy()
+    except (TypeError, ValueError):
+        # Extension arrays may refuse a zero-copy conversion; the reference
+        # encoder reads the same values through the object protocol anyway.
+        return None
+    return arr if type(arr) is np.ndarray else None
+
+
+def _fixed_sequence_array(sequence: Any) -> np.ndarray | None:
+    """Convert a homogeneous scalar sequence to fixed-width NumPy storage.
+
+    Returns None whenever the conversion would change an identity or cost
+    disproportionate memory, leaving the row to the Python reference encoder.
+    """
+    items = sequence.tolist() if isinstance(sequence, np.ndarray) else sequence
+    if not items:
+        return None
+    first = items[0]
+    if isinstance(first, np.generic):
+        first = first.item()
+    item_type = type(first)
+    if item_type not in _TRANSITION_KEY_SEQUENCE_KINDS:
+        return None
+    if set(map(type, items)) != {item_type}:
+        # Either genuinely mixed, or NumPy scalars needing ``.item()``. Retry
+        # through the scalar protocol, then insist on one exact builtin type:
+        # never coerce mixed bool/int or int/float keys, whose scalar tokens
+        # are deliberately type-sensitive.
+        items = [raw.item() if isinstance(raw, np.generic) else raw for raw in items]
+        if set(map(type, items)) != {item_type}:
+            return None
+    if item_type in (str, bytes):
+        lengths = list(map(len, items))
+        unit_bytes = 4 if item_type is str else 1
+        # NumPy's fixed-width conversion costs N × longest key. Keep a single
+        # long outlier from turning a compact sequence into a huge temporary
+        # before Rust can scan it. The ratio compares padding to payload in
+        # those same fixed-width units — it is not a bound on the growth over
+        # the source objects' own footprint; the absolute cap is.
+        padded_bytes = len(items) * max(max(lengths), 1) * unit_bytes
+        source_bytes = max(sum(lengths) * unit_bytes, 1)
+        if (
+            padded_bytes > _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES
+            or padded_bytes > source_bytes * _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO
+        ):
+            return None
+        # A key that *ends* in NUL is indistinguishable from padding once
+        # stored fixed-width, which would silently retokenize it. Interior
+        # NULs survive the round trip and stay on the native path.
+        nul = "\x00" if item_type is str else b"\x00"
+        if any(item.endswith(nul) for item in items):
+            return None
+    try:
+        arr = np.asarray(items)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if arr.dtype.kind not in _TRANSITION_KEY_SEQUENCE_KINDS[item_type]:
+        # NumPy may coerce an integer list outside its fixed-width range to
+        # f64. That would change the type-sensitive ``i:`` token into an
+        # ``f:`` token, so leave arbitrary-width integers to Python.
+        return None
+    return arr
+
+
+def _fixed_transition_key_values(value: Any) -> np.ndarray | None:
+    """Return a conservative homogeneous array for the native key encoder."""
+    arr = value if type(value) is np.ndarray else _column_ndarray(value)
+    if arr is None:
+        if not isinstance(value, (list, tuple)):
+            return None
+        arr = _fixed_sequence_array(value)
+    elif arr.dtype.hasobject:
+        # Object storage — a pandas string column, or an explicitly
+        # object-dtype array — still reaches the encoder when every row
+        # carries the same builtin scalar type.
+        arr = _fixed_sequence_array(arr) if arr.ndim == 1 else None
+    if arr is None or arr.ndim != 1:
+        return None
+    if arr.dtype.kind == "U" and arr.dtype.itemsize > 0 and arr.dtype.itemsize % 4 == 0:
+        return arr
+    if arr.dtype.kind == "S" and arr.dtype.itemsize > 0:
+        return arr
+    if arr.dtype.kind == "b" and arr.dtype.itemsize == 1:
+        return arr
+    if arr.dtype.kind in {"i", "u"} and arr.dtype.itemsize in (1, 2, 4, 8):
+        return arr
+    if arr.dtype.kind == "f" and arr.dtype.itemsize in (2, 4, 8):
+        return arr
+    return None
+
+
+def _transition_key_digests(result: np.ndarray, stop: int) -> np.ndarray:
+    """The first `stop` rows' identity digests, one uint64 per row.
+
+    `result` is Fortran-order — the native encoder's layout, so the payload ships
+    `values[:, 0]` copy-free — which makes `reshape(-1).view(np.uint64)` wrong
+    twice over. For a one-row prefix numpy can satisfy the reshape with a strided
+    *view* rather than a copy, and re-viewing that as a wider dtype raises "the
+    last axis must be contiguous"; for longer prefixes it silently copies. Both
+    columns are contiguous in this order, so combining them is correct whatever
+    the layout and costs the same 8 bytes a row the reshape copy did.
+
+    The two words are packed hi-word-first here rather than in the wire's
+    little-endian order. Only injectivity matters: equal packed values iff equal
+    (lo, hi) pairs, which is what the uniqueness test is asking.
+    """
+    packed = result[:stop, 0].astype(np.uint64)
+    packed <<= np.uint64(32)
+    packed |= result[:stop, 1]
+    return packed
+
+
 def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray:
+    fixed = _fixed_transition_key_values(value)
+    if fixed is not None:
+        if len(fixed) != expected:
+            raise ValueError(f"{label} must have length {expected}, got {len(fixed)}")
+        from . import kernels
+
+        encoded = kernels.transition_keys_fixed(fixed, label)
+        if encoded is not None:
+            return encoded
+
     arr = np.asarray(value, dtype=object)
     if arr.ndim != 1:
         raise ValueError(f"{label} must be one-dimensional")
     if len(arr) != expected:
         raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
-    result = np.empty((expected, 2), dtype=np.uint32)
+    result = np.empty((expected, 2), dtype=np.uint32, order="F")
+    # Equal tokens hash equally, so distinct digests prove distinct keys *and*
+    # no collision: a vectorized uniqueness test stands in for the two per-row
+    # dictionaries this carried, which held a token and a digest bytes object for
+    # every row — hundreds of bytes of peak per 8-byte result row. A conflict is
+    # re-walked by `_raise_transition_key_conflict` so the message, and the rows
+    # it names, are exactly what the per-row bookkeeping produced.
+    #
+    # The test runs on growing prefixes rather than once at the end. Testing only
+    # at the end would make a duplicate cost the entire walk plus a full re-walk:
+    # a non-unique id column, which is the ordinary form of this mistake, went
+    # from 16 ms and 32 MB peak on the dictionaries to 7.1 s and 65 MB — so the
+    # rewrite raised peak on a reachable path, the one thing it exists to lower.
+    # Prefixes bound both the wasted walk and the `np.unique` transient to the
+    # rows actually needed to see the duplicate.
+    #
+    # Blocked rather than checked per row on purpose: `arr[start:stop]` is a view
+    # of an object array, so the inner loop is exactly the loop it was, while one
+    # extra compare per row cost 8% of the success path in a 2M-row walk.
+    #
+    # Each test packs the prefix it checks into one uint64 a row
+    # (`_transition_key_digests`) — 8 bytes per row against the dictionaries'
+    # hundreds, and the x8 growth keeps those temporaries to about an eighth of
+    # the final one on top of it.
+    start = 0
+    block = _TRANSITION_KEY_CHECK_STRIDE
+    while start < expected:
+        stop = min(start + block, expected)
+        for index, raw in enumerate(arr[start:stop], start):
+            try:
+                token = _transition_key_token(raw, index)
+            except Exception:
+                # A later bad row must not mask an earlier duplicate: for
+                # `["a", "a", None]` the dictionaries reported the row-0/1
+                # duplicate, and that is still the first thing wrong. Rows
+                # already walked tokenized cleanly, so their digests are
+                # complete and any conflict among them precedes this row.
+                #
+                # `except Exception`, not ValueError: which row was first does
+                # not depend on what the token raised, and a key type whose
+                # __format__/isoformat/encode raises something else would
+                # otherwise still slip past the earlier duplicate.
+                if np.unique(_transition_key_digests(result, index)).size != index:
+                    _raise_transition_key_conflict(arr[:index], label)
+                raise
+            digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
+            result[index, 0] = int.from_bytes(digest[:4], "little")
+            result[index, 1] = int.from_bytes(digest[4:], "little")
+        if np.unique(_transition_key_digests(result, stop)).size != stop:
+            _raise_transition_key_conflict(arr[:stop], label)
+        start = stop
+        block *= _TRANSITION_KEY_CHECK_GROWTH
+    return result
+
+
+def _raise_transition_key_conflict(arr: np.ndarray, label: str) -> None:
+    """Name the conflict the vectorized digest check found (error path only).
+
+    Every raise here is `from None`. One caller is the prefix re-check inside an
+    `except`, where the token error it is deliberately superseding would
+    otherwise be chained in front of this one — so the first thing printed would
+    be the very error this function exists to *not* report. The other caller is
+    outside any handler, where `from None` costs nothing.
+    """
     seen: dict[bytes, int] = {}
     digests: dict[bytes, bytes] = {}
     for index, raw in enumerate(arr):
         token = _transition_key_token(raw, index)
         previous = seen.get(token)
         if previous is not None:
-            raise ValueError(f"{label} contains duplicate value at rows {previous} and {index}")
+            raise ValueError(
+                f"{label} contains duplicate value at rows {previous} and {index}"
+            ) from None
         seen[token] = index
         digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
         collision = digests.get(digest)
         if collision is not None and collision != token:
-            raise ValueError(f"{label} produced an identity digest collision")
+            raise ValueError(f"{label} produced an identity digest collision") from None
         digests[digest] = token
-        result[index, 0] = int.from_bytes(digest[:4], "little")
-        result[index, 1] = int.from_bytes(digest[4:], "little")
-    return result
+    raise AssertionError(f"{label} digest conflict did not reproduce")
 
 
 def _original_mark_positions(
@@ -3752,14 +4848,19 @@ def _apply_mark_transition_metadata(
 ) -> None:
     override = mark.animation
     if override is None:
-        mark_spec = None
+        mark_override = None
     elif isinstance(override, bool):
-        mark_spec = {"enabled": override}
+        mark_override = {"enabled": override}
     elif isinstance(override, Animation):
-        mark_spec = override.to_spec()
+        mark_override = override.to_override_spec()
     else:
         raise ValueError(f"{mark.kind} animation must be xy.animation(...), bool, or None")
-    effective = {**(chart_spec or {}), **(mark_spec or {})}
+    # Cascade, do not replace. The mark contributes only the fields it set;
+    # defaults sit underneath so a mark-level spec with no chart-level one is
+    # still complete. Resolving here once is also what lets the client keep a
+    # plain spread — an incomplete `trace.animation` would leave it reading
+    # `undefined` for duration and easing.
+    effective = {**_animation_defaults(), **(chart_spec or {}), **(mark_override or {})}
     if (
         effective.get("enabled") is not False
         and effective.get("match") == "key"
@@ -3767,6 +4868,12 @@ def _apply_mark_transition_metadata(
     ):
         raise ValueError(f"{mark.kind} animation match='key' requires key=")
     keys: np.ndarray | None = None
+    # `match` defaults to "index", so a bare `xy.animation(...)` — or no
+    # animation at all — never key-matches. Encoding still runs for its
+    # uniqueness and typing contract, but the identity planes are dead weight
+    # nothing reads: 8 B/row retained for the widget lifetime and 8 B/row on
+    # the wire. Only carry them when the client can actually match on them.
+    key_matching = effective.get("enabled") is not False and effective.get("match") == "key"
     if mark.key is not None:
         raw = (
             _resolve(data, mark.key, context=f"{mark.kind}.key")
@@ -3774,24 +4881,56 @@ def _apply_mark_transition_metadata(
             else mark.key
         )
         if not traces:
+            if fig._structural_probe:
+                # Resolving above records a string key in the plan probe. Its
+                # row count/type are data contracts, so defer them until the
+                # real funnel emits a trace instead of inventing probe rows.
+                return
             raise ValueError(
                 f"{mark.kind} key cannot be attached because the mark emitted no traces"
             )
         expected = int(traces[0].n_points)
         keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
-        if mark.kind in {"line", "area", "error_band"}:
+        if key_matching and mark.kind in {"line", "area", "error_band"}:
             positions = _original_mark_positions(fig, mark, data, expected)
             if positions is not None:
                 keys = keys[np.argsort(positions, kind="stable")]
     for trace in traces:
-        trace.animation = None if mark_spec is None else dict(mark_spec)
+        # Ship the resolved policy, not the raw override: the client spreads
+        # this over the chart-level spec, and a sparse dict there would silently
+        # fall back to chart values the mark meant to change.
+        trace.animation = None if mark_override is None else dict(effective)
         if keys is not None:
+            # The per-trace row check is contract too, so it runs whether or
+            # not the planes are kept.
             if trace.n_points != len(keys):
                 raise ValueError(
                     f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
                     f"has {trace.n_points} logical rows"
                 )
-            trace.transition_keys = keys
+            if key_matching:
+                trace.transition_keys = keys
+
+
+def _continuous_color_label(mark: Mark) -> Optional[str]:
+    """Declarative label for a mark's continuous color channel.
+
+    Only genuine column names (or hexbin's derived metric) qualify — the mark
+    name is not a channel label, and the client already prefers ``t.name``
+    for legend rows. Attached to ``ColorChannel.label``; an encoding with
+    neither a name nor a label renders no legend row at all.
+    """
+    if mark.kind in {"scatter", "segments", "triangle_mesh"}:
+        color = mark.props.get("color")
+        if isinstance(color, str) and not _looks_like_css(color):
+            return color
+    elif mark.kind == "hexbin":
+        values = mark.props.get("C")
+        if isinstance(values, str):
+            return values
+        if values is None:
+            return "count"
+    return None
 
 
 def _colorbar_source_title(mark: Mark) -> Optional[str]:
@@ -3816,7 +4955,7 @@ def _colorbar_source_title(mark: Mark) -> Optional[str]:
         if isinstance(values, str):
             return values
         if values is None:
-            return "log(count + 1)" if mark.props.get("bins") == "log" else "count"
+            return "count"
     return mark.name
 
 
@@ -3839,19 +4978,24 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             channel = trace.color_ch
             if channel is None or channel.mode != "continuous":
                 continue
-            # A density-tier scatter colors aggregate counts; its original
-            # per-row color channel is explicitly dropped, so advertising that
-            # channel's domain beside the density ramp would be misleading.
-            if trace.kind == "scatter" and trace.use_density():
-                continue
-            domain = channel.domain
+            # A density-tier scatter wears the channel's own colors — each
+            # cell shows the mean of its points' colormapped values (LOD doc
+            # §2) — so the channel's domain⇄colormap colorbar is truthful in
+            # both representations and renders as for a direct scatter.
+            domain = trace.colorbar_domain or channel.domain
             colormap = channel.colormap
         if domain is None or colormap is None:
             continue
         options = {
             "domain": [float(domain[0]), float(domain[1])],
-            "colormap": str(colormap),
+            # A built-in name or resolved stops (channels.resolve_colormap) —
+            # pass the channel's value through, never a str() of it, or a
+            # custom ramp reaches the colorbar as an unparseable name and
+            # silently falls back to viridis.
+            "colormap": colormap if isinstance(colormap, str) else [list(s) for s in colormap],
         }
+        if trace.colorbar_scale != "linear":
+            options["scale"] = trace.colorbar_scale
 
     if options is None:
         return None
@@ -3919,6 +5063,55 @@ def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]
     }
 
 
+def _palette_list(value: Any, label: str) -> Union[list[str], dict[str, str], None]:
+    """A categorical color cycle: one or more CSS colors XY can resolve itself.
+
+    A `{category: color}` mapping pins colors to category *labels* instead;
+    both forms come back normalized to hex.
+
+    Same rule as colormap stops, for the same reason. A palette is *indexed* —
+    XY has to hand a concrete color to four consumers that have no DOM between
+    them: the aggregated density plane, the SVG writer, the native rasterizer,
+    and the client's own worker re-bin. A browser-only entry (`var()`,
+    `oklch()`, `color-mix()`) has no channels in any of those, and the failure
+    is worse than for a single mark: several such entries collapse onto one
+    fallback, so distinct categories become one indistinguishable color. Refuse
+    it here, naming the reason, rather than let four renderers disagree (§28).
+
+    A single `color=`/`stroke`/`fill` still takes any CSS color — one mark, one
+    paint, and the existing static-export fallback behavior is unchanged.
+
+    Entries are normalized to hex, not merely checked: the browser client's
+    only cascade-free path is `hexColor`, so shipping `tomato` verbatim would
+    send it back to a `getComputedStyle` probe that returns "" on a root not yet
+    in the document — black, and permanently so, since nothing rebuilds a cached
+    palette LUT. Resolved here once, every renderer reads the same bytes."""
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        # `{category: color}` pins the mapping by *label*, so a category keeps
+        # its color no matter which panel it lands in or what else shares the
+        # chart. A sequence can only ever pin it by position.
+        mapping = {
+            str(category): _validate.resolved_hex_paint(
+                color, f"{label}[{category!r}]", "palette entries"
+            )
+            for category, color in value.items()
+        }
+        if not mapping:
+            raise ValueError(f"{label} must have at least one color")
+        return mapping
+    if isinstance(value, str) or not hasattr(value, "__iter__"):
+        raise ValueError(f"{label} must be a sequence of CSS colors, or a {{category: color}} map")
+    colors = [
+        _validate.resolved_hex_paint(color, f"{label}[{index}]", "palette entries")
+        for index, color in enumerate(value)
+    ]
+    if not colors:
+        raise ValueError(f"{label} must have at least one color")
+    return colors
+
+
 _THEME_TOKEN_ALIASES = {
     "plot_background": "--chart-bg",
     # `background` intentionally has no token alias: it passes through as the
@@ -3934,9 +5127,66 @@ _THEME_TOKEN_ALIASES = {
 }
 
 
+#: Every `--chart-*` custom property the renderers actually read. `theme()`'s
+#: `**tokens` reaches them by their snake_case name (`tooltip_bg` ->
+#: `--chart-tooltip-bg`); `--chart-series-N` is indexed and set through
+#: `palette=` instead. Keep in step with `js/src/20_theme.ts`.
+_THEME_TOKEN_NAMES: frozenset[str] = frozenset(
+    {
+        "accent",
+        "annotation_text",
+        "axis",
+        "badge_bg",
+        "badge_text",
+        "bg",
+        "colormap",
+        "counts",
+        "critical",
+        "crosshair",
+        "cursor",
+        "cursor_pan",
+        "focus",
+        "grid",
+        "legend_bg",
+        "modebar_active",
+        "modebar_bg",
+        "modebar_focus",
+        "selection",
+        "selection_fill",
+        "text",
+        "tick_label_max_width",
+        "tooltip_bg",
+        "tooltip_text",
+        "zoom_selection",
+        "zoom_selection_fill",
+    }
+)
+
+
+def _theme_token_property(key: str, label: str) -> str:
+    """The CSS property a `theme()` keyword sets, or a loud error.
+
+    `**tokens` used to pass any keyword straight through as a CSS property, so
+    `theme(grid_colour=...)` — or any typo — emitted a declaration no renderer
+    reads and changed nothing, silently. The vocabulary is closed instead, and
+    the real `--chart-*` tokens became reachable by name in the process.
+    """
+    if key in _THEME_TOKEN_ALIASES:
+        return _THEME_TOKEN_ALIASES[key]
+    if key == "background":
+        return "background"
+    if key in _THEME_TOKEN_NAMES:
+        return "--chart-" + key.replace("_", "-")
+    known = sorted(_THEME_TOKEN_NAMES | set(_THEME_TOKEN_ALIASES) | {"background"})
+    raise ValueError(
+        f"{label} has unknown token {key!r}; expected one of: {', '.join(known)}"
+        " (or a `--` custom property via style=)"
+    )
+
+
 def _theme_tokens(values: dict[str, Any], label: str) -> dict[str, StyleValue]:
     raw = {key: value for key, value in values.items() if value is not None}
-    mapped = {_THEME_TOKEN_ALIASES.get(key, key): value for key, value in raw.items()}
+    mapped = {_theme_token_property(key, label): value for key, value in raw.items()}
     return _style_dict(mapped, label)
 
 
@@ -3990,6 +5240,8 @@ def _tooltip_spec(
         spec["title"] = node.title
     if node.format:
         spec["format"] = dict(node.format)
+    if node.labels:
+        spec["labels"] = dict(node.labels)
     if aliases:
         spec["aliases"] = dict(aliases)
     if sources:
@@ -4299,9 +5551,12 @@ class FacetChart(Component):
         """Live notebook widgets, one per facet panel."""
         return self.figure().widget()
 
-    def show(self) -> list[Any]:
-        """Display the facet grid: returns the panel widgets."""
-        return self.widget()
+    def show(self, display: Optional[str] = None) -> Any:
+        """Display the facet grid: the panel widgets, or a standalone-HTML
+        view of the whole grid (see `Chart.show` for display-host resolution)."""
+        if export.notebook_display_mode(display) == "widget":
+            return self.widget()
+        return export.HtmlView(self._repr_html_())
 
     def to_html(
         self,
@@ -4501,6 +5756,26 @@ def _axis_side(value: Any, which: str) -> Optional[str]:
     return value
 
 
+def _axis_tick_sides(value: Any, which: str) -> Optional[list[str]]:
+    return _axis_sides(value, which, "tick_sides")
+
+
+def _axis_tick_label_sides(value: Any, which: str) -> Optional[list[str]]:
+    return _axis_sides(value, which, "tick_label_sides")
+
+
+def _axis_sides(value: Any, which: str, field: str) -> Optional[list[str]]:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{which}_axis {field} must be a sequence")
+    allowed = ("bottom", "top") if which == "x" else ("left", "right")
+    sides = list(value)
+    if any(side not in allowed for side in sides):
+        raise ValueError(f"{which}_axis {field} must contain only {list(allowed)}")
+    return [side for side in allowed if side in sides]
+
+
 def _annotation_axis_name(value: Any, label: str) -> str:
     if value not in {"x", "y"}:
         raise ValueError(f"{label} must be 'x' or 'y'")
@@ -4552,6 +5827,9 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
             _artist_alpha=m.props.get("_artist_alpha"),
+            _marker_path=m.props.get("_marker_path"),
+            _marker_glyph=m.props.get("_marker_glyph"),
+            _legend_trace_size=bool(m.props.get("_legend_trace_size")),
             style=m.style,
         )
     except Exception:
@@ -4640,6 +5918,71 @@ def _apply_segments(fig: Figure, m: Mark, data: Any) -> None:
         domain=m.props["domain"],
         width=m.props["width"],
         opacity=m.props["opacity"],
+        dash=m.props["dash"],
+        style=m.style,
+    )
+
+
+def _apply_ribbon(fig: Figure, m: Mark, data: Any) -> None:
+    fig.ribbon(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x0"),
+        _resolve_axis_values(fig, data, m.y, "x", f"{m.kind}.x1"),
+        _resolve_axis_values(fig, data, m.props["source_lo"], "y", f"{m.kind}.source_lo"),
+        _resolve_axis_values(fig, data, m.props["source_hi"], "y", f"{m.kind}.source_hi"),
+        _resolve_axis_values(fig, data, m.props["target_lo"], "y", f"{m.kind}.target_lo"),
+        _resolve_axis_values(fig, data, m.props["target_hi"], "y", f"{m.kind}.target_hi"),
+        color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
+        color_target=_resolve_color(
+            data, m.props["color_target"], context=f"{m.kind}.color_target"
+        ),
+        colormap=m.props["colormap"],
+        name=m.name,
+        opacity=m.props["opacity"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        style=m.style,
+    )
+
+
+def _apply_sankey(fig: Figure, m: Mark, data: Any) -> None:
+    del data  # links are literal triples; there is no frame to resolve against
+    fig.sankey(
+        m.props["links"],
+        nodes=m.props["nodes"],
+        node_width=m.props["node_width"],
+        node_padding=m.props["node_padding"],
+        align=m.props["align"],
+        iterations=m.props["iterations"],
+        colors=m.props["colors"],
+        link_opacity=m.props["link_opacity"],
+        labels=m.props["labels"],
+        label_size=m.props["label_size"],
+        style=m.style,
+    )
+
+
+def _apply_funnel(fig: Figure, m: Mark, data: Any) -> None:
+    fig.funnel(
+        _resolve(data, m.x, context=f"{m.kind}.stage"),
+        _resolve(data, m.y, context=f"{m.kind}.value"),
+        orientation=m.props["orientation"],
+        geometry=m.props["geometry"],
+        gap=m.props["gap"],
+        neck=m.props["neck"],
+        min_width=m.props["min_width"],
+        color=m.props["color"],
+        colors=m.props["colors"],
+        name=m.name,
+        opacity=m.props["opacity"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        show_values=m.props["show_values"],
+        show_conversion=m.props["show_conversion"],
+        show_dropoff=m.props["show_dropoff"],
+        labels=m.props["labels"],
+        label_size=m.props["label_size"],
+        value_format=m.props["value_format"],
+        percent_format=m.props["percent_format"],
         style=m.style,
     )
 
@@ -4660,6 +6003,7 @@ def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
         opacity=m.props["opacity"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _joined_fill=m.props["_joined_fill"],
         style=m.style,
     )
 
@@ -4738,6 +6082,9 @@ def _apply_box(fig: Figure, m: Mark, data: Any) -> None:
         show_outliers=m.props["show_outliers"],
         outlier_size=m.props["outlier_size"],
         style=m.style,
+        whisker_style=m.props["whisker_style"],
+        median_style=m.props["median_style"],
+        outlier_style=m.props["outlier_style"],
     )
 
 
@@ -4790,6 +6137,8 @@ def _apply_contour(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         dash_negative=m.props.get("dash_negative", False),
+        extend=m.props.get("extend", "neither"),
+        corner_mask=m.props.get("corner_mask", False),
         style=m.style,
     )
 
@@ -4841,6 +6190,7 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         series=m.props["series"],
         opacity=m.props["opacity"],
         corner_radius=m.props["corner_radius"],
+        wedge_gap=m.props.get("wedge_gap", 0.0),
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
         _artist_alpha=m.props.get("_artist_alpha"),
@@ -4864,6 +6214,7 @@ def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
         series=m.props["series"],
         opacity=m.props["opacity"],
         corner_radius=m.props["corner_radius"],
+        wedge_gap=m.props.get("wedge_gap", 0.0),
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
         fill=m.props["fill"],
@@ -5007,9 +6358,102 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "step": _apply_step,
     "stairs": _apply_stairs,
     "stem": _apply_stem,
+    "ribbon": _apply_ribbon,
+    "sankey": _apply_sankey,
+    "funnel": _apply_funnel,
     "triangle_mesh": _apply_triangle_mesh,
     "violin": _apply_violin,
 }
+
+
+def _plugin_column(values: Any) -> Any:
+    """A plugin's declared column, as canonical f64 when it is numeric.
+
+    `np.asarray` alone preserves float32, which would let a plugin's `calc` do
+    its arithmetic at f32 and hand the rounded result to a built-in mark that
+    then widens it back to f64 — precision lost between two f64 endpoints for
+    no reason. Canonical data is CPU-side f64 (§27), and the conversion is not
+    extra work: the column store would do it at ingest anyway. Non-numeric
+    columns (categorical strings, datetimes) pass through untouched.
+    """
+    if values is None:
+        return values
+    try:
+        array = np.asarray(values)
+        if np.issubdtype(array.dtype, np.number) and not np.issubdtype(array.dtype, np.bool_):
+            return np.ascontiguousarray(array, dtype=np.float64)
+        return array
+    except (TypeError, ValueError):  # pragma: no cover - exotic column objects
+        return values
+
+
+def _plugin_applier(kind: str) -> Optional[Callable[[Figure, Mark, Any], None]]:
+    """An applier for a registered mark plugin, or None if `kind` is unknown.
+
+    Resolved per compile rather than folded into `_MARK_APPLIERS` so a plugin
+    can never shadow a built-in, and so `registered_marks()` stays the single
+    answer to what is contributed from outside.
+    """
+    resolved = plugins.get_mark_plugin(kind)
+    if resolved is None:
+        return None
+    plugin = resolved
+
+    def apply(fig: Figure, m: Mark, data: Any) -> None:
+        # Declared columns arrive as arrays, never as the raw list a caller
+        # happened to pass: a calc function is arithmetic over columns (§24),
+        # and making every plugin author write np.asarray first would be a
+        # papercut that shows up as a TypeError in their code, not ours.
+        columns = {
+            column: _plugin_column(_resolve(data, m.props.get(column), context=f"{kind}.{column}"))
+            for column in plugin.columns
+        }
+        if plugin.calc is not None:
+            calculated = plugin.calc(columns)
+            if not isinstance(calculated, Mapping):
+                raise TypeError(
+                    f"mark plugin {kind!r} calc must return a mapping of columns, "
+                    f"got {type(calculated).__name__}"
+                )
+            columns = dict(calculated)
+        # Axis ids are chart plumbing, already applied by the compile loop.
+        options = {
+            k: v
+            for k, v in m.props.items()
+            if k not in plugin.columns and k not in {"x_axis", "y_axis"}
+        }
+        built = plugin.build(
+            plugins.MarkContext(
+                columns=columns,
+                options=options,
+                name=m.name,
+                style=dict(m.style or {}),
+                class_name=m.class_name,
+            )
+        )
+        if isinstance(built, (Mark, str, bytes)) or not isinstance(built, Sequence):
+            raise TypeError(
+                f"mark plugin {kind!r} build must return a sequence of marks, "
+                f"got {type(built).__name__}"
+            )
+        for child in built:
+            if not isinstance(child, Mark):
+                raise TypeError(
+                    f"mark plugin {kind!r} build returned {type(child).__name__}, "
+                    "expected marks built by xy's mark constructors"
+                )
+            child_applier = _MARK_APPLIERS.get(child.kind)
+            if child_applier is None:
+                # One level only: a plugin composes built-in primitives. Letting
+                # plugins compose each other turns a registry into a dependency
+                # graph with cycles, for a case nothing has asked for yet.
+                raise TypeError(
+                    f"mark plugin {kind!r} build returned mark kind {child.kind!r}, "
+                    f"which is not a built-in; plugins compose built-in marks only"
+                )
+            child_applier(fig, child, child.data if child.data is not None else data)
+
+    return apply
 
 
 _ANNOTATION_APPLIERS: dict[str, Callable[[Figure, Annotation], None]] = {
@@ -5020,6 +6464,57 @@ _ANNOTATION_APPLIERS: dict[str, Callable[[Figure, Annotation], None]] = {
     "rule": _apply_rule_annotation,
     "text": _apply_text_annotation,
 }
+
+
+def mark(
+    kind: str,
+    *,
+    data: TableLike = None,
+    name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+    class_name: Optional[str] = None,
+    key: Any = None,
+    animation: "Animation | bool | None" = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+    **fields: Any,
+) -> Mark:
+    """A mark contributed by a registered plugin (`xy.register_mark`).
+
+    `kind` names the plugin. Fields it declared in `MarkPlugin.columns` accept a
+    column name resolved from ``data`` or values directly, exactly like a
+    built-in mark's ``x``/``y``; every other keyword reaches the plugin as an
+    option untouched.
+
+    Args:
+        kind: Registered plugin name.
+        data: Table used to resolve column-name inputs.
+        name: Series label used by legends and tooltips.
+        style: Mark style overrides, passed to the plugin verbatim.
+        class_name: Adapter-only trace metadata.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
+        x_axis: Identifier of the x axis used by this mark.
+        y_axis: Identifier of the y axis used by this mark.
+        **fields: The plugin's declared columns and options.
+    """
+    if plugins.get_mark_plugin(kind) is None:
+        known = ", ".join(plugins.registered_marks()) or "none registered"
+        raise ValueError(f"unknown mark plugin {kind!r}; registered plugins: {known}")
+    return Mark(
+        kind=kind,
+        data=data,
+        name=_optional_string(name, "mark name"),
+        class_name=_optional_string(class_name, "mark class_name"),
+        style=styles.normalize_css_style(style, "mark style"),
+        key=key,
+        animation=animation,
+        props={
+            **fields,
+            "x_axis": _axis_id(x_axis, "mark x_axis"),
+            "y_axis": _axis_id(y_axis, "mark y_axis"),
+        },
+    )
 
 
 def chart(*children: Component, **props: Any) -> Chart:
@@ -5035,6 +6530,503 @@ def scatter_chart(*children: Component, **props: Any) -> Chart:
 def line_chart(*children: Component, **props: Any) -> Chart:
     """A line chart composing `line` marks and axis/legend children."""
     return Chart("line_chart", children, **props)
+
+
+def _require_polar_coords(props: dict) -> None:
+    """Pin `coords` to polar, refusing an explicit override.
+
+    `coords` is the ONLY thing that makes one of these helpers polar — `Chart.kind`
+    is inert — so `setdefault` let `pie_chart(..., coords="cartesian")` return
+    unlabelled rounded rects with no axes, silently dropping any authored
+    `theta_axis`/`r_axis`. Worse, `Figure._validate_coords` returns early for a
+    non-polar figure, so the keyword also re-opened every refusal this module
+    relies on it for.
+    """
+    coords = props.get("coords", "polar")
+    if coords != "polar":
+        raise ValueError(
+            f"this chart is polar; coords={coords!r} is not supported. "
+            "Use xy.chart(...) or xy.bar_chart(...) for a cartesian figure."
+        )
+    props["coords"] = "polar"
+
+
+def polar_chart(*children: Component, **props: Any) -> Chart:
+    """A polar chart: the same marks, rendered through polar coordinates.
+
+    Each mark's first channel is the angle and its second is the radius, so
+    `xy.line`, `xy.scatter`, `xy.area`, `xy.bar`, and `xy.column` are reused
+    rather than replaced by polar-specific marks. Configure the angular axis
+    with `xy.theta_axis` and the radial axis with `xy.r_axis`.
+
+        xy.polar_chart(
+            xy.line(angle, gain, name="measured"),
+            xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+            xy.r_axis(label="gain (dBi)"),
+        )
+
+    Supported mark kinds are listed in `xy.config.POLAR_MARK_KINDS`; anything
+    outside that set is refused at build time rather than approximated. Prefer
+    `xy.radar_chart` for categorical spider plots, `xy.polar_bar_chart`
+    for radial bars, and `xy.wind_rose` for directional distributions. Other
+    details and deferred geometry are tracked in spec/design/polar-axes.md.
+
+    Zoom is off by default on every polar chart but `xy.wind_rose` (the centre is
+    a fixed point of the transform, so zooming crops the rim rather than
+    navigating). Add `xy.interaction_config(zoom=True)` when the radius is a
+    measured quantity worth magnifying.
+    """
+    _require_polar_coords(props)
+    return Chart("polar_chart", children, **props)
+
+
+def radar_chart(
+    categories: Sequence[str],
+    *children: Component,
+    fill: bool = True,
+    **props: Any,
+) -> Chart:
+    """A radar (spider) chart: one closed polygon per series.
+
+    Radar is a composition, not a renderer — matplotlib's own gallery builds it
+    from a `PolarAxes` subclass plus line/fill calls, and Plotly from a filled
+    `Scatterpolar`. This wraps that composition: evenly spaced spokes labelled
+    with `categories`, and each series closed back to its first value.
+
+        xy.radar_chart(
+            ["speed", "power", "range", "agility"],
+            xy.area([0.9, 0.7, 0.55, 0.85], name="model A"),
+            xy.area([0.6, 0.8, 0.7, 0.5], name="model B"),
+        )
+
+    Each mark child supplies **values only**, one per category, in the same
+    order; the angles are derived. Closing is done here rather than by the
+    caller because the seam is easy to get wrong: appending the first *angle*
+    makes the final segment sweep backwards through the whole circle, so the
+    closing sample is placed at a full turn instead.
+
+    Args:
+        categories: Spoke labels, one per value.
+        *children: `area` (filled) or `line` (outline) marks carrying values,
+            plus any axis/legend children.
+        fill: When False, filled `area` children are rebuilt as `line`
+            outlines, so one call switches a whole chart between filled and
+            outline radar without editing every mark.
+        **props: Any `polar_chart` keyword.
+
+    Returns:
+        A polar `Chart` with categorical spokes.
+    """
+    names = [str(c) for c in categories]
+    if len(names) < 3:
+        raise ValueError("radar_chart needs at least 3 categories")
+    count = len(names)
+    # Spokes are derived, so they must be generated in the unit the ANGULAR
+    # AXIS declares. Hard-coding radians against an authored
+    # `theta_axis(unit="degrees")` left the samples spanning 0..2pi inside a
+    # 0..360 frame, squeezing the whole radar into the first 6.28 degrees.
+    unit = "radians"
+    for child in children:
+        if isinstance(child, Axis) and child.which == "x" and child.theta_unit:
+            unit = str(child.theta_unit)
+    turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+    step = turn / count
+    angles = [i * step for i in range(count)]
+    closed_angles = [*angles, turn]
+
+    rebuilt: list[Component] = []
+    for child in children:
+        if isinstance(child, Mark) and child.kind in {"area", "line"}:
+            values = _radar_values(child, count)
+            closed = [*values, values[0]]
+            if child.kind == "area" and not fill:
+                rebuilt.append(_radar_outline(child, closed_angles, closed))
+            else:
+                rebuilt.append(replace(child, x=closed_angles, y=closed))
+        elif isinstance(child, Mark):
+            raise ValueError(f"radar_chart supports area and line marks; got {child.kind!r}")
+        else:
+            rebuilt.append(child)
+    # An authored theta axis customises the spokes, it does not opt out of
+    # them: category labels merge into it unless it authored its own ticks.
+    # Dropping the injection outright made `xy.theta_axis(label=...)` silently
+    # replace the category spokes with numeric angles.
+    merged = False
+    for index, child in enumerate(rebuilt):
+        if isinstance(child, Axis) and child.which == "x":
+            if child.tick_values is None:
+                rebuilt[index] = replace(child, tick_values=list(angles), tick_labels=list(names))
+            merged = True
+            break
+    if not merged:
+        rebuilt.append(theta_axis(tick_values=angles, tick_labels=names))
+    _require_polar_coords(props)
+    return Chart("radar_chart", tuple(rebuilt), **props)
+
+
+def _radar_outline(mark: "Mark", angles: list[float], values: list[float]) -> "Mark":
+    """Rebuild a filled radar `area` as its outline, for `fill=False`.
+
+    The two marks do not share a prop vocabulary — an area carries
+    `line_color`/`line_width`/`line_opacity` where a line carries
+    `color`/`width`/`opacity` — so swapping only `kind` handed `_apply_line` an
+    area's dict and it died on `m.props["width"]`. The outline inherits the
+    area's stroke settings, falling back to its fill color when the stroke was
+    never given one.
+    """
+    props = mark.props
+    return replace(
+        mark,
+        kind="line",
+        x=angles,
+        y=values,
+        props={
+            "color": props.get("line_color") or props.get("color"),
+            # `or` treated a legal 0.0 as "unset" and silently substituted the
+            # 2.0 default, so an author asking for no outline got the thickest
+            # one. Fall back only on a genuinely absent value; an explicit 0
+            # then meets the library-wide "line width must be positive" rule
+            # instead of being quietly overridden.
+            "width": 2.0 if props.get("line_width") is None else props["line_width"],
+            "opacity": props.get("line_opacity", 1.0),
+            "curve": props.get("curve", "linear"),
+            "dash": props.get("dash"),
+            "x_axis": props.get("x_axis", "x"),
+            "y_axis": props.get("y_axis", "y"),
+        },
+    )
+
+
+def _radar_values(mark: "Mark", count: int) -> list[float]:
+    """The one value-per-category column a radar mark carries.
+
+    A radar mark is written `xy.area(values)`, so the single positional
+    argument lands in `x`; `y` is accepted too for callers who spell it out.
+    """
+    raw = mark.y if mark.y is not None else mark.x
+    if isinstance(raw, str):
+        raise ValueError(
+            f"radar_chart {mark.kind} mark must carry values directly, not the "
+            f"column name {raw!r}: the angles come from the categories, so there is "
+            "no frame to resolve against. Pass data[column] instead."
+        )
+    if raw is None:
+        raise ValueError(f"radar_chart {mark.kind} mark needs one value per category")
+    values = [float(v) for v in np.asarray(raw, dtype=float).reshape(-1)]
+    if len(values) != count:
+        raise ValueError(
+            f"radar_chart {mark.kind} mark has {len(values)} values "
+            f"but there are {count} categories"
+        )
+    return values
+
+
+def polar_bar_chart(*children: Component, **props: Any) -> Chart:
+    """Radial bars: each bar is an annular sector rather than a rectangle.
+
+    Bars carry the angle as their first channel and the radius as their second,
+    with `width` in the angular axis's own unit (radians by default, degrees
+    when the theta axis says so). A scalar width creates equal sectors; a
+    per-bar width sequence creates unequal sectors for pie/donut composition.
+    `base` sets the inner radius, so a positive base opens an annular hole.
+
+        xy.polar_bar_chart(
+            xy.bar(directions, counts, width=30.0),
+            xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+        )
+
+    Args:
+        *children: `bar` marks plus axis/legend children.
+        **props: Any `polar_chart` keyword.
+
+    Returns:
+        A polar `Chart`.
+    """
+    _require_polar_coords(props)
+    return Chart("polar_bar_chart", children, **props)
+
+
+def pie_chart(
+    labels: Sequence[Any],
+    values: ArrayLike,
+    *children: Component,
+    hole: float = 0.55,
+    pad: float = 4.0,
+    colors: Optional[Sequence[str]] = None,
+    corner_radius: float = 6.0,
+    show_values: bool = True,
+    show_percent: bool = True,
+    **props: Any,
+) -> Chart:
+    """A pie or donut: one slice per label, sized by value.
+
+        xy.pie_chart(
+            ["Skyline", "Datawell", "Cloudpeak"],
+            [27, 21, 13],
+        )
+
+    A pie is a composition over the polar coordinate system, not a chart
+    type: each slice is a wedge bar whose ANGULAR WIDTH carries the value.
+    That is exactly why the generic hover readout has nothing meaningful to
+    print for a slice — theta is layout and the radius is the constant rim —
+    so this composition owns its tooltip: hovering a slice shows its
+    category and value (and share), nothing else. A user-supplied
+    `xy.tooltip(...)` child still wins.
+
+    Args:
+        labels: One category name per slice.
+        values: One non-negative value per slice.
+        *children: Extra components (legend placement, a user tooltip, …).
+        hole: Inner radius fraction; 0 is a full pie, the default is a donut.
+        pad: Gap between neighbouring slices, in PIXELS — constant from the
+            hole to the rim. An angular pad would be `r · dtheta` wide and so
+            taper to nothing toward the centre, which reads as the spacing
+            being applied unevenly across the slice.
+        colors: One CSS colour per slice. Defaults to the palette cycle.
+        corner_radius: Rounded slice corners, in px.
+        show_values: Include the value in the slice's name (legend + tooltip).
+            Dropped for a slice whose value renders identically to its share —
+            percentage-shaped input would otherwise print the same number twice.
+        show_percent: Include the share in the slice's name (legend + tooltip).
+        **props: Any `polar_chart` keyword (`width`, `height`, `title`, …).
+    """
+    names = [str(label) for label in labels]
+    amounts = [float(v) for v in np.asarray(values, dtype=float).reshape(-1)]
+    if len(names) != len(amounts):
+        raise ValueError(
+            f"pie_chart needs one value per label; got {len(names)} labels "
+            f"and {len(amounts)} values"
+        )
+    if not names:
+        raise ValueError("pie_chart needs at least one slice")
+    if any(not math.isfinite(v) or v < 0.0 for v in amounts):
+        raise ValueError("pie_chart values must be finite and non-negative")
+    total = sum(amounts)
+    if total <= 0.0:
+        raise ValueError("pie_chart values must sum to a positive total")
+    if not 0.0 <= float(hole) < 1.0:
+        raise ValueError("pie_chart hole must be in [0, 1)")
+    if colors is not None and len(colors) != len(names):
+        raise ValueError(
+            f"pie_chart colors must have one entry per slice ({len(names)}); got {len(colors)}"
+        )
+
+    # Never print the same number twice. Percentage-shaped input — values that
+    # already sum to 100, which is how most pie data arrives — made the two
+    # defaults collide: `[40, 30, 20, 10]` rendered "Direct  40  (40%)", so the
+    # legend read as repeated text and the doubled label was what overflowed the
+    # box. The share keeps the unit, so it is the one that survives.
+    #
+    # Decided once for the whole pie rather than per slice: a mixed legend, where
+    # one row carries a bare value and the next does not, is harder to read than
+    # either consistent choice. Zero slices are excluded because they draw no
+    # wedge and get no row.
+    values_are_shares = show_percent and all(
+        f"{value:g}" == f"{value / total * 100:.0f}" for value in amounts if value > 0.0
+    )
+
+    slices: list[Component] = []
+    cursor = 0.0
+    for index, (label, value) in enumerate(zip(names, amounts, strict=True)):
+        span = value / total * 360.0
+        # A zero-valued category is ordinary in aggregated data and this factory
+        # accepts it. A zero-width wedge is legal at the mark layer now (it draws
+        # nothing, like `line_width=0`), so this skip is no longer about avoiding
+        # an error from a layer below — it is about the LEGEND: a row whose swatch
+        # highlights nothing on hover and toggles nothing on click is worse than
+        # no row. Dropping the wedge drops the row with it.
+        if span <= 0.0:
+            continue
+        display = label
+        if show_values and not values_are_shares:
+            display += f"  {value:g}"
+        if show_percent:
+            display += f"  ({value / total * 100:.0f}%)"
+        slices.append(
+            bar(
+                [cursor + span / 2.0],
+                [1.0 - float(hole)],
+                base=float(hole),
+                # The FULL span: the gap is carved out by the renderer at a
+                # constant pixel width, not by shrinking the angle, so the
+                # wire keeps each slice's true share.
+                width=span,
+                wedge_gap=float(pad),
+                color=None if colors is None else colors[index],
+                name=display,
+                corner_radius=corner_radius,
+                animation=False,
+            )
+        )
+        cursor += span
+
+    # The slice's name IS the readout (category, value, share); theta and the
+    # rim radius are layout, not data, and would only add noise.
+    has_tooltip = any(isinstance(child, Tooltip) for child in children)
+    defaults: tuple[Component, ...] = () if has_tooltip else (tooltip(title="{name}"),)
+    children = (
+        *slices,
+        theta_axis(unit="degrees", zero="N", direction="clockwise", show=False),
+        r_axis(domain=(0.0, 1.0), show=False),
+        *defaults,
+        *children,
+    )
+    _require_polar_coords(props)
+    return Chart("pie_chart", children, **props)
+
+
+def wind_rose(
+    directions: ArrayLike,
+    speeds: ArrayLike,
+    *children_in: Component,
+    sectors: int = 16,
+    speed_bins: Optional[Sequence[float]] = None,
+    **props: Any,
+) -> Chart:
+    """A wind rose: directional frequency, stacked by speed band.
+
+    Binning is done here in Python rather than by a renderer — the same
+    arrangement `hist` uses — so the chart is polar bars over counts and nothing
+    about the render path is wind-specific.
+
+    Directions are compass bearings in degrees (0 = north, increasing
+    clockwise), which is why the theta axis defaults to `zero="N"` with
+    `direction="clockwise"`.
+
+    Args:
+        directions: Bearings in degrees, one per observation.
+        children_in: Extra components — an `xy.legend`, or an `xy.tooltip` to
+            replace the default direction/count readout.
+        speeds: Speeds, one per observation.
+        sectors: Number of angular bins around the circle.
+        speed_bins: Upper edges of the speed bands. Defaults to four quartile
+            bands derived from the data. Each band takes the next colour from
+            the chart's palette cycle, as stacked series do everywhere else.
+        **props: Any `polar_chart` keyword.
+
+    Returns:
+        A polar `Chart` of stacked bars.
+    """
+    bearings = np.asarray(directions, dtype=float).reshape(-1)
+    magnitudes = np.asarray(speeds, dtype=float).reshape(-1)
+    if bearings.size != magnitudes.size:
+        raise ValueError("wind_rose directions and speeds must be the same length")
+    # A fractional count reached np.bincount's `minlength` and surfaced as a
+    # raw NumPy TypeError about "a sequence of integers", which names neither
+    # the parameter nor the caller's mistake.
+    if isinstance(sectors, bool) or not isinstance(sectors, (int, np.integer)):
+        raise ValueError(f"wind_rose sectors must be a whole number; got {sectors!r}")
+    if sectors < 3:
+        raise ValueError("wind_rose sectors must be at least 3")
+    finite = np.isfinite(bearings) & np.isfinite(magnitudes)
+    bearings, magnitudes = bearings[finite], magnitudes[finite]
+    if bearings.size == 0:
+        raise ValueError("wind_rose needs at least one finite observation")
+
+    if speed_bins is None:
+        # Quartile bands, rounded to three significant figures: the raw
+        # quantiles are readable as a legend only by accident ("<= 2.76651").
+        quartiles = np.quantile(magnitudes, [0.25, 0.5, 0.75, 1.0])
+        edges = np.unique([float(f"{value:.3g}") for value in quartiles])
+        # The top edge rounds *up*, never down: it has to cover the fastest
+        # observation, and restoring the raw maximum would put "27.2197" in the
+        # legend next to "2.77".
+        top = float(magnitudes.max())
+        if top > 0:
+            unit = 10.0 ** (math.floor(math.log10(top)) - 2)
+            edges[-1] = math.ceil(top / unit) * unit
+    else:
+        edges = np.unique(np.asarray(speed_bins, dtype=float).reshape(-1))
+        # The default path rounds its top edge UP precisely so it covers the
+        # fastest observation; authored edges are taken as given, so anything
+        # above the last one fell in no band at all — `speed_bins=[10, 20]`
+        # counted 2 of 3 observations when one blew at 25 and the rose
+        # under-reported its own input with no warning. Every observation must
+        # land in a band.
+        if edges.size and not np.all(np.isfinite(edges)):
+            raise ValueError("wind_rose speed_bins edges must all be finite")
+        if edges.size:
+            fastest = float(magnitudes.max())
+            if edges[-1] < fastest:
+                raise ValueError(
+                    f"wind_rose speed_bins top edge {edges[-1]:g} is below the "
+                    f"fastest observation {fastest:g}, which would drop it from "
+                    "every band. Raise the last edge to cover the data."
+                )
+    if edges.size == 0:
+        raise ValueError("wind_rose speed_bins must contain at least one edge")
+
+    width = 360.0 / sectors
+    # Bin centred on each sector: a bearing of 0 belongs to the sector centred
+    # on north, not to the one starting there.
+    index = np.floor(((bearings % 360.0) + width / 2.0) / width).astype(int) % sectors
+    centres = np.arange(sectors, dtype=float) * width
+
+    marks: list[Component] = []
+    base = np.zeros(sectors, dtype=float)
+    lower = -np.inf
+    for upper in edges:
+        in_band = (magnitudes > lower) & (magnitudes <= upper)
+        counts = np.bincount(index[in_band], minlength=sectors).astype(float)
+        marks.append(
+            bar(
+                centres,
+                # `bar` measures its value as a HEIGHT above `base`, not as an
+                # absolute top: passing `base + counts` stacked each band on
+                # top of its own cumulative offset a second time, so a rose of
+                # three observations reached radius 5 and every band above the
+                # first was too thick. The height IS the band's count, which is
+                # also what makes the hover readout the band's own count.
+                counts,
+                base=base.copy(),
+                width=width,
+                name=f"\u2264 {upper:g}",
+            )
+        )
+        base = base + counts
+        lower = upper
+
+    _require_polar_coords(props)
+    # A wind rose is the one polar composition where the ANGLE is data — it is
+    # the compass bearing — so it opts the direction row back in by naming it,
+    # and pairs it with the band's own count. `y` is the band height (see the
+    # comment above), so this reads "<= 10 / direction 45deg / count 7" rather
+    # than the cumulative stack radius the generic readout would show.
+    has_tooltip = any(isinstance(child, Tooltip) for child in children_in)
+    defaults: tuple[Component, ...] = (
+        ()
+        if has_tooltip
+        else (
+            tooltip(
+                title="{name}",
+                fields=["x", "y"],
+                labels={"x": "direction (\u00b0)", "y": "count"},
+                format={"x": ".0f"},
+            ),
+        )
+    )
+    children = (
+        *marks,
+        theta_axis(unit="degrees", zero="N", direction="clockwise"),
+        r_axis(label="count"),
+        *defaults,
+        *children_in,
+    )
+    # Polar defaults to zoom OFF (polar-axes.md §8): the centre is a fixed point
+    # of the transform, so on a composition whose radius is a constant rim or a
+    # fixed frame — a pie, a radial bar, a radar — zooming crops the rim and
+    # reads as broken. A wind rose is the exception this default is written
+    # around: its radius is a FREQUENCY COUNT, so scaling the outer ring against
+    # a pinned zero is exactly the useful gesture (it magnifies the short
+    # sectors of a rose dominated by one prevailing direction). An author's own
+    # `zoom=` — or an `xy.interaction_config(zoom=False)` child, which is applied
+    # after chart props — still wins. `None` is "unset" everywhere else in this
+    # API, so it must keep the rose's default rather than fall through to the
+    # polar one: a wrapper forwarding an `Optional[bool]` would otherwise turn
+    # zoom OFF by passing the value that means "I have no opinion".
+    if props.get("zoom") is None:
+        props["zoom"] = True
+    return Chart("wind_rose", children, **props)
 
 
 def area_chart(*children: Component, **props: Any) -> Chart:
@@ -5115,6 +7107,172 @@ def stem_chart(*children: Component, **props: Any) -> Chart:
 def segments_chart(*children: Component, **props: Any) -> Chart:
     """A segment chart composing generic independent segment marks."""
     return Chart("segments_chart", children, **props)
+
+
+def sankey_chart(
+    links: Any = None,
+    *children: Component,
+    **props: Any,
+) -> Chart:
+    """A Sankey diagram chart: flow layout, gradient ribbons, hidden axes.
+
+        xy.sankey_chart([
+            ("Inflow", "Equities", 78000),
+            ("Inflow", "Bonds", 46000),
+            ("Equities", "Growth", 61000),
+        ])
+
+    Keyword arguments that belong to `xy.sankey` (``nodes``, ``colors``,
+    ``node_width``, ``link_opacity``, ``labels``, …) are forwarded there;
+    everything else (``width``, ``height``, ``title``, …) styles the chart.
+    The diagram lives in a unit box with a small margin, y inverted so flow
+    reads top-down like every other Sankey.
+    """
+    mark_keys = (
+        "nodes",
+        "node_width",
+        "node_padding",
+        "align",
+        "iterations",
+        "colors",
+        "link_opacity",
+        "labels",
+        "label_size",
+    )
+    mark_kwargs = {key: props.pop(key) for key in mark_keys if key in props}
+    children = (
+        sankey(links, **mark_kwargs),
+        x_axis(domain=(-0.09, 1.09), show=False),
+        y_axis(domain=(-0.05, 1.05), reverse=True, show=False),
+        *children,
+    )
+    return Chart("sankey_chart", children, **props)
+
+
+def funnel_chart(
+    *children: Any,
+    **props: Any,
+) -> Chart:
+    """A funnel chart: ordered stages, centered segments, hidden cross axis.
+
+        xy.funnel_chart(
+            xy.funnel(
+                data=df,
+                stage="stage",
+                value="users",
+                show_conversion=True,
+            ),
+        )
+
+    Positional ``(stage, value)`` sequences also work without composing the
+    mark explicitly: ``xy.funnel_chart(["Visit", "Signup"], [9800, 6200])``.
+    Without an explicit mark or ``stage``/``value`` input, no implicit mark is
+    created: empty, data-only, and axis-only calls stay mark-free like sibling
+    chart factories. Funnel-specific options without funnel data are refused.
+
+    The stage axis keeps the declared order — stage 0 at the top for vertical
+    funnels (the axis is reversed exactly like a Sankey's), at the left for
+    horizontal ones — and shows the stage names as its tick labels. The cross
+    axis is layout, not data (segments are centered on zero), so it is hidden;
+    keyword arguments that belong to `xy.funnel` (``orientation``,
+    ``geometry``, ``gap``, ``neck``, ``min_width``, ``colors``, ``name``,
+    ``show_dropoff``, …) are forwarded there, and everything else (``width``,
+    ``height``, ``title``, …) styles the chart. ``style=`` stays chart-level
+    (the DOM container, as on every ``*_chart``); segment styling goes through
+    ``xy.funnel(style=...)`` or the forwarded ``stroke``/``opacity`` keywords.
+    """
+    mark_keys = (
+        "data",
+        "stage",
+        "value",
+        "key",
+        "name",
+        "orientation",
+        "geometry",
+        "gap",
+        "neck",
+        "min_width",
+        "color",
+        "colors",
+        "opacity",
+        "stroke",
+        "stroke_width",
+        "show_values",
+        "show_conversion",
+        "show_dropoff",
+        "labels",
+        "label_size",
+        "value_format",
+        "percent_format",
+        "animation",
+    )
+    mark_kwargs = {key: props.pop(key) for key in mark_keys if key in props}
+    rest = list(children)
+    marks: list[Component] = []
+    if rest and not isinstance(rest[0], Component):
+        stage_values = rest.pop(0)
+        if "stage" in mark_kwargs:
+            raise ValueError("funnel_chart got positional stages and stage=")
+        mark_kwargs["stage"] = stage_values
+        if rest and not isinstance(rest[0], Component):
+            if "value" in mark_kwargs:
+                raise ValueError("funnel_chart got positional values and value=")
+            mark_kwargs["value"] = rest.pop(0)
+    child_funnels = [c for c in rest if isinstance(c, Mark) and c.kind == "funnel"]
+    if child_funnels:
+        # `data=` is the chart-level default for an explicit child, just as it
+        # is for every sibling chart factory. Every other forwarded funnel
+        # keyword would describe a second implicit mark, so refuse the mix
+        # instead of appending a ghost funnel beside the authored one.
+        if "data" in mark_kwargs:
+            props["data"] = mark_kwargs.pop("data")
+        if mark_kwargs:
+            raise ValueError(
+                f"funnel_chart got {sorted(mark_kwargs)} alongside an explicit "
+                "xy.funnel(...) child; set these on the mark itself"
+            )
+    elif "stage" in mark_kwargs and "value" in mark_kwargs:
+        marks.append(funnel(**mark_kwargs))
+    else:
+        # A data-only chart has no implicit mark, matching the empty/axis-only
+        # behaviour of the sibling chart factories.
+        if "data" in mark_kwargs:
+            props["data"] = mark_kwargs.pop("data")
+        if mark_kwargs:
+            raise ValueError(
+                f"funnel_chart got {sorted(mark_kwargs)} without stage/value data; "
+                "pass stage= and value= or set these options on an xy.funnel(...) child"
+            )
+    orientations = {str(child.props.get("orientation", "vertical")) for child in child_funnels}
+    if marks:
+        orientations.add(str(mark_kwargs.get("orientation", "vertical")))
+    if len(orientations) > 1:
+        # Axis defaults (which axis hides, which reverses) are per
+        # orientation; last-child-wins silently mangled the other funnel.
+        raise ValueError(
+            "funnel_chart cannot mix vertical and horizontal funnels in one "
+            "chart; use two charts or facet_chart"
+        )
+    orientation = next(iter(orientations), "vertical")
+    # The cross axis is layout, not data (segments center on zero), so it is
+    # hidden with a symmetric margin that keeps the widest stage — and the
+    # outside/drop-off labels beside it — clear of the plot edges. The legend
+    # is off by default: the stage axis already names every stage, and the
+    # widest stage sits exactly where an inside legend would land. An explicit
+    # `xy.legend(...)` child (or any later child) overrides these defaults.
+    if orientation == "vertical":
+        axes: tuple[Component, ...] = (
+            x_axis(show=False, margin=0.14),
+            y_axis(reverse=True),
+            legend(show=False),
+        )
+    else:
+        axes = (
+            y_axis(show=False, margin=0.14),
+            x_axis(),
+            legend(show=False),
+        )
+    return Chart("funnel_chart", (*marks, *axes, *rest), **props)
 
 
 def triangle_mesh_chart(*children: Component, **props: Any) -> Chart:

@@ -40,22 +40,50 @@ class Trace:
     y0: Optional[Column] = None
     y1: Optional[Column] = None
     color_ch: Optional[ColorChannel] = None  # scatter color encoding
+    # Some derived scalar marks transform their color-channel values before
+    # shipping (hexbin's logarithmic count colors are the canonical example).
+    # Keep the user-facing domain and normalization beside the trace so
+    # colorbars can label the original values without changing the compact
+    # normalized paint channel sent to renderers.
+    colorbar_domain: Optional[tuple[float, float]] = None
+    colorbar_scale: str = "linear"
     # Independent per-mark outline paint.  ``None`` means the mark family has
     # no outline; a constant ``None`` color inside the channel means
     # edgecolors="face" and is resolved against color_ch by the renderers.
     stroke_ch: Optional[ColorChannel] = None
+    # Target-end paint for `ribbon`, whose gradient runs along the flow rather
+    # than along a value axis. `None` means flat: the whole band takes
+    # `color_ch`. No other kind carries two colors, which is precisely why a
+    # gradient ribbon could not be expressed as a composition of existing
+    # marks (spec/api/chart-kind-contract.md, ribbon geometry contract).
+    color2_ch: Optional[ColorChannel] = None
     size_ch: Optional[SizeChannel] = None  # scatter size encoding
     # Declarative data-transition metadata. Keys are two uint32 words per
     # canonical row (a deterministic 64-bit digest), kept out of the f64
     # column store because they are identity rather than numeric geometry.
     animation: Optional[dict[str, Any]] = None
     transition_keys: Optional[Any] = None
+    # Small, JSON-safe semantic rows for marks whose geometry columns are not
+    # meaningful readouts. Sankey uses these to describe a ribbon as
+    # source/target/value and a node as node/value instead of exposing the six
+    # internal placement coordinates in hover tooltips.
+    tooltip_rows: Optional[list[dict[str, Any]]] = None
     # Direct, final-unit instance attributes (alpha override, opacity, widths,
     # symbols, corner radii).  Constants stay in ``style`` and cost no buffer.
     style_channels: dict[str, StyleChannel] = field(default_factory=dict)
     # Tri-state density override: None = auto (threshold), True/False = forced.
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None
+    # Legend-toggle state (§34 filter predicates, interaction spec §10).
+    # `hidden` retires the whole trace from selections/decimation/density
+    # replies; `hidden_categories` holds excluded categorical codes and makes
+    # every re-bin/sample narrow its rows first — the pyramid fast path holds
+    # UNFILTERED aggregates and must be bypassed while this is non-empty.
+    hidden: bool = False
+    hidden_categories: set[int] = field(default_factory=set, compare=False)
+    # ((hidden set, column length) -> visible canonical rows), maintained by
+    # interaction._legend_visible_rows so per-view re-bins don't rescan codes.
+    _legend_vis_cache: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
     # Shipped-row → canonical-row mapping, set by build_payload when the shipped
     # copy drops NaN rows (§19), and by the drill-in view path when a Tier-2
     # trace ships its visible subset. The client's GPU pick and selection masks
@@ -71,10 +99,30 @@ class Trace:
     # subset is dropped instead of translating indices in the wrong space
     # (§16/§17: exact readout beats stale availability).
     drill_seq: int = 0
+    # Recent shipped subsets, {drill_seq: sel}, bounded to DRILL_HISTORY_KEEP
+    # (LOD doc T13): the client may pick against a retired cached point window
+    # whose seq is no longer current — translating through the remembered
+    # subset keeps that hover exact instead of dead. Cleared on data changes
+    # (an old subset's indices would then name different rows — §16).
+    drill_history: dict[int, Any] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+    # Full-column kernel color source for mean-color density binning (LOD doc
+    # §2), managed by `interaction.trace_bin_colors`: None = never resolved,
+    # 0 = resolved and not applicable (no channel / constant), otherwise the
+    # `resolve_bin_colors` kwargs dict. Resolving quantizes every canonical row
+    # — an O(N) pass — while the result is a pure function of the immutable
+    # channel values and their global domain, so it is computed once and shared
+    # by every grid consumer (pyramid build, exact re-bins, first-paint emit).
+    # A rebuildable derived cache (§27); appends invalidate it.
+    _bin_colors: Any = field(default=None, init=False, repr=False, compare=False)
     # Count-pyramid cache (§5 Tier 3), managed by `interaction.py`: None =
     # never tried, 0 = tried and not applicable, otherwise the native handle.
     # The finalizer frees the native side when the trace is collected.
+    # `_pyr_colored` records whether the handle carries mean-color planes
+    # (LOD doc §2) — compose must ask for them, and the memory report counts them.
     _pyr_handle: Optional[int] = field(default=None, init=False, repr=False, compare=False)
+    _pyr_colored: bool = field(default=False, init=False, repr=False, compare=False)
     _pyr_finalizer: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
     _pyr_base_dim: int = field(default=0, init=False, repr=False, compare=False)
     # Optional Tier-3 spatial index (xy._spatial.SpatialIndex) for O(window)

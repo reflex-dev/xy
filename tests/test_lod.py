@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from xy import lod
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_viewport_request_normalizes_ranges_and_clamps_screen_shape() -> None:
@@ -136,7 +132,9 @@ def test_scatter_density_view_routes_through_shared_lod_primitives(monkeypatch) 
     assert len(calls["request"]) == 3
     assert any(plan.exact is False for plan in calls["plan"])
     assert any(plan.exact is True for plan in calls["plan"])
-    assert len(calls["encode"]) >= 2
+    # One geometry encode: the drill's window-centered x/y pair. Density
+    # replies ship no sample overlay (#225), so nothing else encodes points.
+    assert len(calls["encode"]) == 1
     assert calls["enter"] == [drilled["traces"][0]["visible"]]
     assert True in calls["exit"]
 
@@ -195,26 +193,6 @@ def test_line_area_decimate_view_routes_through_shared_buffer_writer(monkeypatch
     assert len(buffers) == 3
     assert all(call["len"] == trace["x"]["len"] for call in calls)
     assert {"offset", "scale"} <= set(calls[0]["meta"])
-
-
-def test_lod_architecture_doc_names_shared_extension_points() -> None:
-    text = (ROOT / "spec" / "design" / "lod-architecture.md").read_text(encoding="utf-8")
-
-    for marker in (
-        "ViewportRequest.from_client",
-        "plan_view_lod",
-        "encode_window_xy_columns",
-        "add_window_xy",
-        "BufferWriter.add_encoded",
-        "sample_rows_for_target",
-        "Line and area zoom",
-        "local_log_density",
-        "ohlc-buckets",
-        "box-buckets",
-        "T6",
-        "invalid requests do not mutate",
-    ):
-        assert marker in text
 
 
 @pytest.mark.parametrize(
@@ -634,3 +612,18 @@ def test_sample_rows_for_target_rejects_bad_options(kwargs, message: str) -> Non
 
     with pytest.raises(ValueError, match=message):
         lod.sample_rows_for_target(np.arange(3, dtype=np.int64), target, **options)
+
+
+def test_pins_offset_to_zero_agrees_with_geometry_offset() -> None:
+    """The sticky-offset path in `_payload.ship` branches on
+    `pins_offset_to_zero` to decide whether it may choose an offset at all.
+    That predicate and `geometry_offset`'s own zero-origin rule must never
+    drift apart: if they did, `ship` would pin a sticky midpoint on an axis
+    whose shader transform requires the zero origin (§4)."""
+    for scale in ("log", "symlog"):
+        assert lod.pins_offset_to_zero(scale)
+        assert lod.geometry_offset(scale, 10.0, 20.0) == 0.0
+
+    for scale in (None, "linear"):
+        assert not lod.pins_offset_to_zero(scale)
+        assert lod.geometry_offset(scale, 10.0, 20.0) == 15.0

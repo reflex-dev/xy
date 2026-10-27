@@ -102,7 +102,7 @@ def test_noncontinuous_scatter_does_not_invent_a_colorbar(color) -> None:
     assert "colorbar" not in spec
 
 
-def test_density_scatter_does_not_label_the_dropped_per_row_color_channel() -> None:
+def test_density_scatter_colorbar_labels_the_aggregated_color_channel() -> None:
     chart = xy.scatter_chart(
         xy.scatter(
             [0.0, 1.0, 2.0],
@@ -116,9 +116,14 @@ def test_density_scatter_does_not_label_the_dropped_per_row_color_channel() -> N
 
     spec, _ = chart.figure().build_payload()
 
+    # The aggregated surface wears the channel's own colors — per-cell mean
+    # point color (LOD doc §2) — so the channel is not dropped and its
+    # domain⇄colormap legend stays truthful at every tier.
     assert spec["traces"][0]["tier"] == "density"
-    assert spec["traces"][0]["density"]["channels_dropped"] is True
-    assert "colorbar" not in spec
+    assert spec["traces"][0]["density"]["channels_dropped"] is False
+    assert spec["traces"][0]["density"]["color_agg"] == "mean"
+    assert spec["colorbar"]["domain"] == [10.0, 30.0]
+    assert spec["colorbar"]["colormap"] == "plasma"
 
 
 def test_hexbin_and_contour_colorbars_use_compiled_domains() -> None:
@@ -137,6 +142,24 @@ def test_hexbin_and_contour_colorbars_use_compiled_domains() -> None:
         "colormap": "magma",
         "label": "count",
         "orientation": "vertical",
+    }
+
+    log_hex_chart = xy.hexbin_chart(
+        xy.hexbin(x, y, gridsize=4, mincnt=1, bins="log", colormap="inferno"),
+        xy.colorbar(),
+    )
+    log_hex_fig = log_hex_chart.figure()
+    log_hex_spec, _ = log_hex_fig.build_payload()
+    log_hex_trace = log_hex_fig.traces[0]
+
+    assert log_hex_trace.color_ch is not None
+    assert log_hex_trace.color_ch.domain != log_hex_trace.colorbar_domain
+    assert log_hex_spec["colorbar"] == {
+        "domain": list(log_hex_trace.colorbar_domain),
+        "colormap": "inferno",
+        "label": "count",
+        "orientation": "vertical",
+        "scale": "log",
     }
 
     field = np.array(

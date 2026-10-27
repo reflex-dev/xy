@@ -41,8 +41,12 @@ def test_maxn_locator_keeps_scale_for_narrow_far_offset_ranges():
     assert inside.sum() == 3
 
 
-def test_singular_range_still_returns_a_tick():
-    assert list(plt.MaxNLocator(4).tick_values(2.0, 2.0)) == [2.0]
+def test_singular_range_expands_to_multiple_finite_ticks():
+    ticks = plt.MaxNLocator(4).tick_values(2.0, 2.0)
+
+    assert len(ticks) >= 2
+    assert np.isfinite(ticks).all()
+    assert ticks[0] < 2.0 < ticks[-1]
 
 
 # -- absolute panel placement: titled axes ------------------------------------
@@ -120,6 +124,18 @@ def test_subplots_adjust_overrides_set_position_for_gridspec_axes():
     assert ax.get_position().bounds == (0.1, 0.1, 0.4, 0.8)
     fig.subplots_adjust(left=0.35)
     assert np.allclose(ax.get_position().bounds, (0.35, 0.11, 0.25, 0.77))
+
+
+def test_add_axes_does_not_reshape_the_subplot_grid() -> None:
+    fig = plt.figure()
+    subplot = fig.gca()
+    absolute = fig.add_axes((0.7, 0.7, 0.2, 0.2))
+
+    fig.subplots_adjust(left=0.2)
+
+    assert subplot.get_position().bounds == pytest.approx((0.2, 0.11, 0.7, 0.77))
+    assert absolute.get_position().bounds == pytest.approx((0.7, 0.7, 0.2, 0.2))
+    assert (fig._nrows, fig._ncols) == (1, 1)
 
 
 def test_month_locator_bymonth_subset_keeps_rrule_stride():

@@ -10,10 +10,10 @@ are published.
 
 ## 0. The three rules
 
-1. **Mode-scoped claims only** (§2 of the dossier, already policy): "10M
-   density in X ms" is a different claim from "10M individually-styled
-   markers." Output labels every row `direct | decimated | density | sampled`
-   — a reader can never mistake an aggregate result for a raw-marker result.
+1. **Record the rendering mode.** "10M density in X ms" and "10M
+   individually-styled markers in X ms" are different workloads. Output labels
+   every row `direct | decimated | density | sampled`, preserving the result
+   needed to compare and improve each path.
 2. **Same-work comparisons.** Each competitor renders the *same visual
    contract*, not the same API call: if XY aggregates at 10M, the
    fair Plotly comparison is Plotly failing/succeeding at raw markers AND
@@ -92,10 +92,13 @@ reported).
   spec (documented CPU/GPU/driver/browser build), labeled as such. Never mix
   tiers in one table. HN's first attack is "benchmarked on a potato/cherry
   machine" — pre-empt by publishing both. `benchmarks/README.md` is the shipped
-  runbook for both tiers: exact dependency pins against
-  `benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro` (`pyproject.toml`,
-  `uv.lock`, `environment.json`), copy-paste repro commands, and the prescribed
-  `reference hardware` vs `CI (software GL)` table labels.
+  runbook for both tiers: exact dependency pins against the launch baseline
+  directories under `benchmarks/launch_baselines/` (`pyproject.toml`, `uv.lock`,
+  `environment.json` — `xy-0.1.0/macos-arm64-m5-pro` for the original launch
+  record, `xy-main-2026-07-26/macos-arm64-m5-pro` for the rerun the published
+  docs quote, both carrying identical competitor pins), copy-paste repro
+  commands, and the prescribed `reference hardware` vs `CI (software GL)` table
+  labels.
 - Every table header carries: timestamp, python version/implementation,
   platform system/machine, and harness commit + dirty state
   (`bench_vs.to_markdown`). Library versions, executables, CPU count, xy
@@ -123,20 +126,33 @@ reported).
 4. `scatter_100M_pan`: pyramid pan/zoom percentiles (post LOD phase 3) —
    the headline; includes never-blank check (frame sampling: no frame
    without chart pixels).
-5. `drilldown_truth`: CodSpeed native cycle covers density overview → exact
-   points → density zoom-out; the 10M+ exact-hover oracle remains the larger
+5. `drilldown_truth`: CodSpeed native cycles cover density overview → exact
+   points → density zoom-out, twice — a plain trace and a channel-bearing
+   twin (`test_adaptive_drilldown_cycle_mean_color`, which adds a mid-band
+   exact re-bin leg). The twin exists because per-request cost on a colored
+   trace must exclude full-column channel work: the bin-color resolution is
+   cached per trace (LOD doc §2), and re-resolving it per reply multiplies
+   the row by the column length (the 100M FastAPI demo's 1–2 s/request
+   regression). The 10M+ exact-hover oracle remains the larger
    browser/widget follow-up.
 6. `core_2d_payloads`: CodSpeed tracks native histogram, area, bar, heatmap,
    and composed/layered `xy.chart(...)` payload prep;
    `benchmarks/bench_2d_charts.py` stays the Plotly/Seaborn chart-to-pixels
    comparison.
-7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50 mixed
-   charts, checks every canvas initially and while scrolling, and records payload
-   prep, navigation readiness, JS heap, redraw-submission p95, per-chart context
-   loss/restoration events, and the stable loss-free chart-count ceiling. Partial
-   dashboards remain successful measurement rows rather than losing their metrics.
+7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50/60 mixed
+   charts in CI, checks every canvas initially and while scrolling, and records
+   payload prep, navigation readiness, per-chart setup/first-draw p50/p95/max, load and
+   first-pick shader compiles and program links, advisory startup long tasks, JS
+   heap, redraw-submission p95, per-chart context loss/restoration events, and the
+   stable loss-free chart-count ceiling. A complete, loss-free 60-chart CI row
+   pins the production shader inventory at 9 unique load compiles/60 links and
+   11/72 after the 12 scatter pick passes; steady redraw must add neither
+   compiles nor links. Partial dashboards remain successful measurement rows
+   rather than losing their metrics.
    CI hard-gates the 10-chart row as loss-free/nonblank and applies deliberately
-   loose catastrophic budgets to its render, scroll, and redraw timings.
+   loose catastrophic budgets to its render, scroll, and redraw timings;
+   setup/first-draw percentiles and long tasks remain telemetry rather than timing
+   gates.
 8. `install_import`: lower-bound distribution size plus opt-in fresh-venv total
    site-packages, transitive distribution count, install time, and cold import.
 9. `public_workflows`: `benchmarks/bench_workflows.py` tracks ingestion shapes,
@@ -226,11 +242,22 @@ and tier discipline applies to them rather than a threshold.
 wall time, so browser, install, and cross-library process benchmarks stay out of
 it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 
-The glob collects five modules — `test_codspeed_animation.py`,
-`test_codspeed_kernels.py`, `test_codspeed_pyplot.py`,
-`test_codspeed_selection.py`, and `test_codspeed_transport.py` — for 102 rows
-total. These are trend-tracked in CodSpeed, not gated: none of them feed
+The glob collects six modules — `test_codspeed_animation.py`,
+`test_codspeed_kernels.py`, `test_codspeed_polar.py`,
+`test_codspeed_pyplot.py`, `test_codspeed_selection.py`, and
+`test_codspeed_transport.py` — for **109 rows** total, counting parametrized
+expansion. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
+
+That count is a hard gate, not prose:
+`tests/test_benchmark_environment.py::test_codspeed_row_count_matches_the_methodology_spec`
+collects the modules by AST and fails when the two disagree. It exists because a
+benchmark that is renamed or deleted without a note here leaves a **stale row in
+CodSpeed's stored baseline** — the dashboard keeps reporting it as "skipped, using
+the baseline result", which reads like a flaky measurement rather than a row that
+no longer exists. Removing one is allowed; removing one silently is not. Stale
+rows already in the dashboard have to be archived there by hand; this gate stops
+new ones appearing.
 
 **`benchmarks/test_codspeed_pyplot.py` — 14 rows, seven paired arms.** Each pair
 expresses one chart twice over the same input arrays: once through the
@@ -291,19 +318,40 @@ assertion and lazy-import warmup fixture. Browser `updatePayload` time,
 animation-frame pacing, heap delta, and the previous+next scene bound stay in
 `bench_animation.py`.
 
-**`benchmarks/test_codspeed_selection.py` — 5 rows.** The backend
+**`benchmarks/test_codspeed_polar.py` — 6 rows.** Attribution for the polar
+coordinate system, which shipped without any CodSpeed row: the report read "103
+untouched benchmarks" for a change that rewrote wedge geometry in three
+renderers, and a performance cliff at ~50k polar bars was consequently found by
+hand rather than by CI. Three payload rows cover the shapes with materially
+different validation and emit paths — a 100k-point polar line, a 16-sector /
+50k-observation wind rose (Python-side binning plus stacked wedges), and a
+24-slice pie (unequal widths, so the four-edge column path rather than the
+compact scalar-width one). Two export rows bracket the arc-flattening term over
+the same rose: SVG draws real `A` arcs and needs no subdivision count, so it is
+the control, while native PNG flattens every wedge through `polar_wedge_points`
+at `config.polar_bar_segments(span, turn)` vertices — six segments for a
+22.5-degree sector rather than the full-turn 96, so a regression back to a flat
+count lands here as an arc-flattening step change instead of a bug report. The
+sixth row is a polar heatmap's bounded screen-space inverse raster, which has no
+Cartesian twin. The payload rows assert bounds, not sizes: the rose's bytes must
+stay bounded by sector and band count rather than observation count, so a row
+cannot get cheaper by shipping a different chart. Browser wedge vertex counts,
+GPU buffer lifetime, and radial-zoom frame pacing are wall-clock/WebGL
+measurements and stay in `bench_interaction.py` and the polar smokes.
+
+**`benchmarks/test_codspeed_selection.py` — 4 rows.** The backend
 interaction/selection handlers the client's gesture messages resolve to
 (design-dossier §17/§34): hover pick with a categorical channel readout;
 zone-pruned box select over a 1% window of a monotone-x 1M scatter; the full
-box-select and lasso gesture units through `channel.handle_message` on a
-uniform 1M scatter — full scan, polygon ray casting, and the wire-mask reply;
+box-select gesture unit through `channel.handle_message` on a uniform 1M
+scatter — full scan plus the wire-mask reply;
 and the cross-filter rows-to-shipped-mask encoding (view-state.md §5.1) over a
 NaN-dropped trace, so the canonical-to-shipped `searchsorted` translation is
 the path measured rather than the identity fast path. Browser input-to-pixel
 latency stays in `bench_interaction.py`; before this module a selection
 regression could only surface as browser wall-clock noise.
 
-**`benchmarks/test_codspeed_kernels.py` — 73 rows** (70 functions; two are
+**`benchmarks/test_codspeed_kernels.py` — 74 rows** (71 functions; two are
 parametrized, over 2 ingest flavors and 3 `bin_2d` thread-cap regimes). This is
 the bulk of the suite and covers the native compute core the rest of the engine
 sits on: decimation tiers, f32 encoding, and zone maps (`spec/design-dossier.md`
@@ -322,18 +370,17 @@ Two `make` targets bound the `xy.pyplot` shim from opposite sides. Both appear
 in the focused-gate table of `spec/process/production-readiness.md`.
 
 - **`make check-pyplot`** → `pytest tests/pyplot -q`. The correctness side: shim
-  behavior, matplotlib interoperability, and the reference corpus. It also
-  carries the *relative* speed gate, `tests/pyplot/test_perf_guardrail.py`,
-  which asserts the pyplot build stays within 1.6x the declarative build at 10k
-  points and 1.5x at 100k (best-of-N, plus a 100us absolute allowance for CI
-  timer jitter) and that theme/axis components come from the component cache
-  instead of being rebuilt. Its own docstring scopes it: a structural-regression
-  gate for an O(n) copy or per-build revalidation sneaking into the shim, not a
-  re-measurement of the margin.
+  behavior, matplotlib interoperability, and the reference corpus.
+  `tests/pyplot/test_perf_guardrail.py` hard-gates deterministic structural
+  invariants: theme/axis components come from the component cache instead of
+  being rebuilt, and ordinary bar probes avoid materializing full geometry.
+  Sub-millisecond wall-clock comparisons do not run as blocking pytest tests
+  because shared-runner jitter overwhelms their useful margin.
 - **`make check-pyplot-speed`** → `benchmarks/bench_pyplot_vs_matplotlib.py
   --profile standard --reps 21 --warmups 3 --target-speedup 10 --require-target`
-  (needs the `.[bench]` extra). The *absolute* side: figure construction through
-  a completed, compressed PNG at a shared 1800x840 target against
+  (needs Matplotlib from the pinned benchmark environment). The *absolute*
+  side: figure construction through a completed, compressed PNG at a shared
+  1800x840 target against
   matplotlib/Agg, reported per family — line, scatter, histogram, bar,
   pcolormesh, contour. `--require-target` exits nonzero unless every family
   reaches the 10x total-time target. The run alternates library order to reduce
@@ -349,6 +396,9 @@ unexplained engine slowdown.
 no `continue-on-error` are `matplotlib_reference`, `test`, `browser_conformance`,
 `python_floor`, `sdist`, `wheels`, and `install_without_rust`; only
 `benchmark_vs`, `benchmark_methodology`, and `benchmark` are non-blocking.
+Each cross-library matrix job has a 20-minute total timeout, including
+dependency and Playwright installation; the benchmark command retains its
+independent 45-second per-library/per-size deadline.
 `matplotlib_reference` is **not** absent from the Release-Blocking Gates table in
 `spec/process/production-readiness.md`: it is the "Matplotlib reference" row, whose
 evidence column names exactly the job's two halves,

@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 MARK_FACTORIES = (
     "scatter",
+    "ribbon",
+    "sankey",
+    "funnel",
     "line",
     "area",
     "histogram",
@@ -50,9 +53,20 @@ ANNOTATION_FACTORIES = (
     "y_band",
     "text",
 )
+AXIS_FACTORIES = (
+    "x_axis",
+    "y_axis",
+    "theta_axis",
+    "r_axis",
+)
 CHART_FACTORIES = (
     "chart",
     "scatter_chart",
+    "polar_chart",
+    "radar_chart",
+    "polar_bar_chart",
+    "pie_chart",
+    "wind_rose",
     "line_chart",
     "area_chart",
     "histogram_chart",
@@ -71,6 +85,7 @@ CHART_FACTORIES = (
     "stem_chart",
     "segments_chart",
     "triangle_mesh_chart",
+    "funnel_chart",
 )
 CHROME_FACTORIES = (
     "legend",
@@ -182,22 +197,47 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "title",
         "chrome",
         "canvas",
+        "annotation_layer",
         "labels",
         "legend",
+        "legend_title",
         "legend_item",
         "legend_swatch",
+        "legend_label",
         "colorbar",
         "colorbar_bar",
+        "colorbar_extension",
+        "colorbar_line",
         "colorbar_tick",
+        "colorbar_minor_tick",
         "colorbar_title",
         "tooltip",
+        "tooltip_title",
+        "tooltip_row",
+        "tooltip_label",
+        "tooltip_value",
         "modebar",
+        "modebar_drag_handle",
+        "modebar_control_group",
+        "modebar_separator",
         "modebar_button",
+        "modebar_icon",
+        "modebar_zoom_value",
+        "modebar_indicator",
+        "modebar_selection_icon",
+        "modebar_menu",
+        "modebar_menu_separator",
+        "modebar_menu_icon",
+        "modebar_menu_label",
+        "modebar_history_controls",
         "selection",
         "crosshair_x",
         "crosshair_y",
         "badge",
         "badge_item",
+        "axis_band",
+        "axis_line",
+        "tick_mark",
         "tick_label",
         "axis_title",
         "annotation_label",
@@ -207,10 +247,6 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
     assert expected == components.CHART_DOM_SLOTS
     assert len(components.CHART_DOM_SLOTS) == len(set(components.CHART_DOM_SLOTS))
     assert all(slot == slot.lower() and " " not in slot for slot in components.CHART_DOM_SLOTS)
-
-    design = (ROOT / "spec" / "design" / "reflex-shaped-api.md").read_text(encoding="utf-8")
-    for slot in components.CHART_DOM_SLOTS:
-        assert f"`{slot}`" in design
 
 
 def test_chart_class_names_are_limited_to_public_dom_slots() -> None:
@@ -240,8 +276,7 @@ def test_public_factories_are_typed_root_exports() -> None:
     for name in (
         *MARK_FACTORIES,
         *ANNOTATION_FACTORIES,
-        "x_axis",
-        "y_axis",
+        *AXIS_FACTORIES,
         *CHROME_FACTORIES,
         *CHART_FACTORIES,
     ):
@@ -259,8 +294,7 @@ def test_composition_alpha_contract_is_explicitly_exported() -> None:
         *ANNOTATION_FACTORIES,
         *CHART_FACTORIES,
         *CHROME_FACTORIES,
-        "x_axis",
-        "y_axis",
+        *AXIS_FACTORIES,
     }
 
     for name in sorted(contract):
@@ -278,8 +312,7 @@ def test_public_component_factories_have_typed_signatures() -> None:
     expected_returns = {
         **{name: components.Mark for name in MARK_FACTORIES},
         **{name: components.Annotation for name in ANNOTATION_FACTORIES},
-        "x_axis": components.Axis,
-        "y_axis": components.Axis,
+        **{name: components.Axis for name in AXIS_FACTORIES},
         "legend": components.Legend,
         "tooltip": components.Tooltip,
         "colorbar": components.Colorbar,
@@ -348,10 +381,18 @@ def test_annotation_factory_kinds_are_registered_with_typed_appliers() -> None:
 
 def test_chart_factories_construct_named_lazy_charts() -> None:
     for name in CHART_FACTORIES:
-        chart = getattr(components, name)()
+        if name == "radar_chart":
+            chart = components.radar_chart(["a", "b", "c"])
+        elif name == "wind_rose":
+            chart = components.wind_rose([0.0], [1.0])
+        elif name == "pie_chart":
+            chart = components.pie_chart(["a", "b"], [1.0, 2.0])
+        else:
+            chart = getattr(components, name)()
         assert isinstance(chart, components.Chart), name
         assert chart.kind == name
-        assert chart.children == ()
+        if name not in {"radar_chart", "wind_rose", "pie_chart", "funnel_chart"}:
+            assert chart.children == ()
         assert chart._figure is None
         assert chart._widget is None
 

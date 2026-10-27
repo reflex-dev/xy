@@ -16,13 +16,19 @@ If XY is not installed yet, follow [Installation](/docs/xy/overview/installation
 Save this as `first_chart.py`:
 
 ~~~python
+import random
+
 import xy
 
+rng = random.Random(7)
+x = [rng.random() for _ in range(200)]
+y = [rng.random() for _ in x]
+
 chart = xy.scatter_chart(
-    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
-    xy.x_axis(label="sample"),
-    xy.y_axis(label="value"),
-    title="First chart",
+    xy.scatter(x, y, color="#6e56cf", size=7, opacity=0.65),
+    xy.x_axis(label="x"),
+    xy.y_axis(label="y"),
+    title="200 random points",
 )
 
 chart.to_html("scatter.html")
@@ -37,14 +43,20 @@ python first_chart.py
 This is the chart it produces, live:
 
 ~~~python demo-only exec
+import random
+
 import reflex_xy
 import xy
 
+rng = random.Random(7)
+x = [rng.random() for _ in range(200)]
+y = [rng.random() for _ in x]
+
 first_chart = xy.scatter_chart(
-    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
-    xy.x_axis(label="sample"),
-    xy.y_axis(label="value"),
-    title="First chart",
+    xy.scatter(x, y, color="#6e56cf", size=7, opacity=0.65),
+    xy.x_axis(label="x"),
+    xy.y_axis(label="y"),
+    title="200 random points",
 )
 
 
@@ -54,6 +66,8 @@ def first_chart_demo():
 
 `scatter.html` is self-contained. Hover, pan, zoom, and the built-in controls
 run locally without a Python process or network connection.
+The seeded random generator keeps the example reproducible while filling the
+plot with enough points to make those interactions useful.
 
 ## Notebook path: display a live widget
 
@@ -61,13 +75,19 @@ Run this cell in Jupyter, JupyterLab, VS Code, Colab, Marimo, or another
 compatible anywidget frontend:
 
 ~~~python
+import random
+
 import xy
 
+rng = random.Random(7)
+x = [rng.random() for _ in range(200)]
+y = [rng.random() for _ in x]
+
 chart = xy.scatter_chart(
-    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
-    xy.x_axis(label="sample"),
-    xy.y_axis(label="value"),
-    title="First chart",
+    xy.scatter(x, y, color="#6e56cf", size=7, opacity=0.65),
+    xy.x_axis(label="x"),
+    xy.y_axis(label="y"),
+    title="200 random points",
 )
 
 chart

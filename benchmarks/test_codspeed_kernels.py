@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 import xy
+from xy import channels as ch
 from xy import kernels as k
 from xy._figure import Figure  # harness type annotations only
 
@@ -225,18 +226,65 @@ def compatibility_kernel_data() -> dict[str, np.ndarray]:
     }
 
 
+def _expect_drill_window(fig: Figure, x: np.ndarray, y: np.ndarray) -> None:
+    """Stash the deep view's expected drill window and count on the figure.
+
+    A drill reply ships the widest ALIGNED window around the view that still
+    fits the budget (LOD doc T13), so `visible` counts the SHIPPED window —
+    the reply's own `x_range`/`y_range` — not the raw view. Alignment is a
+    pure function of the extent and the view's span bucket, so every
+    benchmark iteration resolves to the same window and the same exact count;
+    reading both from a warm reply keeps the assertions exact without
+    hardcoding the pad ladder.
+    """
+    deep, _ = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    trace = deep["traces"][0]
+    assert trace["mode"] == "points"
+    (wx0, wx1), (wy0, wy1) = trace["x_range"], trace["y_range"]
+    assert wx0 <= 0.0 and wx1 >= 10.0 and wy0 <= 0.0 and wy1 >= 10.0
+    fig._benchmark_deep_window = (wx0, wx1, wy0, wy1)
+    fig._benchmark_deep_expected = int(
+        np.count_nonzero((x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1))
+    )
+    assert fig._benchmark_deep_expected == trace["visible"]
+
+
 @pytest.fixture(scope="module")
 def drilldown_figure() -> Figure:
     rng = np.random.default_rng(17)
     x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     fig = xy.chart(xy.scatter(x=x, y=y, density=True)).figure()
-    fig._benchmark_deep_expected = int(np.count_nonzero((x < 10.0) & (y < 10.0)))
 
     # Warm the lazily-built pyramid so CodSpeed tracks interactive viewport
     # refresh cost, not one-time index construction.
     fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
-    fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    _expect_drill_window(fig, x, y)
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    return fig
+
+
+@pytest.fixture(scope="module")
+def colored_drilldown_figure() -> Figure:
+    """The drilldown workload with a continuous color channel — the FastAPI
+    100M-demo shape, where every grid reply carries the mean-color plane
+    (LOD doc §2) and drills restore per-point channels.
+
+    Warm calls build the colored pyramid AND the trace's cached full-column
+    color resolution (`interaction.trace_bin_colors`), so the measured region
+    tracks steady-state per-request cost. That cost must stay free of any
+    O(N) full-column channel pass: before the resolution was cached, every
+    reply of every tier re-quantized the whole color column, costing the 100M
+    drilldown demo 1-2 s per request against ~10-400 ms of real tier work.
+    """
+    rng = np.random.default_rng(23)
+    x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    color = np.hypot(x - 50.0, y - 50.0)
+    fig = xy.chart(xy.scatter(x=x, y=y, color=color, colormap="viridis", density=True)).figure()
+
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    _expect_drill_window(fig, x, y)
     fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
     return fig
 
@@ -281,6 +329,32 @@ def test_factorize_unicode1_categorical(benchmark):
     assert len(codes) == N and len(unique) == len(labels)
     np.testing.assert_array_equal(codes[:48], np.tile(np.arange(24, dtype=np.uint8), 2))
     assert int(counts.sum()) == N
+
+
+def test_factorize_many_categories_routing(benchmark):
+    """Categorical resolve above the compact-palette ceiling, routing included.
+
+    The two rows above call the kernels directly, so neither prices the choice
+    of path. Every other categorical workload in the suite carries 24
+    categories, which short-circuits on `_FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES`
+    — leaving the regime this covers untested: enough categories to clear that
+    early-out while staying far from a unique-id column. Routing it back onto
+    per-row Python label boxing costs an O(N) object pass, which instruction
+    counting sees loudly.
+    """
+    labels = np.asarray([f"{i:08d}" for i in range(600)])
+    values = np.resize(labels, N)
+    # `np.resize` tiles with period 600 and the router samples on a fixed
+    # stride, so the probe's distinct count is an aliasing accident of N and
+    # the probe width. Pin it: if either constant drifts so the probe falls
+    # back inside the early-out, this row silently stops covering the regime
+    # its docstring claims.
+    probe = values[np.linspace(0, N - 1, ch._FACTORIZE_PROBE_ROWS, dtype=np.intp)]
+    assert len(np.unique(probe)) > ch._FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES
+    assert ch._use_native_fixed_factorizer(values)
+    categories, codes, _ = benchmark(ch._factorize_categories, values)
+    assert len(categories) == len(labels) and len(codes) == N
+    np.testing.assert_array_equal(codes[:24], np.arange(24, dtype=codes.dtype))
 
 
 def test_m4_indices_full(benchmark, data):
@@ -1068,6 +1142,10 @@ def _adaptive_drilldown_cycle(fig: Figure) -> int:
     assert wide_trace["mode"] == "density"
     assert deep_trace["mode"] == "points"
     assert str(wide_trace.get("binning", "")).startswith("pyramid-L")
+    # T13: the shipped window is the deterministic padded aligned superset of
+    # the view, so both the window and its exact count repeat every cycle.
+    assert tuple(deep_trace["x_range"]) == fig._benchmark_deep_window[:2]
+    assert tuple(deep_trace["y_range"]) == fig._benchmark_deep_window[2:]
     assert deep_trace["visible"] == fig._benchmark_deep_expected
     drill_seq = deep_trace["drill_seq"]
     row = fig.pick(0, 0, drill_seq)
@@ -1092,6 +1170,56 @@ def _adaptive_drilldown_cycle(fig: Figure) -> int:
 def test_adaptive_drilldown_cycle(benchmark, drilldown_figure):
     """Adaptive scatter: density overview -> exact visible points -> density out."""
     result = benchmark(_adaptive_drilldown_cycle, drilldown_figure)
+    assert result > DRILL_N
+
+
+def _colored_drilldown_cycle(fig: Figure) -> int:
+    wide, wide_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    # ~12.5% of the uniform domain: between the drill budget and the pyramid
+    # margin, so this window takes the exact re-bin plus its mean-color scan.
+    mid, mid_buffers = fig.density_view(0, 0.0, 39.0, 0.0, 32.0, GRID_W, GRID_H)
+    deep, deep_buffers = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+
+    wide_trace = wide["traces"][0]
+    mid_trace = mid["traces"][0]
+    deep_trace = deep["traces"][0]
+    assert wide_trace["mode"] == "density"
+    assert str(wide_trace.get("binning", "")).startswith("pyramid-L")
+    assert wide_trace["density"].get("color_agg") == "mean"  # prebuilt planes rode along
+    assert mid_trace["mode"] == "density"
+    assert mid_trace["binning"] == "exact"
+    assert mid_trace["density"].get("color_agg") == "mean"  # cached-idx mean-color scan
+    assert deep_trace["mode"] == "points"
+    # T13: the shipped window is the deterministic padded aligned superset of
+    # the view, so both the window and its exact count repeat every cycle.
+    assert tuple(deep_trace["x_range"]) == fig._benchmark_deep_window[:2]
+    assert tuple(deep_trace["y_range"]) == fig._benchmark_deep_window[2:]
+    assert deep_trace["visible"] == fig._benchmark_deep_expected
+    assert deep_trace["color"]["mode"] == "continuous"  # drill restores channels
+
+    back, back_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    back_trace = back["traces"][0]
+    assert back_trace["mode"] == "density"
+    assert str(back_trace.get("binning", "")).startswith("pyramid-L")
+    return (
+        int(wide_trace["visible"])
+        + int(mid_trace["visible"])
+        + int(deep_trace["visible"])
+        + int(back_trace["visible"])
+        + sum(len(buffer) for buffer in wide_buffers + mid_buffers + deep_buffers + back_buffers)
+    )
+
+
+def test_adaptive_drilldown_cycle_mean_color(benchmark, colored_drilldown_figure):
+    """The drilldown cycle on a channel-bearing trace (the FastAPI demo shape).
+
+    Regression tripwire for per-request full-column channel work: every reply
+    here must reuse the trace's cached bin-color resolution (LOD doc §2), so
+    the cycle costs the tier work itself — pyramid compose, one exact re-bin
+    with its mean-color scan, one drill gather. Re-resolving the channel per
+    request multiplies this row by the column length and shows up as a
+    step-function regression."""
+    result = benchmark(_colored_drilldown_cycle, colored_drilldown_figure)
     assert result > DRILL_N
 
 

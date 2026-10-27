@@ -8,7 +8,6 @@ from functools import cache
 from typing import Any
 
 import reflex as rx
-import reflex_xy
 from reflex_site_shared.components.docs_api import (
     callable_api_group,
     callable_api_reference,
@@ -17,7 +16,9 @@ from reflex_site_shared.components.docs_api import (
     docs_api_table,
 )
 
+import reflex_xy
 import xy
+from xy.components import _POLAR_INERT_AXIS_KEYWORDS
 
 COMPONENT_API_METADATA_KEY = "components"
 API_REFERENCE_HEADING = "API Reference"
@@ -34,6 +35,20 @@ CHART_FACTORY_GROUPS = (
         (xy.line_chart, xy.area_chart, xy.step_chart, xy.stairs_chart),
     ),
     ("Scatter", (xy.scatter_chart,)),
+    # The polar compositions are public factories like any other, so they belong
+    # in the generated inventory. `pie_chart` is listed with them: without an
+    # entry here the API reference implied the only way to draw a pie was to
+    # hand-roll wedge bars — the exact thing the factory exists to replace.
+    (
+        "Polar",
+        (
+            xy.polar_chart,
+            xy.radar_chart,
+            xy.polar_bar_chart,
+            xy.pie_chart,
+            xy.wind_rose,
+        ),
+    ),
     ("Bar and Column", (xy.bar_chart, xy.column_chart)),
     (
         "Distributions",
@@ -51,14 +66,33 @@ CHART_FACTORY_GROUPS = (
     ("Uncertainty", (xy.error_band_chart, xy.errorbar_chart)),
     (
         "Specialized",
-        (xy.stem_chart, xy.segments_chart, xy.triangle_mesh_chart),
+        (
+            xy.stem_chart,
+            xy.segments_chart,
+            xy.sankey_chart,
+            xy.funnel_chart,
+            xy.triangle_mesh_chart,
+        ),
     ),
-    ("Annotations", (xy.chart,)),
-    ("Facets and Layers", (xy.chart, xy.facet_chart)),
+    ("Annotations and Layers", (xy.chart,)),
+    ("Facets", (xy.facet_chart,)),
 )
 _CHART_FACTORY_COMPONENTS = frozenset(
     factory for _group_name, factories in CHART_FACTORY_GROUPS for factory in factories
 )
+_FORWARDED_AXIS_COMPONENTS = {
+    xy.theta_axis: xy.x_axis,
+    xy.r_axis: xy.y_axis,
+}
+# `theta_axis`/`r_axis` forward `**props` to the Cartesian axis vocabulary, but
+# they refuse the keywords no polar renderer implements. Angular `reverse` is
+# also rejected at figure build in favor of `direction`; radial `reverse`
+# remains supported. Documenting the forwarded signatures verbatim would
+# re-advertise exactly those traps, so they are dropped from the relevant table.
+_REFUSED_POLAR_AXIS_PARAMETERS = {
+    xy.theta_axis: frozenset({*_POLAR_INERT_AXIS_KEYWORDS, "reverse"}),
+    xy.r_axis: frozenset(_POLAR_INERT_AXIS_KEYWORDS),
+}
 
 MARKS = (
     xy.line,
@@ -79,12 +113,17 @@ MARKS = (
     xy.stairs,
     xy.stem,
     xy.segments,
+    xy.ribbon,
+    xy.sankey,
+    xy.funnel,
     xy.triangle_mesh,
 )
 
 AXES_AND_ANNOTATIONS = (
     xy.x_axis,
     xy.y_axis,
+    xy.theta_axis,
+    xy.r_axis,
     xy.vline,
     xy.hline,
     xy.x_band,
@@ -206,8 +245,34 @@ def _documented_parameters(
     component: Callable[..., Any],
     descriptions: Mapping[str, str],
 ) -> tuple[tuple[inspect.Parameter, Mapping[str, str]], ...]:
-    """Expand chart-factory ``**props`` into the shared Chart constructor API."""
+    """Expand forwarded chart and polar-axis keyword arguments."""
     parameters = tuple(inspect.signature(component).parameters.values())
+    if forwarded_axis := _FORWARDED_AXIS_COMPONENTS.get(component):
+        forwarded_descriptions = _parameter_descriptions(inspect.getdoc(forwarded_axis) or "")
+        merged_descriptions = {**forwarded_descriptions, **descriptions}
+        existing_names = {
+            parameter.name
+            for parameter in parameters
+            if parameter.kind is not inspect.Parameter.VAR_KEYWORD
+        }
+        forwarded_parameters = tuple(
+            parameter
+            for parameter in inspect.signature(forwarded_axis).parameters.values()
+            if parameter.name not in existing_names
+            and parameter.name not in _REFUSED_POLAR_AXIS_PARAMETERS[component]
+            and parameter.kind is not inspect.Parameter.VAR_KEYWORD
+        )
+        documented: list[tuple[inspect.Parameter, Mapping[str, str]]] = []
+        for parameter in parameters:
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                documented.extend(
+                    (forwarded_parameter, merged_descriptions)
+                    for forwarded_parameter in forwarded_parameters
+                )
+                continue
+            documented.append((parameter, merged_descriptions))
+        return tuple(documented)
+
     if component not in _CHART_FACTORY_COMPONENTS:
         return tuple((parameter, descriptions) for parameter in parameters)
 
@@ -383,7 +448,7 @@ def _component_api_reference(reference: ComponentApiReference) -> rx.Component:
                 rx.text(
                     parameter.description,
                     class_name=(
-                        "font-small text-secondary-11 whitespace-normal leading-snug break-words"
+                        "font-small text-muted-foreground whitespace-normal leading-snug break-words"
                     ),
                 ),
                 _COMPONENT_API_COLUMN_WIDTHS[2],
@@ -396,12 +461,12 @@ def _component_api_reference(reference: ComponentApiReference) -> rx.Component:
             reference.display_name,
             as_="h3",
             id=_heading_id(reference.display_name),
-            class_name="font-large text-secondary-12 mt-8 mb-2",
+            class_name="docs-heading font-large text-foreground mt-8 mb-2",
         ),
         (
             rx.text(
                 reference.summary,
-                class_name="font-[475] text-secondary-11 mb-4 leading-7",
+                class_name="docs-prose font-normal text-muted-foreground mb-4 leading-7",
             )
             if reference.summary
             else rx.fragment()
@@ -409,7 +474,7 @@ def _component_api_reference(reference: ComponentApiReference) -> rx.Component:
         rx.heading(
             "Props",
             as_="h4",
-            class_name="font-base text-secondary-12 mt-4 mb-2",
+            class_name="font-base text-foreground mt-4 mb-2",
         ),
         docs_api_table(*rows),
         class_name="w-full",

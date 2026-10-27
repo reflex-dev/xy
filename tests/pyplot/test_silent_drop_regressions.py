@@ -328,8 +328,8 @@ def test_savefig_svg_and_html_honor_facecolor_and_single_chart_suptitle():
 
 def test_boxplot_component_styles_and_sym_are_honored_or_rejected():
     _, ax = plt.subplots()
-    with pytest.raises(NotImplementedError, match="linestyle"):
-        ax.boxplot([[1.0, 2.0, 3.0, 4.0]], medianprops={"linestyle": "--"})
+    dashed = ax.boxplot([[1.0, 2.0, 3.0, 4.0]], medianprops={"linestyle": "--"})
+    assert len(dashed["medians"][0]._entry["args"][0]) > 1
     # empty sym suppresses fliers like matplotlib
     data = [[1.0, 2.0, 3.0, 4.0, 50.0]]
     result = ax.boxplot(data, sym="")
