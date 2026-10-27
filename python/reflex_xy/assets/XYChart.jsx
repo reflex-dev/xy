@@ -83,6 +83,11 @@ function xySocket() {
   });
   sharedSocket.on("connect", () => dbg("xy namespace connected"));
   sharedSocket.on("connect_error", (e) => dbg("xy connect_error", String(e)));
+  // Reflex 0.10 pre-creates the shared manager with autoConnect: false.
+  // Activate this namespace explicitly; io() inherits the manager's setting
+  // even when the app plane has already opened its transport. An active
+  // legacy socket may already have its CONNECT packet in flight.
+  if (!sharedSocket.active) sharedSocket.connect();
   return sharedSocket;
 }
 

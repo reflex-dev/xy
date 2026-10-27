@@ -1,0 +1,20 @@
+name: Set up CI Chromium
+description: Restore lockfile-pinned full Chromium on the hosted Ubuntu 24.04 image.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: runtime-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+    - name: Install full Chromium
+      shell: bash
+      run: npx playwright install --no-shell chromium
+    - name: Verify Chromium launches
+      shell: bash
+      run: |
+        node --input-type=module - <<'JS'
+        import { chromium } from 'playwright';
+        const browser = await chromium.launch({executablePath: chromium.executablePath()});
+        await browser.close();
+        JS

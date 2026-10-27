@@ -10,6 +10,8 @@ fail) without Chromium, like the repo's others.
 
 from __future__ import annotations
 
+import base64
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -772,3 +774,567 @@ def test_browser_band_pick_reply_is_exact_or_nothing() -> None:
     # The miss took the whole band down, cursor included.
     assert payload["afterMiss"]["shown"] is False, payload["afterMiss"]
     assert payload["afterMiss"]["cursorShown"] is False, payload["afterMiss"]
+
+
+def test_browser_band_skips_rows_panned_off_the_plot() -> None:
+    """A row whose coordinate has left the plot cannot be selected by a pointer
+    inside it. The cursor already refuses to draw off-plot, so accepting one
+    showed a tooltip for an invisible point with nothing marking where it is."""
+    payload = _run_edge(
+        _recharts_chart(mode="x"),
+        """
+  // Pan clear of the data: every category now sits left of the plot, so the
+  // nearest row to any in-plot pointer is one that cannot be seen.
+  view.view.ranges.x = [20, 24];
+  view._drawNow();
+  hover(4, 8); const leftEdge = state();
+  hover(view.plot.w / 2, 8); const middle = state();
+  hover(view.plot.w - 4, 8); const rightEdge = state();
+  // Panning back brings the band straight back.
+  view.view.ranges.x = [0, 6];
+  view._drawNow();
+  const [bx] = proj(1, 0);
+  hover(bx, 8); const backInView = state();
+  done({ leftEdge, middle, rightEdge, backInView });
+""",
+        "off-plot band rows",
+    )
+    for key in ("leftEdge", "middle", "rightEdge"):
+        s = payload[key]
+        # Nothing is selectable, so nothing is shown and no cursor is drawn.
+        assert s["shown"] is False, (key, s)
+        assert s["targets"] == 0, (key, s)
+        assert s["cursorShown"] is False, (key, s)
+    # The guard is about visibility, not a permanent refusal.
+    back = payload["backInView"]
+    assert back["shown"] is True and back["title"] == "Page B", back
+    assert back["rows"] == ["pv1398", "uv3000"], back
+
+
+def test_browser_live_update_drops_the_previous_band(tmp_path) -> None:
+    """The band holds GPU trace objects and rows resolved from them, and
+    `updatePayload` replaces every one. Left in place, the next draw painted
+    active dots and tooltip rows from the retired traces against the new axes."""
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("headless chromium not found")
+    next_spec, next_buffer = _recharts_chart(mode="x").figure().build_payload()
+    # Same shape, different values: the update replaces the trace objects the
+    # live band is holding.
+    for trace in next_spec.get("traces", []):
+        trace["name"] = f"{trace.get('name', '')}2"
+    head = (
+        f"<script>const NEXT_SPEC = {json.dumps(next_spec)};"
+        f'const NEXT_B64 = "{base64.b64encode(next_buffer).decode("ascii")}";</script>'
+    )
+    document = probe_document(
+        _recharts_chart(mode="x"),
+        _edge_probe(
+            """
+  const decode = (b64) => {
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  };
+  const [bx] = proj(1, 0);
+  hover(bx, 8);
+  const before = { ...state(), traces: view._hoverTargets.map((h) => h.g.trace.name) };
+  const applied = view.updatePayload(NEXT_SPEC, decode(NEXT_B64));
+  const afterUpdate = {
+    targets: (view._hoverTargets || []).length,
+    rows: view._bandRows,
+    key: view._bandKey,
+    cursorShown: !!cursor() && cursor().style.display === "block",
+  };
+  // The draw that used to reach into the retired trace objects.
+  if (view._raf) cancelAnimationFrame(view._raf);
+  view._raf = null;
+  view._drawNow();
+  const names = view.gpuTraces.map((g) => g.trace.name);
+  done({ before, applied, afterUpdate, names });
+"""
+        ),
+        head=head,
+    )
+    payload = run_browser_probe(
+        chromium,
+        document,
+        tmp_path / "band_update.html",
+        "data-xy-bandedge",
+        label="band cleared on updatePayload",
+    )
+
+    assert payload["before"]["targets"] == 2, payload["before"]
+    assert payload["applied"] is True, payload
+    # The traces really were replaced.
+    assert payload["names"] == ["pv2", "uv2"], payload
+    # And nothing of the old band survived the swap to be drawn against them.
+    assert payload["afterUpdate"]["targets"] == 0, payload["afterUpdate"]
+    assert payload["afterUpdate"]["rows"] is None, payload["afterUpdate"]
+    assert payload["afterUpdate"]["key"] is None, payload["afterUpdate"]
+    assert payload["afterUpdate"]["cursorShown"] is False, payload["afterUpdate"]
+
+
+def test_browser_hidden_tooltip_keeps_its_band_bookkeeping() -> None:
+    """`show=False` drops the tooltip element, not the band: the hover event,
+    the picks and the active dots still run. Hiding used to dissolve the band
+    mid-flight, so a later reply fell into the single-pick handler and
+    dispatched an `exact: true` hover carrying one series, not the band."""
+    chart = xy.line_chart(
+        xy.line(PAGES, PV, name="pv", color="#8884d8", width=2),
+        xy.line(PAGES, UV, name="uv", color="#82ca9d", width=2),
+        xy.tooltip(mode="x", show=False),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8);
+  const picks = sent.filter((m) => m.type === "pick");
+  const bandPicks = view._bandPicks ? view._bandPicks.size : 0;
+  // Replies land one at a time; the first must not dissolve the band.
+  view._onKernelMsg({
+    type: "pick_result", seq: picks[0].seq,
+    row: { trace: picks[0].trace, index: picks[0].index, x: 1, y: 1398 },
+  });
+  const afterFirst = { targets: (view._hoverTargets || []).length, picks: view._bandPicks.size };
+  view._onKernelMsg({
+    type: "pick_result", seq: picks[1].seq,
+    row: { trace: picks[1].trace, index: picks[1].index, x: 1, y: 3000 },
+  });
+  const exact = hovers.filter((h) => h.exact);
+  done({
+    picks: picks.length, bandPicks, afterFirst,
+    tooltipShown: tip.style.display === "block",
+    exactPointCounts: exact.map((h) => (h.points || []).length),
+  });
+""",
+        "hidden band bookkeeping",
+    )
+    assert payload["picks"] == 2 and payload["bandPicks"] == 2, payload
+    # The band survives the first reply instead of being cleared by the hide.
+    assert payload["afterFirst"]["targets"] == 2, payload["afterFirst"]
+    assert payload["afterFirst"]["picks"] == 1, payload["afterFirst"]
+    # The tooltip element stays hidden throughout.
+    assert payload["tooltipShown"] is False, payload
+    # Every exact hover describes the whole band, never a lone series.
+    assert payload["exactPointCounts"], payload
+    assert all(n == 2 for n in payload["exactPointCounts"]), payload
+
+
+def test_browser_a_clipped_bar_keeps_its_cursor() -> None:
+    """A bar joins the band while any part of its footprint overlaps the plot,
+    so a bar more than half clipped by the edge is selectable with the centre
+    of its footprint — where the cursor goes — outside. The cursor hides on an
+    off-plot coordinate, so the two rules disagreed and the tooltip appeared
+    with nothing locating the band. It is now drawn on the visible part."""
+    chart = xy.bar_chart(
+        xy.bar(_CATS, _PV5),
+        xy.tooltip(mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  // Creep the left edge of the view across category B's bar until the bar's
+  // footprint centre has left the plot while part of the bar is still drawn
+  // inside it — the window where it stays selectable but its cursor
+  // coordinate does not.
+  const span = view.view.ranges.x[1] - view.view.ranges.x[0];
+  let atEdge = null, centre = null, steps = 0;
+  for (let k = 1; k <= 80; k++) {
+    const lo = 1 + (k / 80) * 0.5;
+    view.view.ranges.x = [lo, lo + span];
+    view._drawNow();
+    view._hoverId = -1; view._bandKey = null;
+    hover(3, 8);
+    const s = state();
+    if (!s.shown || s.title !== "B") continue;
+    const c = view._bandCursor;
+    const [px] = view._projectDataPoint(c.xAxis, c.yAxis, c.x, c.y);
+    if (px - view.plot.x >= 0) continue;
+    steps = k; atEdge = s; centre = px - view.plot.x;
+    break;
+  }
+  done({ centre, atEdge, steps, plotX: view.plot.x, plotW: view.plot.w });
+""",
+        "clipped bar cursor",
+    )
+    # The band's own cursor coordinate really is off-plot, which is what makes
+    # this reachable at all.
+    assert payload["centre"] is not None and payload["centre"] < 0, payload
+    edge = payload["atEdge"]
+    assert edge["shown"] is True and edge["title"] == "B", edge
+    assert edge["rows"] == ["series 13"], edge
+    # Drawn, and inside the plot rather than at the off-plot centre.
+    assert edge["cursorShown"] is True, edge
+    assert payload["plotX"] <= edge["cursorLeft"] <= payload["plotX"] + payload["plotW"], (
+        edge,
+        payload,
+    )
+
+
+def test_browser_band_fields_naming_only_the_band_field_leave_names_alone() -> None:
+    """`fields=["x"]` asks for the band coordinate and nothing else, which the
+    title already carries. Filtering the band field out and then testing the
+    remainder for emptiness read that as "no fields configured" and fell back
+    to the default y value, ignoring the selection."""
+    only_band = _run_edge(
+        _recharts_chart(mode="x", fields=["x"]),
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8); done(state());
+""",
+        "band fields x only",
+    )
+    assert only_band["shown"] is True and only_band["title"] == "Page B", only_band
+    # Names alone: no value follows either series name.
+    assert only_band["rows"] == ["pv", "uv"], only_band
+
+    # An authored field other than the band's is unaffected, and so is the
+    # default when no fields are configured at all.
+    other = _run_edge(
+        _recharts_chart(mode="x", fields=["y"]),
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8); done(state());
+""",
+        "band fields y",
+    )
+    assert other["rows"] == ["pv1398", "uv3000"], other
+
+
+def test_browser_a_lost_context_drops_the_band_too() -> None:
+    """`updatePayload` and `_applyAppend` return early when the GL context is
+    gone, having already replaced the retained spec and payload. Recovery
+    rebuilds every GPU trace from those and touches no hover state, so the band
+    outlived the traces it was resolved from across the whole restore."""
+    payload = _run_edge(
+        _recharts_chart(mode="x"),
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8); const before = state();
+  // Lose the context, then push an update through the early-return path.
+  view._glLost = true;
+  const spec = JSON.parse(JSON.stringify(view.spec));
+  spec.traces.forEach((t, i) => { t.name = `renamed${i}`; });
+  view.updatePayload(spec, new ArrayBuffer(0));
+  const after = state();
+  done({ before, after, key: view._bandKey ?? null, rowsLeft: (view._bandRows || []).length,
+         picks: view._bandPicks ? view._bandPicks.size : 0 });
+""",
+        "lost context band",
+    )
+    assert payload["before"]["shown"] is True and payload["before"]["targets"] == 2, payload
+    assert payload["after"]["targets"] == 0, payload
+    assert payload["after"]["cursorShown"] is False, payload
+    assert payload["key"] is None and payload["rowsLeft"] == 0, payload
+    assert payload["picks"] == 0, payload
+
+
+def _band_at_centre(chart, label: str, setup: str = "") -> dict:
+    """Hover the middle of the plot and report what the band shows.
+
+    `hover(x, y)` is CANVAS-relative: it sets `clientX = rect.left + x` and
+    `_hover` takes `clientX - rect.left` straight back out. Passing plot sizes
+    put the pointer `(plot.x, plot.y)` up and left of the plot's centre, which
+    is a different band coordinate than the name claims.
+    """
+    return _run_edge(
+        chart,
+        setup
+        + """
+  hover(view.plot.x + view.plot.w / 2, view.plot.y + view.plot.h / 2);
+  done({ state: state() });
+""",
+        label,
+    )
+
+
+def test_browser_a_row_off_plot_on_the_other_axis_leaves_the_band() -> None:
+    """The band axis is not the only axis a row can leave.
+
+    `_bandCandidate` bounds its footprint along the band axis, for the reason
+    its own comment gives: a coordinate that has left the plot cannot be picked
+    by a pointer inside it, and accepting one produces a row for a point with
+    nothing on screen marking where it is. The perpendicular axis was never
+    asked the same question, so a series pushed out of view by a zoom on *it*
+    still reported a value -- 504 while the axis showed 0..5 -- and painted no
+    pixel anywhere to locate it. The pointer still ignores that axis when
+    choosing the band; visibility is a separate question from selection.
+    """
+    xs = list(range(10))
+    state = _band_at_centre(
+        xy.line_chart(
+            xy.line(xs, [1.0 + i * 0.1 for i in xs], name="A"),
+            xy.line(xs, [500.0 + i for i in xs], name="B"),
+            xy.y_axis(domain=(0.0, 5.0)),
+            xy.tooltip(mode="x"),
+            width=600,
+            height=360,
+        ),
+        "off-plot perpendicular",
+    )["state"]
+    assert state["shown"] is True, state
+    assert [row for row in state["rows"] if row.startswith("B")] == [], state
+    assert state["targets"] == 1, state
+
+
+def test_browser_a_bar_is_a_span_on_whichever_axis_is_perpendicular() -> None:
+    """A bar is a span on BOTH its axes, and `mode` decides which is which.
+
+    Across its position axis a bar covers `pos ± width/2`; along its value axis
+    it runs from its baseline to its value. Measuring only the second dropped
+    every visibly clipped bar whenever the band axis was the value axis --
+    `mode="y"` on vertical bars, `mode="x"` on horizontal ones -- because the
+    bar was then treated as a bare coordinate on the position axis it actually
+    straddles. It is excluded only when the whole span is outside.
+    """
+
+    def band(mode, axes, values=(3.0,), xs=(0.0,)):
+        return _band_at_centre(
+            xy.bar_chart(
+                xy.bar(list(xs), list(values), name="v"),
+                *axes,
+                xy.tooltip(mode=mode),
+                width=600,
+                height=360,
+            ),
+            f"bar span {mode}",
+        )["state"]
+
+    def rows(*a, **k):
+        return band(*a, **k)["rows"]
+
+    # Band axis = value axis, so x is perpendicular. The bar spans -0.4..0.4
+    # and the view starts at 0.1: its centre is off-plot, part of it is drawn.
+    clipped = (xy.x_axis(domain=(0.1, 3.0)), xy.y_axis(domain=(0.0, 5.0)))
+    assert rows("y", clipped) == ["v0"], rows("y", clipped)
+    # Same bar, view moved past it entirely.
+    gone = (xy.x_axis(domain=(1.0, 3.0)), xy.y_axis(domain=(0.0, 5.0)))
+    # Rows alone would pass while the invisible bar stayed an active target.
+    away_y = band("y", gone)
+    assert away_y["rows"] == [] and away_y["targets"] == 0, away_y
+    # Band axis = position axis: the value axis is perpendicular, and a bar
+    # whose body crosses the plot with its tip far above stays.
+    tall = (xy.y_axis(domain=(0.0, 5.0)),)
+    assert rows("x", tall, values=(50.0,)) == ["v50"], rows("x", tall, values=(50.0,))
+    # Baseline and value both outside: nothing of it is drawn.
+    away = (xy.y_axis(domain=(100.0, 200.0)),)
+    away_x = band("x", away, values=(1.0,))
+    assert away_x["rows"] == [] and away_x["targets"] == 0, away_x
+
+
+def test_browser_a_tie_on_the_band_coordinate_prefers_a_drawn_row() -> None:
+    """Rows that share a band coordinate are equally "at" it, so the one that
+    is drawn wins.
+
+    `_nearestCpuIndexAlong` keeps the first of a tie. Once visibility gates the
+    candidate, that arbitrary pick decides whether the series appears at all:
+    a point whose twin at the same x is plotted took the series out of the band
+    entirely. Only exact ties qualify -- a farther row sits at a different
+    coordinate, and §7.3 omits a series with no point at the coordinate rather
+    than guessing one.
+    """
+    chart = xy.scatter_chart(
+        xy.scatter([1.0, 1.0, 2.0], [500.0, 2.0, 3.0], name="s"),
+        xy.y_axis(domain=(0.0, 5.0)),
+        xy.x_axis(domain=(0.5, 2.5)),
+        xy.tooltip(mode="x"),
+        width=600,
+        height=360,
+    )
+    # Hover x = 1 itself, where the tie is -- not the plot centre, which is a
+    # different band coordinate and would pick the lone point at x = 2.
+    state = _run_edge(
+        chart,
+        """
+  const g = view.gpuTraces[0];
+  const [tx] = view._projectDataPoint(g.xAxis, g.yAxis, 1, 0);
+  hover(tx, view.plot.y + view.plot.h / 2);
+  done({ state: state() });
+""",
+        "band coordinate tie",
+    )["state"]
+    assert state["rows"] == ["s2"], state
+    assert state["targets"] == 1, state
+
+
+def test_browser_the_band_cursor_reprojects_its_footprint_after_a_view_change() -> None:
+    """The cursor outlives the view that measured it.
+
+    A clipped bar's cursor is clamped onto the part of its footprint that is
+    drawn. That footprint was captured in plot PIXELS at hover time, while
+    `_positionTooltipCursor` reprojects the band's `x`/`y` on every draw and the
+    band itself is not rebuilt by a pan or zoom. The two drifted apart, so the
+    cursor clamped to where the bar used to be: with B's bar panned to span
+    -10.1..78.6 against a plot starting at 62, it sat at 73.1 instead of the
+    visible edge at 62. Carrying the footprint in data space moves it with the
+    point.
+    """
+    chart = xy.bar_chart(
+        xy.bar(_CATS, _PV5),
+        xy.tooltip(mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const span = view.view.ranges.x[1] - view.view.ranges.x[0];
+  const g = view.gpuTraces[0];
+  const at = (v) => view._projectDataPoint(g.xAxis, g.yAxis, v, 0)[0];
+  // Hover B with its bar fully in view, so the recorded footprint is centred.
+  view.view.ranges.x = [0.5, 0.5 + span];
+  view._drawNow();
+  hover(at(1) - view.plot.x, 8);
+  const before = state();
+  // Pan until B's bar is clipped and its centre has left the plot. The band
+  // survives; only the projection changes, and the draw repositions the cursor.
+  view.view.ranges.x = [1.25, 1.25 + span];
+  view._drawNow();
+  const half = g.width / 2;
+  done({
+    before, after: state(), centre: at(1),
+    barLo: Math.min(at(1 - half), at(1 + half)),
+    barHi: Math.max(at(1 - half), at(1 + half)),
+    plotX: view.plot.x, plotW: view.plot.w,
+  });
+""",
+        "cursor reprojection",
+    )
+    before, after = payload["before"], payload["after"]
+    assert before["shown"] is True and before["title"] == "B", before
+    # The band survives the pan and still draws its cursor.
+    assert after["shown"] is True and after["title"] == "B", after
+    assert after["cursorShown"] is True, after
+    # The bar really is clipped now, which is what makes the clamp bite.
+    assert payload["barLo"] < payload["plotX"] < payload["barHi"], payload
+    assert payload["centre"] < payload["plotX"], payload
+    # The cursor marks the band coordinate clamped into the part of the bar
+    # that is drawn -- computed from where the bar is NOW.
+    expected = min(
+        max(payload["centre"], max(payload["barLo"], payload["plotX"])),
+        min(payload["barHi"], payload["plotX"] + payload["plotW"]),
+    )
+    assert abs(after["cursorLeft"] - expected) < 0.5, (after, expected, payload)
+
+
+def test_browser_an_animating_bar_is_measured_where_it_is_drawn() -> None:
+    """A stacked update animates the baseline, so the band has to read the
+    interpolated one.
+
+    `_cpuPointValue` already interpolates the tip; the baseline was read
+    settled. Mid-transition a bar is drawn between its old and new span, so a
+    bar whose settled span is outside the view while the drawn one crosses it
+    vanished from the band while it was plainly on screen.
+    """
+    chart = xy.bar_chart(
+        # A varying `base` ships as a value0 COLUMN rather than a constant,
+        # which is what carries an animatable baseline. The two columns are
+        # given deliberately different ranges so `value0Meta` and `value1Meta`
+        # disagree (offset 0.5 against 10000): decoding the start baseline with
+        # the wrong one then lands thousands of units away, which is what makes
+        # the metadata mix-up observable rather than a rounding difference.
+        xy.bar(["a", "b"], [0.0, 20000.0], base=[0.0, 1.0], name="v"),
+        xy.y_axis(domain=(100.0, 200.0)),
+        xy.tooltip(mode="x"),
+        width=600,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  // Find the stacked slice that carries an explicit baseline column.
+  const g = view.gpuTraces.find((t) => t._cpuBar && t._cpuBar.value0);
+  if (!g) { done({ skipped: "no stacked baseline column" }); return; }
+  // `_transitionPrevValue0Values` rides the TIP's metadata (the animation
+  // writes `encode(value0, newBar.value1Meta)`), so the probe must encode it
+  // the same way or it tests the decode against its own assumption.
+  const m = g._cpuBar.value1Meta;
+  const ym = g._cpu.yMeta || g.yMeta;
+  const enc = (v, meta) => (v - meta.offset) * (meta.scale || 1);
+  // Settled span is 0..0 -- far below the 100..200 view. Halfway through a
+  // transition from a baseline of 300 and a tip of 100 the drawn bar runs
+  // 50..150, which crosses the view. Decoded through `value0Meta` instead the
+  // start baseline reads -9699.5, the span becomes -4849..50, and the bar
+  // misses the view entirely.
+  g._transitionPrevValue0Values = new Float32Array([enc(300, m), enc(300, m)]);
+  g._transitionPrevYValues = new Float32Array([enc(100, ym), enc(100, ym)]);
+  g._transitionPositionProgress = 0.5;
+  view._drawNow();
+  hover(view.plot.w * 0.25, view.plot.h / 2);
+  const drawn = state();
+  // With the transition over, the bar really is outside and should go.
+  delete g._transitionPrevValue0Values;
+  delete g._transitionPrevYValues;
+  delete g._transitionPositionProgress;
+  view._hoverId = -1; view._bandKey = null;
+  view._drawNow();
+  hover(view.plot.w * 0.25, view.plot.h / 2);
+  done({ drawn, settled: state() });
+""",
+        "animating baseline",
+    )
+    if payload.get("skipped"):
+        pytest.skip(payload["skipped"])
+    assert payload["drawn"]["targets"] == 1, payload
+    assert payload["settled"]["targets"] == 0, payload
+
+
+def test_browser_a_mixed_axis_band_keeps_each_footprint_on_its_own_axis() -> None:
+    """A band can hold series bound to different axes, and data values from two
+    axes do not share a number line.
+
+    The cursor's footprint is carried in data space so it survives a pan. Taking
+    one `min`/`max` across the whole band mixed those scales: with bars at
+    `0.6..1.4` on `x` and `60..140` on `x2`, the union is `0.6..140`, a range
+    neither bar occupies, and it was then projected through the anchor's axis
+    alone. Each slot keeps its own axes and is projected separately.
+
+    This pins the mechanism rather than a moved pixel: the bad union only ever
+    widened the span, and a span wider than the plot clamps to the plot, which
+    is where a bar clipped at the edge wanted the cursor anyway. No input I
+    could build moved it, so the guard is structural.
+    """
+    chart = xy.bar_chart(
+        xy.bar([1.0, 2.0], [3.0, 4.0], name="a", width=0.8),
+        xy.bar([100.0, 200.0], [3.0, 4.0], name="b", width=80.0, x_axis="x2"),
+        xy.x_axis(domain=(0.6, 2.6)),
+        xy.x_axis(id="x2", domain=(60.0, 260.0)),
+        xy.tooltip(mode="x"),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const g = view.gpuTraces[0];
+  const at = (v) => view._projectDataPoint(g.xAxis, g.yAxis, v, 0)[0];
+  hover(at(1), 8);
+  done({ state: state(), spans: (view._bandCursor || {}).spans || null,
+         plotX: view.plot.x, plotW: view.plot.w,
+         cursorLeft: (view._bandCursor || {}) && state().cursorLeft });
+""",
+        "mixed axis band",
+    )
+    assert payload["state"]["shown"] is True, payload
+    spans = payload["spans"]
+    # Both series really do join one band, on different axes.
+    assert spans is not None and len(spans) == 2, payload
+    assert {s["xAxis"] for s in spans} == {"x", "x2"}, spans
+    # Each carries ITS OWN bounds, in its own axis's units -- not a union.
+    by_axis = {s["xAxis"]: (s["lo"], s["hi"]) for s in spans}
+    assert by_axis["x"][0] == pytest.approx(0.6) and by_axis["x"][1] == pytest.approx(1.4), spans
+    assert by_axis["x2"][0] == pytest.approx(60.0) and by_axis["x2"][1] == pytest.approx(140.0), (
+        spans
+    )
+    # And the cursor still lands inside the plot.
+    assert payload["plotX"] <= payload["state"]["cursorLeft"] <= payload["plotX"] + payload["plotW"]

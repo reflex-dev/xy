@@ -34,6 +34,7 @@ const OP_AFFINE_CHANNEL_POINTS: u8 = 15;
 const OP_STROKED_TRIANGLES: u8 = 16;
 const OP_STYLED_TEXT: u8 = 17;
 const OP_POLAR_CLIP: u8 = 18;
+const OP_PHASED_STROKE: u8 = 19;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
 
@@ -731,6 +732,26 @@ fn usable_dash(dash: &[f32]) -> bool {
     !dash.is_empty() && dash.iter().all(|d| d.is_finite() && *d > 0.0)
 }
 
+fn dash_state(dash: &[f32], offset: f32) -> (usize, f32, bool) {
+    // An odd-length dash list is repeated before cycling, so traversing one
+    // list length also flips the on/off state.
+    let total: f32 =
+        dash.iter().sum::<f32>() * if dash.len().is_multiple_of(2) { 1.0 } else { 2.0 };
+    let mut phase = if offset.is_finite() && total.is_finite() {
+        offset.rem_euclid(total)
+    } else {
+        0.0
+    };
+    let mut index = 0usize;
+    let mut on = true;
+    while phase >= dash[index] {
+        phase -= dash[index];
+        index = (index + 1) % dash.len();
+        on = !on;
+    }
+    (index, dash[index] - phase, on)
+}
+
 /// Rasterize on-segments into a scratch coverage buffer (max-combined so
 /// overlapping joins don't double-darken), then composite once.
 fn stroke(
@@ -741,7 +762,7 @@ fn stroke(
     closed: bool,
     dash: &[f32],
 ) {
-    stroke_with_threads(cv, pts, width, rgba, closed, dash, None);
+    stroke_with_threads(cv, pts, width, rgba, closed, (dash, 0.0), None);
 }
 
 /// Stroke honoring an explicit cap. `round` is XY's default and is exactly what
@@ -755,11 +776,12 @@ fn stroke_shaped(
     width: f32,
     rgba: [f32; 4],
     closed: bool,
-    dash: &[f32],
+    dash: (&[f32], f32),
     cap: u8,
 ) {
+    let (dash, dash_offset) = dash;
     if cap == CAP_ROUND || pts.len() < 2 || width <= 0.0 {
-        stroke(cv, pts, width, rgba, closed, dash);
+        stroke_with_threads(cv, pts, width, rgba, closed, (dash, dash_offset), None);
         return;
     }
     let hw = width * 0.5;
@@ -784,7 +806,7 @@ fn stroke_shaped(
             run.extend(raw.iter().map(|(_, b)| *b));
             runs.push(run);
         } else {
-            let (mut di, mut drem, mut on) = (0usize, dash[0], true);
+            let (mut di, mut drem, mut on) = dash_state(dash, dash_offset);
             let mut current: Vec<(f32, f32)> = Vec::new();
             for (a, b) in &raw {
                 let (mut ax, mut ay) = *a;
@@ -921,9 +943,10 @@ fn stroke_with_threads(
     width: f32,
     rgba: [f32; 4],
     closed: bool,
-    dash: &[f32],
+    dash: (&[f32], f32),
     forced_threads: Option<usize>,
 ) {
+    let (dash, dash_offset) = dash;
     if pts.len() < 2 || width <= 0.0 {
         return;
     }
@@ -946,9 +969,7 @@ fn stroke_with_threads(
         if total <= 0.0 {
             segs = raw;
         } else {
-            let mut di = 0usize;
-            let mut drem = dash[0];
-            let mut on = true;
+            let (mut di, mut drem, mut on) = dash_state(dash, dash_offset);
             for (a, b) in raw {
                 let (mut ax, mut ay) = a;
                 let seglen = ((b.0 - ax).powi(2) + (b.1 - ay).powi(2)).sqrt();
@@ -2574,7 +2595,7 @@ fn rasterize_with_spans<'a>(
                         grad_color(&stops, t)
                     });
                 }
-                OP_STROKE => {
+                OP_STROKE | OP_PHASED_STROKE => {
                     let n = r.u32()? as usize;
                     let pts = r.pts(n)?;
                     let width = r.f32()?;
@@ -2585,8 +2606,9 @@ fn rasterize_with_spans<'a>(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
+                    let dash_offset = if op == OP_PHASED_STROKE { r.f32()? } else { 0.0 };
                     let cap = r.u8()?;
-                    stroke_shaped(&mut cv, &pts, width, c, closed, &dash, cap);
+                    stroke_shaped(&mut cv, &pts, width, c, closed, (&dash, dash_offset), cap);
                 }
                 OP_POINT => {
                     let (cx, cy, rr) = (r.f32()?, r.f32()?, r.f32()?);
@@ -3069,7 +3091,7 @@ fn rasterize_with_spans<'a>(
                     }
                     let cap = r.u8()?;
                     let points = smooth_points(xs, ys, n, x_scale, y_scale);
-                    stroke_shaped(&mut cv, &points, width, color, false, &dash, cap);
+                    stroke_shaped(&mut cv, &points, width, color, false, (&dash, 0.0), cap);
                 }
                 _ => return None,
             }
@@ -3519,6 +3541,14 @@ mod tests {
     }
 
     #[test]
+    fn dash_state_handles_overflowing_cycle_length() {
+        assert_eq!(
+            dash_state(&[f32::MAX, f32::MAX], -1.0),
+            (0, f32::MAX, true)
+        );
+    }
+
+    #[test]
     fn prepared_segment_path_matches_float_coverage_reference() {
         let cases = [
             ((-2.0, 6.25), (31.0, 6.25), 0.5, [17, 93, 211, 91]),
@@ -3812,8 +3842,8 @@ mod tests {
                 let mut banded_px = canvas_px(101, 63, opaque);
                 let mut banded = Canvas::wrap(101, 63, opaque, &mut banded_px);
                 banded.clip = serial.clip;
-                stroke_with_threads(&mut serial, &points, width, rgba, closed, dash, Some(1));
-                stroke_with_threads(&mut banded, &points, width, rgba, closed, dash, Some(4));
+                stroke_with_threads(&mut serial, &points, width, rgba, closed, (dash, 0.0), Some(1));
+                stroke_with_threads(&mut banded, &points, width, rgba, closed, (dash, 0.0), Some(4));
                 assert_eq!(
                     serial.px, banded.px,
                     "opaque={opaque} width={width} closed={closed} dash={dash:?}"

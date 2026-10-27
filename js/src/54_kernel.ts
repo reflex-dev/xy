@@ -4,6 +4,7 @@ import { parseColor } from "./20_theme";
 import {
   lodAggregateStands, lodAggregateStepWindow, lodApplyDensityUpdate, lodApplyDrill,
   lodDrillServesView, lodDropDrill, lodFilterKey, lodPromoteCachedDrill, lodRememberDensity,
+  lodUploadWireGrid,
 } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -280,10 +281,12 @@ Object.assign(ChartView.prototype, {
         const hd = g._homeDensity;
         this._applySampleRebinGrid(g, {
           ...hd,
-          tex: this._uploadGrid(
-            hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter,
-            this._fillOpacity(g.trace.style),
-          ),
+          tex: hd.grid
+            ? this._uploadGrid(
+              hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter,
+              this._fillOpacity(g.trace.style),
+            )
+            : lodUploadWireGrid(this.gl, hd.wire, hd.w, hd.h, hd.filter),
         }, false);
       }
       return;
@@ -472,7 +475,12 @@ Object.assign(ChartView.prototype, {
     // context is lost. The restore path rebuilds every affected GPU object
     // from this latest payload; attempting partial uploads to a dead context
     // would only create handles that must immediately be discarded.
-    if (this._glLost || !this.gl) return;
+    if (this._glLost || !this.gl) {
+      // As in `updatePayload`: the payload is retained, the restore path
+      // rebuilds the GPU traces from it, and nothing else drops the band.
+      this._clearBandHover?.();
+      return;
+    }
     const texSeen = new Set();
     for (const id of msg.affected || []) {
       const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
@@ -482,6 +490,10 @@ Object.assign(ChartView.prototype, {
         ? prevSpec.traces.find((t) => t.id === id)
         : null;
       if (this._appendTraceInPlace(this.gpuTraces[i], prevTs, prevSpec, ts, payload)) continue;
+      // Not an in-place append: this trace object is replaced, and the band may
+      // be holding it (and rows resolved from it). An in-place append keeps the
+      // object and only grows its columns, so it needs no reset.
+      this._clearBandHover?.();
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(payload, ts);
     }

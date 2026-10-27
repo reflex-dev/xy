@@ -18,3 +18,5 @@ datashader==0.19.1
 hvplot==0.12.2
 plotly-resampler==0.11.0
 psutil==7.2.2
+# Transitive (bokeh, matplotlib); floored for security fixes, not timing.
+pillow>=13.0.0

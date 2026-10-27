@@ -13,7 +13,7 @@ interactive contour plot from a NumPy grid: choose the number of levels, fill
 between them or keep clean lines, and pan, zoom, and hover work by default.
 
 Jump to [creating a contour plot](#create-a-contour-plot),
-[levels and fills](#levels-filled-and-line-contours), or
+[levels and fills](#levels,-filled,-and-line-contours), or
 [the options table](#contour-plot-options).
 
 ## Create a Contour Plot

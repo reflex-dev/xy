@@ -119,10 +119,14 @@ export function lodWriteGridTexture(
       }
     }
   }
+  lodUploadGridBytes(gl, tex, data, w, h, !!rgba, filter);
+}
+
+function lodUploadGridBytes(gl, tex, data, w, h, isRgba, filter) {
   gl.bindTexture(gl.TEXTURE_2D, tex);
   const align = gl.getParameter(gl.UNPACK_ALIGNMENT);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-  if (rgba) {
+  if (isRgba) {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
   } else {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, data);
@@ -135,6 +139,12 @@ export function lodWriteGridTexture(
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gf);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+export function lodUploadWireGrid(gl, u8Wire, w, h, filter) {
+  const tex = gl.createTexture();
+  lodUploadGridBytes(gl, tex, u8Wire, w, h, false, filter);
+  return tex;
 }
 
 // Treat the color scale like exposure: brighten slowly on drill-in so a
@@ -1225,14 +1235,19 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
       }
     }
   }
-  const grid = d.enc === "log-u8"
-    ? lodDecodeLogU8(buffers[d.buf], d.max)
-    : lodCopyGrid(view._asF32(buffers[d.buf]));
-  // Mean point color plane (LOD doc §2), copied because exposure easing
-  // re-reads it on every norm step, after the wire buffer may be gone.
+  // Mean point color plane (LOD doc §2), copied because legend-hover dimming
+  // and home-restore re-uploads re-read it after the wire buffer may be gone.
   const rgba = d.rgba !== undefined ? new Uint8Array(view._asU8(buffers[d.rgba])) : null;
   const normStart = lodNormMax(g, d.max);
-  const normMax = view._prefersReducedMotion() ? d.max : normStart;
+  const reducedMotion = view._prefersReducedMotion();
+  const normMax = reducedMotion ? d.max : normStart;
+  const directWire = d.enc === "log-u8" && !rgba && reducedMotion;
+  const wire = directWire ? new Uint8Array(view._asU8(buffers[d.buf])) : null;
+  const grid = directWire
+    ? null
+    : d.enc === "log-u8"
+      ? lodDecodeLogU8(buffers[d.buf], d.max)
+      : lodCopyGrid(view._asF32(buffers[d.buf]));
   g.densityNormMax = normMax;
   g.prevDensity = g.density;
   g._densityFadeStart = view._now();
@@ -1246,12 +1261,15 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
     // enough to points territory to be worth a round-trip at all.
     visible: upd.visible,
     grid,
+    wire,
     rgba,
     filter,
     _filterKey: replyFilterKey,
-    tex: view._uploadGrid(
-      grid, d.w, d.h, normMax, rgba, filter, view._fillOpacity(g.trace.style),
-    ),
+    tex: directWire
+      ? lodUploadWireGrid(view.gl, wire, d.w, d.h, filter)
+      : view._uploadGrid(
+        grid, d.w, d.h, normMax, rgba, filter, view._fillOpacity(g.trace.style),
+      ),
     lut: g.density.lut,
   };
   // Exact scans include a view-specific sample and replace the overlay.

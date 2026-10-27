@@ -141,7 +141,7 @@ def _heading_link(text: str, level: int) -> rx.Component:
             text,
             id=slug,
             as_=tag,
-            class_name=f"{class_name} " + scroll_margin + f" mt-{margin_top}",
+            class_name=f"docs-heading {class_name} " + scroll_margin + f" mt-{margin_top}",
         ),
         rx.icon(
             tag="link",

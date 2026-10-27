@@ -431,12 +431,19 @@ Wire: `tooltip.mode`, shipped only when not `"nearest"`.
   `title` template resolved against the anchor series' row), then one row per
   series in band order: the series name painted in the series colour, then
   its value along the other axis — or the authored `fields`, minus the band
-  field — through the same `format` grammar. It **follows the pointer**: the
+  field — through the same `format` grammar. A `fields` list naming only the
+  band field therefore leaves the rows as names alone: the title already
+  carries that value, and falling back to the default would ignore the
+  selection. An empty `fields` list still means unset, as in nearest mode. It **follows the pointer**: the
   one exception to the data-space anchoring above, because a band has several
   points and the cursor already marks it. The `tooltip_cursor` DOM slot draws
   that line across the plot at the snapped coordinate, reprojected on every
-  draw exactly as an anchor would be, hidden when the coordinate leaves the
-  plot.
+  draw exactly as an anchor would be. It hides when the coordinate leaves the
+  plot — except where the band is a bar, which joins while any part of its
+  footprint overlaps: a bar clipped by the plot edge can be selected with its
+  category centre outside, and the cursor is then drawn on the part of the
+  footprint that is visible rather than dropped, so the tooltip is never left
+  with nothing locating it.
 - Every series in the band gets an active dot, drawn from its CPU columns
   rather than its vertex buffer (a smoothed or stepped line's vertex index is
   not its data index) in the series colour. Adding it exposed that the

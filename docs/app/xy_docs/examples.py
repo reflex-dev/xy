@@ -16,51 +16,29 @@ main:has(#xy-chart-examples) > div:has(article #xy-chart-examples) {
 }
 """
 
-# The tabs form one connected strip on the card's top-right edge. Triggers touch
-# (`-gap-0`, `-ml-px` collapses the shared vertical borders into one line) and
-# only the strip's outer corners round — the middle trigger stays square. The
-# list overlaps the card border by 1px (`-mb-px`) so the active trigger, wearing
-# white, covers the seam and opens into the surface below while inactive
-# triggers keep their bottom border. Card and triggers share `border-border-subtle`.
-_EXAMPLE_TAB_LIST_CLASS = (
-    "xy-example-tab-list relative z-10 -mb-px ml-auto flex items-end justify-end "
-    "!gap-0 !border-b-0 !bg-transparent !p-0 !shadow-none "
-    "before:!hidden after:!hidden"
-)
+# Keep XY hooks for preview validation and use the shared docs pill treatment.
+_EXAMPLE_TAB_LIST_CLASS = "xy-example-tab-list relative doc-demo-tab-list ml-auto flex items-center"
 
 
 def _example_demo_header(*triggers: rx.Component) -> rx.Component:
-    """Place the Build action and folder-style tab controls in one header."""
+    """Place the Build action and compact pill tabs above the preview card."""
     return rx.el.div(
         _reflex_build_action(),
         rx.tabs.list(*triggers, class_name=_EXAMPLE_TAB_LIST_CLASS),
         class_name=(
-            "flex w-full flex-wrap items-end justify-between gap-x-2 gap-y-1 sm:flex-nowrap"
+            "docs-demo-header flex w-full flex-wrap items-center justify-between gap-3 sm:flex-nowrap"
         ),
     )
 
 
 _EXAMPLE_TAB_CLASS = (
-    "xy-example-tab cursor-pointer appearance-none !rounded-none "
-    "first:!rounded-tl-[0.625rem] last:!rounded-tr-[0.625rem] "
-    "!border !border-border-subtle -ml-px first:!ml-0 "
-    "!bg-[#f5f5f5] !px-3.5 !py-2 !text-[0.8125rem] !font-medium !leading-5 "
-    "!text-[#525252] !shadow-none transition-[color,background-color] "
-    "duration-[120ms] before:!hidden after:!hidden "
-    "dark:!bg-[#171717] dark:!text-[#a3a3a3] "
-    "data-[state=active]:!z-10 data-[state=active]:!bg-white "
-    "data-[state=active]:!border-b-transparent data-[state=active]:!text-[#171717] "
-    "dark:data-[state=active]:!bg-black "
-    "dark:data-[state=active]:!text-[#fafafa] "
-    "[&_.rt-BaseTabListTriggerInner]:!bg-transparent"
+    "xy-example-tab cursor-pointer doc-demo-tab inline-flex items-center "
+    "rounded-full px-3 py-2 text-sm font-normal text-muted-foreground "
+    "motion-reduce:transition-none [&_.rt-BaseTabListTriggerInner]:!bg-transparent"
 )
 
-# The shared surface behind every panel, so Preview/Code/Data all sit on the
-# same background. Rounded on the top-left and both bottom corners; the top-right
-# stays square so the connected tab strip meets it flush.
 _EXAMPLE_CARD_CLASS = (
-    "relative w-full overflow-hidden rounded-xl rounded-tr-none border "
-    "border-border-subtle bg-white dark:bg-black"
+    "doc-demo-tab-card relative w-full overflow-hidden rounded-[20px] border border-border bg-card"
 )
 
 _EXAMPLE_LEGENDS = {
@@ -181,7 +159,7 @@ def _chart_legend(component_id: str | None) -> rx.Component:
 
 
 def _example_tab_trigger(value: str, icon: str, label: str) -> rx.Component:
-    """One folder-style trigger in the demo card's top-right tab strip."""
+    """Render one pill tab in the demo header."""
     return rx.tabs.trigger(
         rx.el.span(
             rx.icon(icon, size=15, aria_hidden="true"),
@@ -213,7 +191,7 @@ def _example_code_panel(source: str, value: str) -> rx.Component:
                 "[&_div]:!bg-transparent [&_pre]:!bg-transparent "
                 "[&_.code-block]:!bg-transparent [&_.code-block]:!rounded-none "
                 "[&_.code-block]:!border-0 [&_.code-block]:!shadow-none "
-                "[&_summary]:!from-white dark:[&_summary]:!from-black"
+                "[&_summary]:!from-muted"
             ),
         ),
         value=value,
@@ -228,7 +206,7 @@ def chart_example_demo(
     component_id: str | None = None,
     data: str | None = None,
 ) -> rx.Component:
-    """Render a chart demo whose Preview/Code/Data tabs attach to the card.
+    """Render a chart demo with compact Preview/Code/Data pill tabs.
 
     When ``data`` is supplied (the hardcoded arrays split out of the fence, see
     ``markdown._split_demo_data``) a third "Data" tab appears so the Code tab can

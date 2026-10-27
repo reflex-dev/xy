@@ -57,7 +57,35 @@ REQUIRED_FILES = {
     "xy/config.py",
     "xy/export.py",
     "xy/_figure.py",
+    "xy/backends/__init__.py",
+    "xy/backends/backend_xy.py",
+    "xy/backends/backend_xy_host.py",
+    "xy/backends/backend_xy_widget.js",
+    "xy/backends/backend_xy_widget.py",
+    "xy/backends/display_list.py",
+    "xy/backends/raster.py",
     "xy/marks.py",
+    "xy/pyplot/__init__.py",
+    "xy/pyplot/_artists.py",
+    "xy/pyplot/_axes.py",
+    "xy/pyplot/_axisgrid.py",
+    "xy/pyplot/_colors.py",
+    "xy/pyplot/_compat_inventory.py",
+    "xy/pyplot/_figure_tree.py",
+    "xy/pyplot/_fmt.py",
+    "xy/pyplot/_grid.py",
+    "xy/pyplot/_markers.py",
+    "xy/pyplot/_mathtext.py",
+    "xy/pyplot/_mode.py",
+    "xy/pyplot/_mplfig.py",
+    "xy/pyplot/_plot_types.py",
+    "xy/pyplot/_rc.py",
+    "xy/pyplot/_state.py",
+    "xy/pyplot/_ticker.py",
+    "xy/pyplot/_transforms.py",
+    "xy/pyplot/_translate.py",
+    "xy/pyplot/dates.py",
+    "xy/pyplot/typing.py",
     "xy/interaction.py",
     "xy/kernels.py",
     "xy/lod.py",
@@ -161,13 +189,22 @@ def _require_filename_tag(path: Path, tags: list[str]) -> None:
         )
 
 
+def _normalize_numeric_local_version(version: str) -> str:
+    # Hatchling normalizes an all-digit commit hash in the filename/dist-info,
+    # while uv-dynamic-versioning can preserve its leading zeros in METADATA.
+    # Numeric local versions compare as integers under PEP 440 (§33).
+    return re.sub(r"(?<=\+)0+(?=[0-9]+$)", "", version)
+
+
 def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
     missing: list[str] = []
     if metadata.get("Name", "").strip() != "xy":
         missing.append("Name: xy")
-    if metadata.get("Version", "").strip() != expected_version:
+    if _normalize_numeric_local_version(
+        metadata.get("Version", "").strip()
+    ) != _normalize_numeric_local_version(expected_version):
         missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")

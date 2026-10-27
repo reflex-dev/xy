@@ -940,8 +940,10 @@ modules. It is a **generated artifact, not committed to git** (§33): the hatch 
 hook runs `node js/build.mjs` at packaging time and force-includes the result into the
 wheel and sdist, so a published distribution carries it prebuilt. The one size gate CI
 enforces is on the **wheel**: `.github/workflows/ci.yml` asserts the built wheel is
-≤ 15 MB (§33). CI builds the client fresh from source in every relevant job but does not
-measure its bytes.
+≤ 15 MB (§33). CI builds the client once in its shared Linux wheel producer and reuses the
+wheel and extracted native/client assets in compatible same-run jobs. Independent
+platform and source-install packaging probes still build their own artifacts.
+CI does not measure the client bundle bytes separately.
 
 *Pending:* a gzipped-size budget on the client bundle, failing the build exactly like a
 perf regression (§12), plus per-trace-family lazy feature modules (Plotly's
@@ -1137,6 +1139,20 @@ number-parse-shaped; (c) every binding reports its actual copy count at ingest i
 mode, so "zero-copy" regressions are observable rather than folklore; (d) the Jupyter
 live path still has no text encoding of numbers, DOM payload, or main-thread data parse.
 
+**Bounded Matplotlib-compat exception.** The optional
+`module://xy.backends.backend_xy` live canvas is not the native XY data plane in
+the Jupyter row above. Its first implementation sends the rendered SVG document
+as one synced Unicode trait in Jupyter and as one JSON string from the
+authenticated loopback `/state` endpoint. The exception is bounded to compat
+figures and their live preview; native XY figures, numeric resources, server
+apps, and static-export contracts do not inherit it. A measured three-point
+scatter produces about 38 KiB of SVG per frame. Each refresh therefore incurs
+SVG construction, UTF-8/text serialization and transport copies, then browser
+DOM parsing on the main thread; no zero-copy or binary-transport performance
+claim applies to this compat live surface. Replacing it with binary display-list
+resources is tracked as compatibility-backend work, not silently treated as
+conforming to the native Jupyter transport row.
+
 ## 30. Compatibility subset — v1 is a list, not an aspiration
 
 Full Plotly semantics (~40 trace types × transforms × axis quirks × hover rules) is a
@@ -1240,6 +1256,11 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    so it stays on the widget host under "auto".
 
 **Contracts that keep it honest:**
+- **Artifact version identity.** Wheel filename and `.dist-info` versions must
+  agree; `METADATA` also agrees after stripping leading zeros from an all-digit
+  local version. An all-numeric Git hash such as `06589443` can appear in
+  metadata while Hatchling writes `6589443` in the artifact name. Different
+  public versions or numeric values still fail verification (§33).
 - **Comm-protocol versioning.** The native core and JS client ship together but can
   drift (cached notebook outputs, pinned server assets). The first-paint spec carries
   a protocol version; mismatch fails **loudly with an upgrade hint**, never silently

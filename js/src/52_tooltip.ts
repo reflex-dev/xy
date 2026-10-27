@@ -739,6 +739,11 @@ Object.assign(ChartView.prototype, {
   // -- shared-axis bands (interaction spec §7.3) ------------------------------
 
   _clearBandHover() {
+    // Outstanding band picks are being abandoned. Their seqs were drawn from
+    // `_pickSeq`, and the last one still equals it, so a reply arriving after
+    // this would pass the single-pick guard and render as an ordinary point
+    // readout. Advance past them.
+    if (this._bandPicks && this._bandPicks.size) this._pickSeq = (this._pickSeq || 0) + 1;
     this._bandKey = null;
     this._hoverTargets = null;
     this._bandRows = null;
@@ -766,19 +771,52 @@ Object.assign(ChartView.prototype, {
     const el = this._ensureTooltipCursor();
     const [lx, ly] = this._projectDataPoint(a.xAxis, a.yAxis, a.x, a.y);
     const p = this.plot;
-    const pos = a.dim === "x" ? lx : ly;
+    let pos = a.dim === "x" ? lx : ly;
     const lo = a.dim === "x" ? p.x : p.y;
     const hi = a.dim === "x" ? p.x + p.w : p.y + p.h;
-    if (!Number.isFinite(pos) || pos < lo || pos > hi) { el.style.display = "none"; return; }
+    if (!Number.isFinite(pos)) { el.style.display = "none"; return; }
+    // A bar joins the band while ANY part of its footprint overlaps the plot
+    // (`_bandCandidate`), so a bar clipped by the edge can be selected with its
+    // category centre outside. The band is real and the pointer is on it, so
+    // mark the part that IS visible rather than dropping the cursor and
+    // leaving the tooltip with nothing locating it. A point band's footprint
+    // is its own coordinate, so this never moves it.
+    // Projected through the axes as they are NOW, not as they were at hover:
+    // the band survives a pan or zoom, and a stale pixel span clamped the
+    // cursor onto a stretch the bar had already left. Each slot is projected
+    // through ITS OWN axes before the union, because a band can hold series on
+    // different ones and their data values do not share a number line.
+    const edge = (v, xAxis, yAxis) => {
+      const [ex, ey] = this._projectDataPoint(
+        xAxis, yAxis, a.dim === "x" ? v : a.x, a.dim === "x" ? a.y : v,
+      );
+      return a.dim === "x" ? ex : ey;
+    };
+    let spanLo = Infinity;
+    let spanHi = -Infinity;
+    for (const s of a.spans || []) {
+      const e0 = edge(s.lo, s.xAxis, s.yAxis);
+      const e1 = edge(s.hi, s.xAxis, s.yAxis);
+      if (!Number.isFinite(e0) || !Number.isFinite(e1)) continue;
+      spanLo = Math.min(spanLo, e0, e1);
+      spanHi = Math.max(spanHi, e0, e1);
+    }
+    if (
+      Number.isFinite(spanLo) && Number.isFinite(spanHi) && spanHi > spanLo
+      && spanHi >= lo && spanLo <= hi
+    ) {
+      pos = Math.min(Math.max(pos, Math.max(spanLo, lo)), Math.min(spanHi, hi));
+    }
+    if (pos < lo || pos > hi) { el.style.display = "none"; return; }
     el.style.display = "block";
     if (a.dim === "x") {
-      el.style.left = `${lx}px`;
+      el.style.left = `${pos}px`;
       el.style.top = `${p.y}px`;
       el.style.width = "1px";
       el.style.height = `${p.h}px`;
     } else {
       el.style.left = `${p.x}px`;
-      el.style.top = `${ly}px`;
+      el.style.top = `${pos}px`;
       el.style.width = `${p.w}px`;
       el.style.height = "1px";
     }
@@ -827,14 +865,23 @@ Object.assign(ChartView.prototype, {
       );
     }
     if (title) items.push({ kind: "title", value: title });
-    const fields = Array.isArray(tooltip.fields)
-      ? tooltip.fields.filter((f) => typeof f === "string" && f !== along)
+    // `fields=["x"]` in `mode="x"` asks for the band coordinate and nothing
+    // else, which the title already carries — so the rows are names alone.
+    // Filtering first and then testing `.length` read that as "no fields
+    // configured" and fell back to the default `across` value, silently
+    // ignoring the selection. An authored EMPTY list still means unset, as it
+    // does in nearest mode.
+    const authored = Array.isArray(tooltip.fields)
+      ? tooltip.fields.filter((f) => typeof f === "string")
+      : null;
+    const fields = authored && authored.length
+      ? authored.filter((f) => f !== along)
       : null;
     rows.forEach((row, i) => {
       const g = hits[i] && hits[i].g;
       const name = this._tooltipSeriesName(row) || `series ${i + 1}`;
       let value;
-      if (fields && fields.length) {
+      if (fields) {
         value = fields
           .map((f) => {
             const [v, k, channel] = this._tooltipLookup(row, f);
@@ -863,8 +910,20 @@ Object.assign(ChartView.prototype, {
   _renderBandTooltip(clientX, clientY, options: any = {}) {
     const rows = this._bandRows;
     const hits = this._hoverTargets;
-    if (!rows || !rows.length || !hits || this.spec.show_tooltip === false) {
+    if (!rows || !rows.length || !hits) {
       this._hideTooltip();
+      return;
+    }
+    // `show=False` drops the tooltip ELEMENT, not the band (§7.3): the hover
+    // event, the kernel picks and the active dots all still run, which is how
+    // `_hoverBand` already treats it. Clearing the band from here instead —
+    // this method is also called when an exact reply lands — dropped the
+    // remaining `_bandPicks` while their replies were in flight. Those replies
+    // then missed the band map, and the last of them still matched `_pickSeq`,
+    // so it fell into the single-pick handler and dispatched an `exact: true`
+    // hover carrying one series where the band promises all of them.
+    if (this.spec.show_tooltip === false) {
+      this.tooltip.style.display = "none";
       return;
     }
     const items = this._bandTooltipItems(rows, hits);
