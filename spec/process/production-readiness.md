@@ -57,6 +57,7 @@ and manual dispatches run all lanes, including documentation-only pushes to main
 | Only `docs/`, `spec/`, `news/`, README, changelog, contributor instructions or license | Selector and summary; the separate Docs workflow handles its matching paths |
 | `python/xy/pyplot/`, `python/xy/backends/`, their tests, gallery inputs or compatibility scripts | Runtime/Python floor, released Matplotlib reference/patch, eight standard gallery shards, extended gallery |
 | Other `tests/` or `examples/`, or `.binder/` | Runtime/Python floor; Binder separately selects its own build inputs |
+| `scripts/ci_gallery_dependencies.py`, its FFmpeg lock, or the gallery dependency restore action | Runtime/Python floor and pyplot, including the shared dependency producer and its eight consumers |
 | `benchmarks/` or `scripts/bench*` | Blocking runtime/Python-floor regression checks plus advisory cross-library/methodology benchmarks and their report merge |
 | `.github/workflows/`, `.github/actions/`, CI selector/verifier scripts | Runtime/Python floor, packaging and conformance; advisory benchmarks are skipped |
 | Shared Python, Rust, JS, dependency/build configuration, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
@@ -154,6 +155,104 @@ selector/verifier scripts, tests, Markdown at any depth, license-only changes,
 docs and news. CI-only PRs do not download CodSpeed tooling or run its benchmarks.
 Pyplot implementation changes still run its dedicated CodSpeed benchmarks.
 Published release build workflows and their full platform coverage are unchanged.
+
+### Shared standard-gallery system dependencies
+
+The eight standard gallery shards do not contact APT servers. One blocking
+`gallery_dependencies` producer starts after selection, alongside the native
+wheel build. It downloads the prebuilt Ubuntu 24.04 amd64 FFmpeg runtime packages
+in `scripts/ci_gallery_ffmpeg.lock.json`, verifies every byte against the committed
+SHA-512 digests and sizes, and uploads one `ci-gallery-ffmpeg` artifact for this run.
+The reviewed package identities come from Ubuntu's signed noble, noble-updates,
+and noble-security indexes, authenticated with `ubuntu-archive-keyring`. CI does
+not resolve floating package versions or run `apt-get update` for this bundle.
+
+Only the producer uses the package cache. Its exact key includes the runner OS,
+architecture and lockfile hash; no prefix restore or unreviewed external bundle
+is accepted. Workflow validation reads the upload step’s direct `with.name` input
+and requires exactly `ci-gallery-ffmpeg`; comments and duplicate keys cannot
+substitute for the artifact contract. On a warm cache, no package-server download
+occurs, but all digests are still checked before publishing the same-run artifact. Already compressed
+`.deb` files are uploaded without an additional compression pass. Each shard
+downloads this run's artifact, checks it against its own checked-out lockfile,
+then installs it with offline `dpkg` and proves that H.264 encoding works.
+Unexpected files, missing packages, symlinks and digest mismatches fail before
+privileged installation. The source checkout contains no downloaded packages.
+
+Download socket waits are bounded at 20 seconds, with a 40-second transfer budget
+checked between reads and one fallback between the two official Ubuntu servers,
+including for truncated or corrupt responses. Redirect destinations must remain
+on those Ubuntu HTTPS hosts. The producer's download step has a five-minute bound and its whole job ten minutes;
+consumer restoration is bounded at five minutes. Producer failure is required by
+`CI result`, and the shards depend on it rather than installing independently.
+The separate extended TeX/GTK environment retains its existing package contract.
+
+Refresh the reviewed lock on a host with APT and Ubuntu's archive keyring:
+
+```bash
+python3 scripts/ci_gallery_dependencies.py refresh-lock
+git diff -- scripts/ci_gallery_ffmpeg.lock.json
+gallery_cold=$(mktemp -d /tmp/xy-gallery-cold.XXXXXX)
+python3 scripts/ci_gallery_dependencies.py download --directory "$gallery_cold"
+python3 scripts/ci_gallery_dependencies.py download --directory "$gallery_cold"
+python3 scripts/ci_gallery_dependencies.py verify --directory "$gallery_cold"
+```
+
+The refresh command isolates its APT indexes and never installs packages or
+modifies host APT configuration. It refreshes the reviewed package-name set, not
+a newly resolved dependency closure. Treat its output as provisional: before
+committing a refreshed lock, review version/digest and dependency changes and run
+the network-disabled installation and encoding probe below. If dependencies have
+changed, re-establish and review the package-name set against the hosted baseline.
+The runtime package-name set is the standard gallery's FFmpeg dependency closure on
+the Ubuntu 24.04 hosted image; changing that baseline requires an offline install
+and encoding probe on the new image. Python development dependencies and the
+separate extended environment are not part of this FFmpeg bundle.
+
+The motivating run was [PR #494, run 40479933250](https://github.com/reflex-dev/xy/actions/runs/40479933250):
+each shard independently requested 87 packages (62,839,078 bytes, about 173 MB
+installed). Five shards completed setup in 15–27 seconds; shard 0 was still in
+that step after 17 minutes, before its gallery command started. Inspect the job
+step timestamps and completed shard 3's package log with:
+
+```bash
+gh api repos/reflex-dev/xy/actions/jobs/122108516868
+gh api repos/reflex-dev/xy/actions/jobs/122108516561/logs
+pytest -q tests/test_ci_gallery_dependencies.py tests/test_ci_scope.py tests/test_verify_ci_workflow.py
+```
+
+These are setup observations, not chart-performance measurements. The change
+removes eight independent upstream download/install resolutions; it does not
+claim that cross-run GitHub cache hits or constant network throughput are assured.
+Local raw results, lock identity and container provenance are recorded in
+`spec/benchmarks/ci-gallery-dependencies.json`: 55.05 seconds for a cold download,
+0.10 seconds for warm verification, and 4.37 seconds for offline installation plus
+an H.264 encoding probe. Network throughput is environment-dependent; no hosted
+elapsed-time speedup is asserted from these local observations.
+The first hosted [run 40485681835](https://github.com/reflex-dev/xy/actions/runs/40485681835)
+had a cold producer cache: all 87 packages were downloaded and verified in 9.65
+seconds, one artifact was published, and all eight consumer restoration steps
+succeeded in 7–17 seconds. Job IDs, artifact digest and step timings are recorded
+in the same JSON evidence file. These are individual observed runs, not a
+guarantee of future mirror or artifact-service throughput.
+
+Reproduce the offline restoration with a disposable Ubuntu fixture. Preparing
+the fixture requires network access; running the committed installer does not.
+The amd64 fixture seeds its runner-like baseline using the exact locked package
+versions, then removes all locked packages before testing restoration. It never
+provisions a floating FFmpeg candidate that could leave new dependencies:
+
+```bash
+mkdir -p /tmp/xy-gallery-fixture
+cp tests/fixtures/ci_gallery_dependencies.Dockerfile /tmp/xy-gallery-fixture/Dockerfile
+cp scripts/ci_gallery_ffmpeg.lock.json /tmp/xy-gallery-fixture/lock.json
+docker build -t xy-gallery-offline-fixture /tmp/xy-gallery-fixture
+docker run --rm --network none --security-opt no-new-privileges \
+  --mount type=bind,src="$gallery_cold",dst=/bundle,readonly \
+  --mount type=bind,src="$PWD/scripts/ci_gallery_dependencies.py",dst=/work/ci_gallery_dependencies.py,readonly \
+  --mount type=bind,src="$PWD/scripts/ci_gallery_ffmpeg.lock.json",dst=/work/ci_gallery_ffmpeg.lock.json,readonly \
+  xy-gallery-offline-fixture python3 /work/ci_gallery_dependencies.py install --directory /bundle
+```
 
 The three-engine conformance job uses the official Playwright image
 `mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48`.

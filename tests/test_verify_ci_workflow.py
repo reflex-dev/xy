@@ -872,6 +872,38 @@ def test_extended_gallery_job_requires_system_python_gi_bridge(tmp_path: Path) -
     )
 
 
+def test_gallery_rejects_reintroduced_per_shard_package_download(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = "      - name: Restore verified shared FFmpeg packages\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            needle,
+            "      - name: Fetch packages again\n        run: sudo apt-get update\n" + needle,
+        )
+    )
+    assert any(
+        "must not fetch packages independently" in e
+        for e in verify_ci_workflow.validate_ci_workflow(path)
+    )
+
+
+def test_gallery_producer_cannot_skip_digest_verification(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = "        run: python3 scripts/ci_gallery_dependencies.py download\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            needle,
+            "        # python3 scripts/ci_gallery_dependencies.py download\n        run: echo skipped\n",
+        )
+    )
+    assert any(
+        "pinned gallery dependency download" in e
+        for e in verify_ci_workflow.validate_ci_workflow(path)
+    )
+
+
 def test_extended_gallery_job_must_run_all_12_unsharded(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -2009,3 +2041,44 @@ def test_bootstrap_rejects_floating_action_refs(tmp_path: Path) -> None:
             path = tmp_path / "floating-action.yml"
             path.write_text(mutated)
             assert any("commit SHA" in error for error in validate(path)), (filename, action)
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        "Cache pinned FFmpeg package bundle",
+        "Publish verified FFmpeg package bundle",
+        "Restore verified shared FFmpeg packages",
+    ],
+)
+@pytest.mark.parametrize("bypass", ["if: false", "continue-on-error: true"])
+def test_gallery_shared_dependency_actions_cannot_be_bypassed(tmp_path, step, bypass):
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = f"      - name: {step}\n"
+    assert needle in workflow
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(needle, needle + f"        {bypass}\n", 1))
+    assert any(
+        step in error and "blocking" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "          name: wrong-artifact\n          # name: ci-gallery-ffmpeg",
+        "          # name: ci-gallery-ffmpeg",
+        "          name: ci-gallery-ffmpeg\n          name: wrong-artifact",
+    ],
+)
+def test_gallery_upload_requires_actual_artifact_name(tmp_path, replacement):
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = "          name: ci-gallery-ffmpeg"
+    assert workflow.count(needle) == 1
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(needle, replacement))
+    assert any(
+        "upload" in error and "ci-gallery-ffmpeg" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )
