@@ -96,8 +96,9 @@ def download(directory: Path, packages: list[dict]) -> None:
             partial = Path(name)
             try:
                 with os.fdopen(fd, "wb") as output, urlopen(url, timeout=20) as response:
-                    if urlsplit(response.geturl()).scheme != "https":
-                        raise ValueError("gallery package download redirected away from HTTPS")
+                    final = urlsplit(response.geturl())
+                    if final.scheme != "https" or final.netloc not in HOSTS:
+                        raise ValueError("gallery package download redirected outside Ubuntu HTTPS")
                     remaining = package["size"]
                     deadline = time.monotonic() + 40
                     while block := response.read1(min(1024 * 1024, remaining + 1)):
@@ -111,7 +112,7 @@ def download(directory: Path, packages: list[dict]) -> None:
                 partial.chmod(0o644)
                 partial.replace(path)
                 return
-            except (HTTPError, URLError, TimeoutError) as error:
+            except (HTTPError, URLError, TimeoutError, ValueError) as error:
                 last_error = error
             finally:
                 partial.unlink(missing_ok=True)

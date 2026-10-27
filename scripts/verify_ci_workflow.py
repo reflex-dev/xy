@@ -1057,6 +1057,21 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "timeout-minutes: 5",
         "uses: ./.github/actions/restore-gallery-dependencies",
     )
+    for job, step, action in (
+        (producer, "Cache pinned FFmpeg package bundle", "actions/cache@"),
+        (producer, "Publish verified FFmpeg package bundle", "actions/upload-artifact@"),
+        (
+            gallery_job,
+            "Restore verified shared FFmpeg packages",
+            "./.github/actions/restore-gallery-dependencies",
+        ),
+    ):
+        _require_step_contains(errors, job, step, "shared gallery action", f"uses: {action}")
+        block = _named_step_blocks(job).get(step)
+        if block is None or any(
+            _has_yaml_key(block, key, indent=8) for key in ("if", "continue-on-error")
+        ):
+            errors.append(f"CI step {step!r} must be present and blocking")
     if any(
         "apt-get" in line
         for step in _step_sequence_blocks(gallery_job)

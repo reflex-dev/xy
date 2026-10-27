@@ -178,8 +178,9 @@ Unexpected files, missing packages, symlinks and digest mismatches fail before
 privileged installation. The source checkout contains no downloaded packages.
 
 Download socket waits are bounded at 20 seconds, with a 40-second transfer budget
-checked between reads and one fallback between the two official Ubuntu servers. The
-producer's download step has a five-minute bound and its whole job ten minutes;
+checked between reads and one fallback between the two official Ubuntu servers,
+including for truncated or corrupt responses. Redirect destinations must remain
+on those Ubuntu HTTPS hosts. The producer's download step has a five-minute bound and its whole job ten minutes;
 consumer restoration is bounded at five minutes. Producer failure is required by
 `CI result`, and the shards depend on it rather than installing independently.
 The separate extended TeX/GTK environment retains its existing package contract.
@@ -189,14 +190,19 @@ Refresh the reviewed lock on a host with APT and Ubuntu's archive keyring:
 ```bash
 python3 scripts/ci_gallery_dependencies.py refresh-lock
 git diff -- scripts/ci_gallery_ffmpeg.lock.json
-python3 scripts/ci_gallery_dependencies.py download --directory /tmp/xy-gallery-cold
-python3 scripts/ci_gallery_dependencies.py download --directory /tmp/xy-gallery-cold
-python3 scripts/ci_gallery_dependencies.py verify --directory /tmp/xy-gallery-cold
+gallery_cold=$(mktemp -d /tmp/xy-gallery-cold.XXXXXX)
+python3 scripts/ci_gallery_dependencies.py download --directory "$gallery_cold"
+python3 scripts/ci_gallery_dependencies.py download --directory "$gallery_cold"
+python3 scripts/ci_gallery_dependencies.py verify --directory "$gallery_cold"
 ```
 
 The refresh command isolates its APT indexes and never installs packages or
-modifies host APT configuration. Review version/digest changes together. The
-runtime package-name set is the standard gallery's FFmpeg dependency closure on
+modifies host APT configuration. It refreshes the reviewed package-name set, not
+a newly resolved dependency closure. Treat its output as provisional: before
+committing a refreshed lock, review version/digest and dependency changes and run
+the network-disabled installation and encoding probe below. If dependencies have
+changed, re-establish and review the package-name set against the hosted baseline.
+The runtime package-name set is the standard gallery's FFmpeg dependency closure on
 the Ubuntu 24.04 hosted image; changing that baseline requires an offline install
 and encoding probe on the new image. Python development dependencies and the
 separate extended environment are not part of this FFmpeg bundle.
@@ -229,7 +235,10 @@ in the same JSON evidence file. These are individual observed runs, not a
 guarantee of future mirror or artifact-service throughput.
 
 Reproduce the offline restoration with a disposable Ubuntu fixture. Preparing
-the fixture requires network access; running the committed installer does not:
+the fixture requires network access; running the committed installer does not.
+The amd64 fixture seeds its runner-like baseline using the exact locked package
+versions, then removes all locked packages before testing restoration. It never
+provisions a floating FFmpeg candidate that could leave new dependencies:
 
 ```bash
 mkdir -p /tmp/xy-gallery-fixture
@@ -237,7 +246,7 @@ cp tests/fixtures/ci_gallery_dependencies.Dockerfile /tmp/xy-gallery-fixture/Doc
 cp scripts/ci_gallery_ffmpeg.lock.json /tmp/xy-gallery-fixture/lock.json
 docker build -t xy-gallery-offline-fixture /tmp/xy-gallery-fixture
 docker run --rm --network none --security-opt no-new-privileges \
-  --mount type=bind,src=/tmp/xy-gallery-cold,dst=/bundle,readonly \
+  --mount type=bind,src="$gallery_cold",dst=/bundle,readonly \
   --mount type=bind,src="$PWD/scripts/ci_gallery_dependencies.py",dst=/work/ci_gallery_dependencies.py,readonly \
   --mount type=bind,src="$PWD/scripts/ci_gallery_ffmpeg.lock.json",dst=/work/ci_gallery_ffmpeg.lock.json,readonly \
   xy-gallery-offline-fixture python3 /work/ci_gallery_dependencies.py install --directory /bundle

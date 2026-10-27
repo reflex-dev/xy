@@ -68,7 +68,7 @@ def test_download_corruption_never_enters_artifact(bundle, monkeypatch):
             return package["url"]
 
     monkeypatch.setattr(deps, "urlopen", lambda *a, **kw: Response(b"corrupt package"))
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         deps.download(directory, deps.load_lock(lock))
     assert list(directory.iterdir()) == []
 
@@ -131,3 +131,43 @@ def test_refresh_fails_closed_on_incomplete_or_untrusted_indexes(bundle, monkeyp
     with pytest.raises(deps.subprocess.CalledProcessError):
         deps.refresh_lock(lock)
     assert lock.read_bytes() == original
+
+
+@pytest.mark.parametrize("first_response", [b"short", b"x" * len(b"pinned Ubuntu package")])
+def test_download_retries_unverified_response_on_alternate(bundle, monkeypatch, first_response):
+    lock, directory, package = bundle
+    path = directory / package["filename"]
+    data = path.read_bytes()
+    path.unlink()
+    requests = []
+
+    class Response(io.BytesIO):
+        def geturl(self):
+            return requests[-1]
+
+    def fetch(url, *, timeout):
+        requests.append(url)
+        return Response(first_response if len(requests) == 1 else data)
+
+    monkeypatch.setattr(deps, "urlopen", fetch)
+    deps.download(directory, deps.load_lock(lock))
+    assert len(requests) == 2
+    assert requests[1].startswith("https://security.ubuntu.com/")
+    assert path.read_bytes() == data
+    assert [p.name for p in directory.iterdir()] == [package["filename"]]
+
+
+def test_download_rejects_redirect_outside_official_hosts(bundle, monkeypatch):
+    lock, directory, package = bundle
+    path = directory / package["filename"]
+    data = path.read_bytes()
+    path.unlink()
+
+    class Response(io.BytesIO):
+        def geturl(self):
+            return "https://example.org/package.deb"
+
+    monkeypatch.setattr(deps, "urlopen", lambda *a, **kw: Response(data))
+    with pytest.raises((ValueError, RuntimeError)):
+        deps.download(directory, deps.load_lock(lock))
+    assert list(directory.iterdir()) == []

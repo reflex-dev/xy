@@ -2041,3 +2041,24 @@ def test_bootstrap_rejects_floating_action_refs(tmp_path: Path) -> None:
             path = tmp_path / "floating-action.yml"
             path.write_text(mutated)
             assert any("commit SHA" in error for error in validate(path)), (filename, action)
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        "Cache pinned FFmpeg package bundle",
+        "Publish verified FFmpeg package bundle",
+        "Restore verified shared FFmpeg packages",
+    ],
+)
+@pytest.mark.parametrize("bypass", ["if: false", "continue-on-error: true"])
+def test_gallery_shared_dependency_actions_cannot_be_bypassed(tmp_path, step, bypass):
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = f"      - name: {step}\n"
+    assert needle in workflow
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(needle, needle + f"        {bypass}\n", 1))
+    assert any(
+        step in error and "blocking" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )
