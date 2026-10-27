@@ -84,13 +84,89 @@ def tooltip_fields_demo():
 ~~~
 
 Braced field names in `title` are replaced from the hovered row. `format` maps
-source field names to the client's numeric format strings, while `labels` maps
-those same source names to presentation text. Labels never change title
+source field names to format strings — numeric specs such as `",.0f"` and
+`".1%"`, or strftime patterns such as `"%b %d, %Y"` on date and time values
+(see [Time and Date Values](#time-and-date-values)) — while `labels` maps those
+same source names to presentation text. Labels never change title
 placeholder lookup or the event payload. When `fields` is omitted, `labels`
 renames the matching default x/y/color/size rows; direct array channels can use
 the channel names `"x"`, `"y"`, `"color"`, and `"size"`. A source column that
 is not bound to a rendered channel is not shipped merely because its name
 appears in `fields`.
+
+### Time and Date Values
+
+A datetime column formats with a strftime pattern in the same `format=` map.
+The tokens are `%Y %m %d %H %M %S %b %B`, the set the axis labels use:
+
+~~~python demo exec
+import datetime
+
+import reflex_xy
+import xy
+
+tooltip_time_start = datetime.datetime(2026, 9, 17, 10, 0)
+tooltip_time_data = {
+    "time": [tooltip_time_start + datetime.timedelta(hours=6 * i) for i in range(16)],
+    "yes": [0.41, 0.44, 0.43, 0.47, 0.52, 0.55, 0.53, 0.58,
+            0.61, 0.59, 0.64, 0.68, 0.66, 0.71, 0.74, 0.72],
+}
+
+tooltip_time_chart = xy.line_chart(
+    xy.line(x="time", y="yes", data=tooltip_time_data, name="Yes"),
+    xy.tooltip(
+        mode="x",
+        format={"time": "%b %d, %Y, %H:%M", "yes": ".0%"},
+        labels={"yes": "Yes"},
+    ),
+)
+
+
+def tooltip_time_demo():
+    return reflex_xy.chart(tooltip_time_chart, height="320px")
+~~~
+
+With no `format=` for a time field, the tooltip does not fall back to a raw
+timestamp. For a field on the x or y axis it uses that axis's own `format=`
+when the axis has a strftime one, so the tooltip and the tick labels beneath it
+read alike; otherwise it picks the pattern the visible span reads best in —
+`Sep 17, 2026` for a span of 28 days or more, `Sep 17, 10:05` from a minute up
+to that, and `10:05:00` from a second up to a minute. Zoom in and the tooltip
+sharpens with the axis. Below a second the ISO timestamp stays, because it is
+the only form that carries milliseconds.
+
+How closely your data is sampled sharpens that clock: a pattern the chart
+picks for you is never coarser than the gap between the hovered point and the
+one beside it, so neighbouring points always read differently. Ten-second
+readings over a three-minute window read `Sep 17, 10:00:10`, not the
+`Sep 17, 10:00` the span alone would give them and that every point of that
+minute would share. The date the window called for stays — precision is added
+to it, never swapped for it, so a per-second series two months wide reads
+`Sep 17, 2026, 10:00:10`. Sampled finer than a second, there is no pattern
+left to sharpen to, so the ISO timestamp comes back whatever the window —
+500 ms readings three minutes wide read the full stamp, not `Sep 17, 10:00`.
+
+A pattern you wrote yourself is used exactly as written, including one the
+tooltip inherits from the axis — that is the point of the inheritance, so the
+tooltip and the ticks beneath it agree. If `xy.x_axis(format="%H:%M")` is too
+coarse to tell your points apart, write the seconds in.
+
+Because the format is chosen per field, one chart can carry a precise
+timestamp in the tooltip and short labels on the axis:
+
+~~~python
+xy.line_chart(
+    xy.line(x="time", y="yes", data=data),
+    xy.x_axis(format="%b %d"),                        # axis: Sep 17
+    xy.tooltip(format={"time": "%b %d, %Y, %H:%M"}),  # tooltip: Sep 17, 2026, 10:05
+)
+~~~
+
+`format=` works on its own — without `fields=` or `title=` — in which case it
+formats the default x/y/color/size rows in place. It addresses values: a
+categorical colour row is a category name rather than a value, and the readouts
+that compositions define for themselves (sankey flows and node totals, funnel
+stages) carry their own text, so neither takes a format.
 
 ### Title Templates Across Multiple Series
 
@@ -240,6 +316,16 @@ XY shows a built-in hover tooltip by default — with no configuration it report
 the available x/y values plus any encoded color or size values. Add
 `xy.tooltip()` as a chart child only when you want to choose fields, formats,
 or a title template.
+
+### How do I show a formatted date or time in a tooltip?
+
+Pass a strftime pattern for that column, e.g.
+`xy.tooltip(format={"time": "%b %d, %Y, %H:%M"})`. It applies wherever the value
+appears — a field row, a `title=` placeholder, or the band title under
+`mode="x"`. With nothing passed, a time value follows the axis `format=` if
+there is one, and otherwise the visible span, never coarser than your data's
+own sampling. See
+[Time and Date Values](#time-and-date-values).
 
 ### How do I customize which fields a tooltip shows and how numbers are formatted?
 
