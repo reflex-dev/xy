@@ -2092,12 +2092,20 @@ def _colorbar_right_axis_room(
 
     The vertical colorbar shifts right by this amount so its bar/ticks/label
     clear the axis tick labels (plot-right+8) and rotated axis title
-    (plot-right+40); the JS client applies the identical rule."""
-    axes = [y_axis, *(axis for _axis_id, axis, _axis_scale in extra_y_axes)]
+    (plot-right+40); the JS client applies the identical rule (it reuses the
+    one `_rightAxisRoom` it computed in `_layout`, so it cannot drift).
+
+    This must ask the same question `layout()` asks — hence
+    `_axis_gutter_visible` rather than a second spelling of it. A gutter that
+    layout collapses but the colorbar still steps over leaves the bar floating
+    54 px out from a plot that reaches the edge."""
+    # Only the primary y axis carries a minor tick tier; the named ones draw
+    # their major marks and stop, so they must not reserve for a minor one.
+    axes = [(y_axis, True), *((axis, False) for _axis_id, axis, _axis_scale in extra_y_axes)]
     if any(
         (axis.get("side", "left") == "right" or "right" in _axis_tick_label_sides(axis, is_x=False))
-        and _axis_tick_label_strategy(axis) != "none"
-        for axis in axes
+        and _axis_gutter_visible(axis, "right", minor_tier=minor_tier)
+        for axis, minor_tier in axes
     ):
         return 42.0 if compact else 54.0
     return 0.0
@@ -2135,8 +2143,12 @@ def _text_block_content(text: object, x: float, line_step: float) -> str:
     return "".join(lines)
 
 
-def _has_outside_y_title(axis: dict[str, Any]) -> bool:
-    """Whether a y-axis title needs space outside the plot rectangle."""
+def _has_outside_axis_title(axis: dict[str, Any]) -> bool:
+    """Whether an axis title needs space outside the plot rectangle.
+
+    The same question on either orientation: an ``inside_*`` ``label_position``
+    draws the title over the plot and claims no gutter.
+    """
     if not axis.get("label"):
         return False
     raw_position = axis.get("label_position")
@@ -2165,6 +2177,155 @@ def _axis_text_paint_visible(
     return _paint_rgba8(_css(paint, _TEXT))[3] != 0
 
 
+def _axis_title_visible(axis: dict[str, Any]) -> bool:
+    """Whether this axis draws a title into its gutter.
+
+    ``tick_label_strategy="none"`` suppresses the title along with the labels
+    (`_axis_label_geometry` below, and the two title branches in
+    `_drawAxisChrome`, js/src/50_chartview.ts); ``"off"`` is the narrower
+    switch and keeps it. The title is painted from ``label_color`` alone in
+    every renderer, with no ``tick_color`` fallback. An ``inside_*`` title is
+    drawn over the plot and needs no gutter.
+
+    Mirrors ``_axisTitleVisible`` in js/src/50_chartview.ts.
+    """
+    return (
+        _has_outside_axis_title(axis)
+        and _axis_tick_label_strategy(axis) != "none"
+        and _axis_text_paint_visible(axis, "label_color")
+    )
+
+
+def _axis_tick_labels_visible(axis: dict[str, Any]) -> bool:
+    """Whether this axis draws any tick label.
+
+    ``"none"`` and ``"off"`` are the two strategies that draw none, and a
+    transparent paint shows none. Mirrors ``_axisTickLabelsVisible`` in
+    js/src/50_chartview.ts.
+    """
+    return _axis_tick_label_strategy(axis) not in {
+        "none",
+        "off",
+    } and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
+
+
+def _axis_outward_tick_room(
+    axis: dict[str, Any],
+    side: Optional[str] = None,
+    *,
+    minor_tier: bool,
+) -> float:
+    """How far this axis's tick marks reach outside the plot, in px.
+
+    Tick marks are chrome of their own: they are drawn from ``tick_length``
+    and answer to no *text* paint, so an axis with its labels switched off can
+    still need the gutter for them. They do answer to ``tick_color``, and to
+    ``tick_label_strategy="none"``, which silences the whole axis chrome and
+    takes both tick loops with it -- geometry alone does not mean ink. Core's
+    default ``tick_length`` is 0, so an unstyled axis reaches nothing, and the
+    ``ticks=False``/``show=False`` shorthand's ``tick_length=0, tick_width=0``
+    sentinel reaches nothing either. An authored ``tick_width`` of 0 draws
+    nothing in any renderer, so it reaches nothing too.
+
+    The two tiers are drawn by two different loops and are measured
+    separately, because almost nothing about them is shared:
+
+    ==============  =====================  ============================
+    ..              major                  minor
+    ==============  =====================  ============================
+    drawn for       the computed ticks     ``minor_tick_values`` only
+    drawn on        every ``tick_sides``   ``side`` alone
+    painted from    ``style.tick_color``   ``minor_style.tick_color``
+    ==============  =====================  ============================
+
+    So a minor tier styled with no values draws nothing, one on an axis whose
+    ``tick_sides`` exclude its own ``side`` is still drawn there, and either
+    tier's paint says nothing about the other's. Taking the larger of two
+    lengths under the major tier's paint and sides -- as this did when the
+    minor tier was first counted -- reserves phantom gutters and clips real
+    marks in the same function.
+
+    A *named* axis has no minor tier at all. Both renderers draw minor marks
+    for the primary x and y axes only (``xmt``/``ymt`` here, ``xmt``/``ymt``
+    from ``minorTicks(xAxis, "x")`` in the client); the extra-axis loops draw
+    the major tier and stop. So ``minor_tier`` says whether this axis is one
+    of the two that has one, and the caller supplies it because the caller
+    holds the ``_axes_by_id`` key that settles it. The client's mirror reads
+    ``axis.id`` instead, which it may do because ``_normalizeAxes`` stamps
+    every axis's id from its map key; nothing normalizes a spec on this side,
+    so an older payload's axis dict can reach here with no ``id`` -- the same
+    trap the ``side`` argument above exists to avoid.
+
+    The requested ``side`` names its own dimension -- a left/right query is
+    about a y axis whichever way the spec is shaped -- so it, and not the
+    axis's ``id``, is what picks the allowed sides. Everywhere else here the
+    dimension comes from the caller too (``is_x=`` at every
+    ``_axis_tick_label_sides`` call site), and an older payload's axis dict
+    need not carry an ``id`` at all.
+
+    Mirrors ``_axisOutwardTickRoom`` in js/src/50_chartview.ts.
+    """
+    if _axis_tick_label_strategy(axis) == "none":
+        return 0.0
+    if side is not None:
+        is_x = side in ("bottom", "top")
+    else:
+        is_x = str(axis.get("id", "x")).startswith("x")
+
+    room = 0.0
+    if _axis_text_paint_visible(axis, "tick_color") and (
+        side is None or side in _axis_tick_sides(axis, is_x=is_x)
+    ):
+        room = _tick_tier_outward_room(axis.get("style") or {})
+
+    # `minor_axis_ticks` returns nothing without `minor_tick_values`, so a
+    # styled-but-valueless minor tier draws no marks and needs no gutter --
+    # and only the primary x/y axes have a minor tier at all, which is what
+    # `minor_tier` carries (see the docstring).
+    if minor_tier and axis.get("minor_tick_values"):
+        minor = {**axis, "style": axis.get("minor_style") or {}}
+        minor_side = axis.get("side", "bottom" if is_x else "left")
+        if _axis_text_paint_visible(minor, "tick_color") and (side is None or side == minor_side):
+            room = max(room, _tick_tier_outward_room(minor["style"]))
+    return room
+
+
+def _tick_tier_outward_room(style: dict[str, Any]) -> float:
+    """One tick tier's outward reach, from its own style map."""
+    length = max(0.0, float(style.get("tick_length", 0) or 0.0))
+    # Zero width draws nothing in any renderer, and the ``ticks=False``
+    # shorthand's sentinel is ``tick_length=0, tick_width=0``, so either half
+    # of it reaches nothing on its own.
+    if length <= 0.0 or float(style.get("tick_width", 1) or 0.0) <= 0.0:
+        return 0.0
+    direction = str(style.get("tick_direction", "out"))
+    if direction == "in":
+        return 0.0
+    return length / 2.0 if direction == "inout" else length
+
+
+def _axis_gutter_visible(
+    axis: dict[str, Any],
+    side: Optional[str] = None,
+    *,
+    minor_tier: bool,
+) -> bool:
+    """Whether this axis claims a gutter at all.
+
+    Tick labels and the title are separate paints, so either one showing keeps
+    the band: an opaque title over transparent ticks would otherwise be drawn
+    into a gutter that no longer exists. So do outward tick MARKS, which have
+    no text paint at all — an axis that draws only those still needs somewhere
+    to draw them, and the colorbar beside it still has to clear them.
+    Mirrors ``_axisGutterVisible`` in js/src/50_chartview.ts.
+    """
+    return (
+        _axis_tick_labels_visible(axis)
+        or _axis_title_visible(axis)
+        or _axis_outward_tick_room(axis, side, minor_tier=minor_tier) > 0.0
+    )
+
+
 def _y_title_baseline(
     axis: dict[str, Any],
     plot: dict[str, float],
@@ -2176,7 +2337,7 @@ def _y_title_baseline(
     browser positions a centered line box; the returned coordinate includes
     that box-to-baseline correction.
     """
-    if not _has_outside_y_title(axis):
+    if not _has_outside_axis_title(axis):
         return None  # absent or drawn over the plot; it needs no gutter
     style = axis.get("style") or {}
     font_size = float(style.get("label_size", 12))
@@ -2251,14 +2412,17 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
             continue
         left_labels = "left" in _axis_tick_label_sides(axis, is_x=False)
         left_title = axis.get("side", "left") != "right"
-        if not left_labels and not left_title:
+        # Marks drawn into the left gutter need it as much as text does, and
+        # this room is MEASURED rather than a flat band, so eligibility alone
+        # does not reserve it. Mirrors `_yAxisLeftRoom` in
+        # js/src/50_chartview.ts.
+        left_tick_room = _axis_outward_tick_room(axis, "left", minor_tier=axis_id == "y")
+        if not left_labels and not left_title and left_tick_room <= 0.0:
             continue
+        if left_tick_room > 0.0:
+            room = max(room, _AXIS_TEXT_EDGE_PAD + left_tick_room)
         tick_offset, tick_room = _y_tick_label_room(axis, plot_h) if left_labels else (0.0, 0.0)
-        title_visible = (
-            left_title
-            and _has_outside_y_title(axis)
-            and _axis_text_paint_visible(axis, "label_color")
-        )
+        title_visible = left_title and _axis_title_visible(axis)
         if not title_visible:
             if tick_offset == 0.0 and tick_room == 0.0:
                 continue
@@ -2288,11 +2452,7 @@ def _x_axis_title_room(axis: dict[str, Any]) -> float:
     outer glyph edge here so tight/constrained layout does not stop at the
     historical 36/42 px band while the title itself extends past the canvas.
     """
-    if not axis.get("label") or not _axis_text_paint_visible(axis, "label_color"):
-        return 0.0
-    raw_position = axis.get("label_position")
-    position = raw_position if isinstance(raw_position, str) else "center"
-    if position.replace("-", "_").startswith("inside_"):
+    if not _axis_title_visible(axis):
         return 0.0
     style = axis.get("style") or {}
     font_size = float(style.get("label_size", 12))
@@ -2313,7 +2473,7 @@ def _x_axis_title_room(axis: dict[str, Any]) -> float:
     )
 
 
-def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
+def _x_tick_label_room(axis: dict[str, Any], plot_w: float, *, minor_tier: bool) -> float:
     """Outward room needed by the x axis's final tick-label set and title.
 
     The old 32/42 px bands only fit horizontal labels. Measure the strings and
@@ -2325,7 +2485,14 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
     strategy = _axis_tick_label_strategy(axis)
     if strategy == "none":
         return 0.0
-    title_room = _x_axis_title_room(axis)
+    # Marks drawn into this band need it as much as the text does, and the
+    # flat 32/42 px bands are smaller than a long authored ``tick_length``.
+    # Mirrors the ``tickRoomOnSide`` term in `_xAxisRoom`.
+    tick_room = _axis_outward_tick_room(axis, axis.get("side", "bottom"), minor_tier=minor_tier)
+    title_room = max(
+        _x_axis_title_room(axis),
+        _AXIS_TEXT_EDGE_PAD + tick_room if tick_room > 0.0 else 0.0,
+    )
     if strategy == "off" or not _axis_text_paint_visible(axis, "tick_label_color", "tick_color"):
         return title_room
     if (
@@ -2460,13 +2627,20 @@ def _x_axis_rooms(
             continue
         title_side = axis.get("side", "bottom")
         room_sides = set(_axis_tick_label_sides(axis, is_x=True))
+        # `tick_sides` can put marks on a side the labels and the axis itself
+        # do not use, and that side still needs its band.
+        room_sides.update(
+            side
+            for side in _axis_tick_sides(axis, is_x=True)
+            if _axis_outward_tick_room(axis, side, minor_tier=axis_id == "x") > 0.0
+        )
         if _axis_tick_label_strategy(axis) == "off" or axis.get("label"):
             room_sides.add(title_side)
         for side in room_sides:
             side_axis = {**axis, "side": side}
             if side != title_side:
                 side_axis.pop("label", None)
-            measured = _x_tick_label_room(side_axis, plot_w)
+            measured = _x_tick_label_room(side_axis, plot_w, minor_tier=axis_id == "x")
             if side == "top":
                 top = max(top, 26.0 if compact else 32.0, measured)
             else:
@@ -2599,7 +2773,12 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
             axis.get("side", "right") == "right"
             or "right" in _axis_tick_label_sides(axis, is_x=False)
         )
-        and _axis_tick_label_strategy(axis) != "none"
+        # An axis whose text is switched off draws none of what this gutter
+        # exists to hold, so it claims none of it — the same question the left
+        # gutter already asks (`_axis_text_paint_visible`). Only the *presence*
+        # of the reservation answers to the paint; its flat 42/54 width, and
+        # the plot-relative right title that depends on it, are unchanged.
+        and _axis_gutter_visible(axis, "right", minor_tier=axis_id == "y")
         for axis_id, axis in axes.items()
     ):
         # Match ChartView._layout(): one shared right-side gutter contains the
@@ -2812,7 +2991,9 @@ def _recut_polar_plot(
     # legend fell back to the plain plot rect and drew on top of the marks —
     # and the disc kept the cartesian gutters it should have given back. Track
     # it and skip only the inset.
-    labels_hidden = theta_axis.get("tick_label_strategy") == "none"
+    # The same question every cartesian gutter asks: `"off"` draws no angular
+    # label any more than `"none"` does, and neither does a transparent paint.
+    labels_hidden = not _axis_tick_labels_visible(theta_axis)
     # The legend gutter is taken off the canvas edge FIRST, before the disc is
     # fitted to what is left, so the disc never occupies the gutter and the
     # legend never occupies the disc. Recorded as four floats rather than a
@@ -2867,7 +3048,7 @@ def _recut_polar_plot(
     # at x = -10, off the canvas. Charts with no radial title (the common case)
     # still get the full reclaim.
     y_axis = spec.get("y_axis") or {}
-    titled = bool(y_axis.get("label")) and _axis_text_paint_visible(y_axis, "label_color")
+    titled = _axis_title_visible(y_axis)
     # `canvas_x0` is a left legend gutter; the label room still applies inside it.
     # With no gutter it is 0 and `side >= room`, so this is the previous value.
     left = max(max(side, plot["x"]) if titled else side, canvas_x0 + room)
@@ -2877,7 +3058,7 @@ def _recut_polar_plot(
     # because that title is drawn in the bottom gutter and reclaiming the band
     # pushed it below the canvas edge.
     x_axis = spec.get("x_axis") or {}
-    x_titled = bool(x_axis.get("label")) and _axis_text_paint_visible(x_axis, "label_color")
+    x_titled = _axis_title_visible(x_axis)
     # A horizontal colorbar is placed relative to the plot's BOTTOM edge, so
     # extending the rect downward walks it off the canvas. Its gutter is real
     # chrome, not a tick-label gutter: keep it whole, like a theta title.
