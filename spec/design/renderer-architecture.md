@@ -88,8 +88,10 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
   thrown error — fail loud, never a silent fallback.
 - **DPR correctness**: backing stores sized `css × devicePixelRatio`
   everywhere including the pick FBO and its lazy resize-realloc; line widths
-  and point sizes multiply by dpr. Audited clean. (Gap: DPR *changes* — see
-  R7.)
+  and point sizes multiply by dpr. The shared-host mixed-size browser probe
+  runs at DPR 1 and DPR 2; its Playwright context mirrors any forced Chromium
+  device scale because Playwright otherwise pins the page to DPR 1. Audited
+  clean. (Gap: DPR *changes* — see R7.)
 
 ## 2. Audit findings — must-fix-before-20-charts list
 

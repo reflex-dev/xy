@@ -7,6 +7,7 @@ import textwrap
 import reflex as rx
 import ruff_format
 from reflex_components_code.shiki_code_block import code_block as shiki_code_block
+from reflex_site_shared.components.blocks.code import DOCS_CODE_THEME
 
 EXPAND_THRESHOLD_LINES = 20
 _LANGUAGE_ALIASES = {
@@ -153,10 +154,10 @@ def _copy_button(code: str) -> rx.Component:
             },
             class_name=(
                 "inline-flex size-7 items-center justify-center "
-                "rounded-md border border-secondary-5 bg-secondary-3 text-secondary-11 "
-                "transition hover:bg-secondary-4 hover:text-secondary-12 "
-                "active:bg-secondary-5 focus:outline-none "
-                "focus-visible:ring-2 focus-visible:ring-primary-7"
+                "rounded-md border border-border bg-muted text-muted-foreground "
+                "transition hover:bg-accent hover:text-foreground "
+                "active:bg-accent focus:outline-none "
+                "focus-visible:ring-2 focus-visible:ring-ring"
             ),
         ),
         rx.el.span(
@@ -178,6 +179,7 @@ def _plain_code_block(code: str, language: str) -> rx.Component:
         shiki_code_block(
             code,
             language=shiki_language,
+            theme=DOCS_CODE_THEME,
             class_name="code-block",
             can_copy=True,
             copy_button=_copy_button(code),
@@ -214,9 +216,9 @@ def code_block(code: str, language: str) -> rx.Component:
                 ),
                 class_name=(
                     "list-none cursor-pointer rounded-b-xl bg-gradient-to-t "
-                    "from-[var(--secondary-2)] from-55% to-transparent pb-3 pt-12 "
-                    "text-center text-sm font-medium text-[var(--secondary-11)] "
-                    "hover:text-[var(--secondary-12)] group-open/details:bg-none "
+                    "from-muted from-55% to-transparent pb-3 pt-12 "
+                    "text-center text-sm font-medium text-muted-foreground "
+                    "hover:text-foreground group-open/details:bg-none "
                     "group-open/details:pt-3 [&::-webkit-details-marker]:hidden "
                     "[&::marker]:hidden"
                 ),
@@ -225,7 +227,7 @@ def code_block(code: str, language: str) -> rx.Component:
         ),
         class_name=(
             "relative mb-4 mt-4 max-h-[400px] overflow-hidden rounded-xl border "
-            "border-[var(--secondary-4)] bg-[var(--secondary-2)] "
+            "border-border-subtle bg-muted "
             "has-[details[open]]:max-h-none [&_.code-block]:!border-0"
         ),
     )

@@ -85,6 +85,8 @@ DEFAULT_METADATA = "\n".join(
         "Requires-Python: >=3.11",
         "Requires-Dist: anywidget>=0.9",
         "Requires-Dist: numpy>=1.24",
+        "Provides-Extra: matplotlib",
+        "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'",
         "Requires-Dist: reflex>=0.9.6; extra == 'reflex'",
         "Provides-Extra: reflex",
     ]
@@ -208,6 +210,27 @@ def test_verify_native_wheel_accepts_required_artifact_shape(tmp_path: Path) -> 
     _write_wheel(whl)
 
     verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+@pytest.mark.parametrize("metadata_local", ["06589443", "006589443", "6589443"])
+def test_metadata_accepts_normalized_numeric_commit(metadata_local: str) -> None:
+    metadata = DEFAULT_METADATA.replace("Version: 0.0.1", f"Version: 0.0.9.dev24+{metadata_local}")
+    verify_wheel._require_metadata(
+        {"xy-0.0.9.dev24+6589443.dist-info/METADATA"},
+        metadata.encode(),
+        "0.0.9.dev24+6589443",
+    )
+
+
+@pytest.mark.parametrize("metadata_version", ["0.0.9.dev24+06589444", "0.0.9.dev25+06589443"])
+def test_metadata_rejects_different_numeric_commit_version(metadata_version: str) -> None:
+    metadata = DEFAULT_METADATA.replace("Version: 0.0.1", f"Version: {metadata_version}")
+    with pytest.raises(AssertionError, match="Version:"):
+        verify_wheel._require_metadata(
+            {"xy-0.0.9.dev24+6589443.dist-info/METADATA"},
+            metadata.encode(),
+            "0.0.9.dev24+6589443",
+        )
 
 
 def test_verify_pure_wheel_accepts_required_artifact_shape(tmp_path: Path) -> None:
@@ -366,8 +389,18 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
             "only xy base dependencies",
         ),
         (
+            DEFAULT_METADATA + "\nProvides-Extra: dev",
+            "Provides-Extra: matplotlib and reflex",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'", ""
+            ),
+            r"matplotlib>=3\.11,<3\.12",
+        ),
+        (
             DEFAULT_METADATA.replace("Provides-Extra: reflex", "Provides-Extra: dev"),
-            "Provides-Extra: reflex",
+            "Provides-Extra: matplotlib and reflex",
         ),
     ],
 )
@@ -502,6 +535,53 @@ def test_verify_wheel_rejects_missing_static_bundle(tmp_path: Path) -> None:
     _write_wheel(whl, omit={"xy/static/standalone.js"})
 
     with pytest.raises(AssertionError, match="required package files"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_missing_matplotlib_loopback_host(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"xy/backends/backend_xy_host.py"})
+
+    with pytest.raises(AssertionError, match="backend_xy_host"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "xy/backends/backend_xy.py",
+        "xy/backends/display_list.py",
+        "xy/backends/raster.py",
+    ],
+)
+def test_verify_wheel_rejects_missing_text_resource_renderer(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "xy/pyplot/_compat_inventory.py",
+        "xy/pyplot/_figure_tree.py",
+        "xy/pyplot/_mode.py",
+        "xy/pyplot/typing.py",
+    ],
+)
+def test_verify_wheel_rejects_missing_pyplot_compat_runtime(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 

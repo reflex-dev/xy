@@ -2502,7 +2502,7 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
         n_buckets,
         start,
         end,
-        par_threads(end - start),
+        par_threads_above(end - start, PAR_THRESHOLD_COMPUTE).min(n_buckets),
     )
 }
 
@@ -2583,12 +2583,19 @@ fn m4_range(
     out
 }
 
+fn m4_bucket_end<F>(values: &[f64], bucket: usize, bucket_of: &F) -> usize
+where
+    F: Fn(f64) -> usize,
+{
+    values.partition_point(|&value| bucket_of(value) == bucket)
+}
+
 /// Buckets are monotone non-decreasing in sorted x, so every bucket's rows are
-/// contiguous. Split the window at bucket boundaries (nudging each split
-/// forward until it starts a new bucket), scan each segment with the same
-/// serial routine, and concatenate in order — bitwise identical to the serial
-/// pass for any thread count. Degenerate case: one giant bucket collapses to
-/// a single segment (serial speed, still correct).
+/// contiguous. Split the window at bucket boundaries (finding each boundary
+/// with a binary search), scan each segment with the same serial routine, and
+/// concatenate in order — bitwise identical to the serial pass for any thread
+/// count. Degenerate case: one giant bucket collapses to a single segment
+/// without repeatedly scanning that bucket.
 #[allow(clippy::too_many_arguments)]
 fn m4_indices_impl(
     x: &[f64],
@@ -2604,14 +2611,17 @@ fn m4_indices_impl(
     if threads <= 1 {
         return m4_range(x, y, x0, inv_bucket_w, n_buckets, start, end);
     }
-    let bucket_of = |i: usize| (((x[i] - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
+    let bucket_of = |value: f64| {
+        (((value - x0) * inv_bucket_w) as usize).min(n_buckets - 1)
+    };
     let span = end - start;
     let chunk = span.div_ceil(threads);
     let mut bounds: Vec<usize> = vec![start];
     for t in 1..threads {
         let mut j = (start + t * chunk).min(end);
-        while j < end && j > 0 && bucket_of(j) == bucket_of(j - 1) {
-            j += 1;
+        if j < end {
+            let bucket = bucket_of(x[j - 1]);
+            j += m4_bucket_end(&x[j..end], bucket, &bucket_of);
         }
         let prev = *bounds.last().expect("bounds never empty");
         if j > prev && j < end {
@@ -3174,22 +3184,29 @@ fn bin_2d_count_f32_scalar(
     }
 }
 
-/// Row-scan kernels fan out across cores only past this size, where thread
+/// Row-scan kernels fan out across cores only past these sizes, where thread
 /// spawn + merge cost is well amortized. Threading stays inside the call —
-/// the ABI remains synchronous (engine doc E5).
+/// the ABI remains synchronous (engine doc E5). Compute-bound scans cross over
+/// earlier: at ~2.5–3 ns/row serial, M4 and uniform histogram amortize a
+/// fan-out from ~128k rows, the same crossover zone maps use.
 const PAR_THRESHOLD: usize = 1 << 19;
+const PAR_THRESHOLD_COMPUTE: usize = 1 << 17;
 
 fn par_threads(n: usize) -> usize {
+    par_threads_above(n, PAR_THRESHOLD)
+}
+
+fn par_threads_above(n: usize, threshold: usize) -> usize {
     static CODSPEED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *CODSPEED.get_or_init(|| std::env::var_os("CODSPEED_ENV").is_some()) {
         return 1;
     }
     let cores = std::thread::available_parallelism().map_or(1, |p| p.get());
-    par_threads_for(n, cores)
+    par_threads_above_for(n, threshold, cores)
 }
 
-fn par_threads_for(n: usize, cores: usize) -> usize {
-    if n >= PAR_THRESHOLD {
+fn par_threads_above_for(n: usize, threshold: usize, cores: usize) -> usize {
+    if n >= threshold {
         cores.clamp(1, MAX_ROW_THREADS)
     } else {
         1
@@ -4596,7 +4613,14 @@ pub fn stratified_sample_mask<T: Copy + Sync + Into<u64>>(
 pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64 {
     assert!(x1_gt_x0(lo, hi));
     assert!(!out.is_empty());
-    histogram_uniform_impl(data, lo, hi, par_threads(data.len()), out)
+    histogram_uniform_impl(data, lo, hi, histogram_threads(data.len(), out.len()), out)
+}
+
+/// Workers for a uniform histogram. Each owns a full bin vector and the merge
+/// is `threads * n_bins`, so points per bin caps the row gate — same rule as
+/// `bin_2d_threads`, whose per-thread grids are this kernel's per-thread bins.
+fn histogram_threads(n: usize, n_bins: usize) -> usize {
+    (n / n_bins.max(1)).clamp(1, par_threads_above(n, PAR_THRESHOLD_COMPUTE))
 }
 
 /// Per-bin u64 counting shared by the serial and parallel paths. Stays scalar
@@ -6785,6 +6809,34 @@ mod tests {
     }
 
     #[test]
+    fn m4_clustered_split_search_is_logarithmic() {
+        use std::cell::Cell;
+
+        let x: Vec<f64> = (0..200_000)
+            .map(|i| if i < 194_000 { 0.5 } else { 1.5 })
+            .collect();
+        let y: Vec<f64> = (0..x.len()).map(|i| (i as f64 * 0.01).sin()).collect();
+        let serial = m4_indices_impl(&x, &y, 0.0, 2.0, 1_000, 0, x.len(), 1);
+        let dispatched = m4_indices_impl(&x, &y, 0.0, 2.0, 1_000, 0, x.len(), 18);
+        assert_eq!(serial, dispatched);
+
+        let probes = Cell::new(0usize);
+        let bucket_of = |value: f64| {
+            probes.set(probes.get() + 1);
+            value as usize
+        };
+
+        let offset = m4_bucket_end(&x[10_000..], 0, &bucket_of);
+
+        assert_eq!(offset, 184_000);
+        assert!(
+            probes.get() <= 20,
+            "dominant-bucket split used {} probes",
+            probes.get()
+        );
+    }
+
+    #[test]
     fn min_max_skips_non_finite() {
         assert_eq!(min_max(&[f64::NAN, 2.0, -1.0]), Some((-1.0, 2.0)));
         assert_eq!(
@@ -6854,9 +6906,70 @@ mod tests {
         // shape): per-thread grids + merge dwarf the scan — stay serial.
         assert_eq!(bin_2d_threads(1 << 20, 1 << 20), 1);
         assert_eq!(bin_2d_threads(2_100_000, 2048 * 2048), 1);
-        assert_eq!(par_threads_for(PAR_THRESHOLD - 1, 64), 1);
-        assert_eq!(par_threads_for(PAR_THRESHOLD, 64), MAX_ROW_THREADS);
-        assert_eq!(par_threads_for(PAR_THRESHOLD, 1), 1);
+        assert_eq!(
+            par_threads_above_for(PAR_THRESHOLD - 1, PAR_THRESHOLD, 64),
+            1
+        );
+        assert_eq!(
+            par_threads_above_for(PAR_THRESHOLD, PAR_THRESHOLD, 64),
+            MAX_ROW_THREADS
+        );
+        assert_eq!(par_threads_above_for(PAR_THRESHOLD, PAR_THRESHOLD, 1), 1);
+    }
+
+    #[test]
+    fn histogram_threads_bin_aware() {
+        let n = PAR_THRESHOLD_COMPUTE;
+        let cap = par_threads_above(n, PAR_THRESHOLD_COMPUTE);
+        // Below the compute gate: serial regardless of bin count.
+        assert_eq!(histogram_threads(PAR_THRESHOLD_COMPUTE - 1, 8), 1);
+        // Chart-sized bin counts (512 is the benchmark config): pure row gate.
+        assert_eq!(histogram_threads(n, 512), cap);
+        assert_eq!(histogram_threads(n, 8), cap);
+        // Bins as numerous as the rows: merge dwarfs the scan — stay serial.
+        assert_eq!(histogram_threads(n, n), 1);
+        assert_eq!(histogram_threads(200_000, 1_000_000), 1);
+        // In between, workers track points per bin.
+        assert_eq!(histogram_threads(1 << 18, 1 << 15), 8.min(cap));
+    }
+
+    #[test]
+    fn histogram_high_bin_count_matches_serial() {
+        // 128k-512k band: high bin counts route serial, and the public path
+        // stays bit-identical to the serial impl either way.
+        let n = PAR_THRESHOLD_COMPUTE + 1_000;
+        let bins = 300_000;
+        let data: Vec<f64> = (0..n).map(|i| (i % 977) as f64 * 0.25).collect();
+        assert_eq!(histogram_threads(n, bins), 1);
+        let mut serial = vec![0f64; bins];
+        let ts = histogram_uniform_impl(&data, 0.0, 244.0, 1, &mut serial);
+        let mut routed = vec![0f64; bins];
+        let tr = histogram_uniform(&data, 0.0, 244.0, &mut routed);
+        assert_eq!(ts, tr);
+        assert_eq!(serial, routed);
+        // Same rows, ordinary bin count: still fans out.
+        let cap = par_threads_above(n, PAR_THRESHOLD_COMPUTE);
+        assert_eq!(histogram_threads(n, 512), cap);
+        let mut small_serial = vec![0f64; 512];
+        let ss = histogram_uniform_impl(&data, 0.0, 244.0, 1, &mut small_serial);
+        let mut small_routed = vec![0f64; 512];
+        let sr = histogram_uniform(&data, 0.0, 244.0, &mut small_routed);
+        assert_eq!(ss, sr);
+        assert_eq!(small_serial, small_routed);
+    }
+
+    #[test]
+    fn par_thread_gates_route_by_cost_class() {
+        const { assert!(PAR_THRESHOLD_COMPUTE < PAR_THRESHOLD) }
+        let t_c = PAR_THRESHOLD_COMPUTE;
+        for cores in [1, 4, 20, 64] {
+            let cap = cores.clamp(1, MAX_ROW_THREADS);
+            // Compute-bound kernels fan out from 128k rows.
+            assert_eq!(par_threads_above_for(t_c - 1, t_c, cores), 1);
+            assert_eq!(par_threads_above_for(t_c, t_c, cores), cap);
+            // ...and stay serial in the band the general gate still reserves.
+            assert_eq!(par_threads_above_for(t_c, PAR_THRESHOLD, cores), 1);
+        }
     }
 
     #[test]
