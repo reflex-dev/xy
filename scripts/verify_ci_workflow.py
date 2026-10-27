@@ -29,6 +29,7 @@ REQUIRED_CI_JOBS = {
     "result",
     "changes",
     "build",
+    "gallery_dependencies",
     "browser_conformance",
     "matplotlib_reference",
     "pyplot_gallery",
@@ -63,6 +64,7 @@ CI_SUMMARY_DEPENDENCIES = (
     "sdist",
     "wheels",
     "install_without_rust",
+    "gallery_dependencies",
 )
 CI_SUMMARY_COMMANDS = [
     "python3 - <<'PY'",
@@ -616,10 +618,15 @@ def _require_step_runs_exactly(
         _has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys
     )
     # Scope/dependency controls are allowed only in their reviewed form.
-    group = "pyplot" if job_text.startswith("  matplotlib_reference:") else "runtime"
+    selector_only = job_text.startswith(("  rust_checks:", "  gallery_dependencies:"))
+    group = (
+        "pyplot"
+        if job_text.startswith(("  matplotlib_reference:", "  gallery_dependencies:"))
+        else "runtime"
+    )
     for key, expected in (
         ("if", f"needs.changes.outputs.{group} == 'true'"),
-        ("needs", "changes" if job_text.startswith("  rust_checks:") else "[changes, build]"),
+        ("needs", "changes" if selector_only else "[changes, build]"),
     ):
         values, ambiguous = _direct_yaml_key_values(job_text, key, indent=4)
         if ambiguous or values != [expected]:
@@ -879,6 +886,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "matplotlib_reference": "pyplot",
         "matplotlib_patch_smoke": "pyplot",
         "pyplot_gallery": "pyplot",
+        "gallery_dependencies": "pyplot",
         "pyplot_gallery_extended": "pyplot",
         "test": "runtime",
         "rust_checks": "runtime",
@@ -915,7 +923,9 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
             job,
             "CI",
             "same-run native/client reuse",
-            "needs: [changes, build]",
+            "needs: [changes, build, gallery_dependencies]"
+            if job == "pyplot_gallery"
+            else "needs: [changes, build]",
             "uses: ./.github/actions/restore-ci-build",
         )
     _require_job_contains(
@@ -1018,6 +1028,41 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     gallery_job = jobs.get("pyplot_gallery", "")
     if "continue-on-error:" in gallery_job:
         errors.append("CI pyplot_gallery compatibility ratchet must be blocking")
+    producer = jobs.get("gallery_dependencies", "")
+    _require_step_runs_exactly(
+        errors,
+        producer,
+        "Fetch and verify pinned FFmpeg packages once",
+        "one pinned gallery dependency download",
+        "python3 scripts/ci_gallery_dependencies.py download",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "gallery_dependencies",
+        "CI",
+        "shared pinned FFmpeg artifact",
+        "timeout-minutes: 10",
+        "actions/cache@",
+        "hashFiles('scripts/ci_gallery_ffmpeg.lock.json')",
+        "actions/upload-artifact@",
+        "name: ci-gallery-ffmpeg",
+        "compression-level: 0",
+    )
+    _require_step_contains(
+        errors,
+        gallery_job,
+        "Restore verified shared FFmpeg packages",
+        "offline verified gallery dependencies",
+        "timeout-minutes: 5",
+        "uses: ./.github/actions/restore-gallery-dependencies",
+    )
+    if any(
+        "apt-get" in line
+        for step in _step_sequence_blocks(gallery_job)
+        for line in _step_run_lines(step)
+    ):
+        errors.append("CI pyplot_gallery must not fetch packages independently")
 
     _require_job_contains(
         errors,

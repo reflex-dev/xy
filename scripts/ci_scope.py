@@ -33,6 +33,9 @@ def select_checks(paths: list[str], *, full: bool = False) -> dict[str, bool]:
         ) or path in {
             "scripts/generate_pyplot_compat_inventory.py",
             "scripts/sync_matplotlib_compat.py",
+            "scripts/ci_gallery_dependencies.py",
+            "scripts/ci_gallery_ffmpeg.lock.json",
+            ".github/actions/restore-gallery-dependencies/action.yml",
         }:
             selected["runtime"] = selected["pyplot"] = True
         elif path.startswith(("benchmarks/", "scripts/bench")):

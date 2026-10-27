@@ -57,6 +57,47 @@ def test_mixed_changes_and_manual_runs():
     assert not any(select_checks([]).values())
 
 
+def test_gallery_dependency_changes_exercise_the_consuming_shards():
+    for path in (
+        "scripts/ci_gallery_dependencies.py",
+        "scripts/ci_gallery_ffmpeg.lock.json",
+        ".github/actions/restore-gallery-dependencies/action.yml",
+    ):
+        assert select_checks([path])["pyplot"], path
+
+
+def test_gallery_downloads_ffmpeg_once_and_consumers_install_offline():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    producer = jobs["gallery_dependencies"]
+    gallery = jobs["pyplot_gallery"]
+    assert producer["needs"] == "changes"
+    assert producer["runs-on"] == gallery["runs-on"] == "ubuntu-24.04"
+    assert producer["if"] == "needs.changes.outputs.pyplot == 'true'"
+    assert not producer.get("strategy")
+    assert not producer.get("continue-on-error")
+    assert producer["timeout-minutes"] <= 10
+    assert "gallery_dependencies" in gallery["needs"]
+    assert "gallery_dependencies" in jobs["result"]["needs"]
+    commands = "\n".join(s.get("run", "") for s in gallery["steps"])
+    assert "apt-get" not in commands
+    assert not any("download" in s.get("run", "") for s in gallery["steps"])
+    restore = next(
+        s
+        for s in gallery["steps"]
+        if s.get("uses") == "./.github/actions/restore-gallery-dependencies"
+    )
+    assert restore["timeout-minutes"] <= 5
+    cache = next(s for s in producer["steps"] if s.get("uses", "").startswith("actions/cache@"))
+    assert "hashFiles('scripts/ci_gallery_ffmpeg.lock.json')" in cache["with"]["key"]
+    assert "restore-keys" not in cache["with"]
+    action = yaml.safe_load(
+        (ROOT / ".github/actions/restore-gallery-dependencies/action.yml").read_text()
+    )
+    download, install = action["runs"]["steps"]
+    assert download["with"] == {"name": "ci-gallery-ffmpeg", "path": "dist/gallery-ffmpeg"}
+    assert install["run"] == "python3 scripts/ci_gallery_dependencies.py install"
+
+
 def test_deleted_and_renamed_inputs_are_in_complete_diff(tmp_path):
     def git(*args):
         return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
@@ -102,7 +143,11 @@ def test_shared_build_dependencies_and_summary():
     ]
     for name in consumers:
         job = jobs[name]
-        assert set(job["needs"]) == {"changes", "build"}
+        assert set(job["needs"]) == (
+            {"changes", "build", "gallery_dependencies"}
+            if name == "pyplot_gallery"
+            else {"changes", "build"}
+        )
         restore = next(
             step
             for step in job["steps"]
@@ -163,6 +208,7 @@ def test_restore_action_unpacks_only_shared_native_and_client(tmp_path):
         "sdist",
         "wheels",
         "install_without_rust",
+        "gallery_dependencies",
         None,
     ],
 )

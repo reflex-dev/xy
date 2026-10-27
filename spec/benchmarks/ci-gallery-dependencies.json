@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "scope": "CI setup, not chart throughput",
+  "lock_sha256": "a465309464154e7738b7656033c8b499f89ce683a7e51896bdab165a560a25e4",
+  "packages": 87,
+  "bytes": 62839078,
+  "environment": {
+    "download_host": "Linux x86_64",
+    "ubuntu_fixture_base": "ubuntu@sha256:24737cef17f4e22b1977df7d9a05e77c4e28b7da5b8911f8d8ccda136bf3573c",
+    "fixture_recipe": "Install ffmpeg/python3/sudo on Ubuntu base, remove the 87 locked runtime packages, then run the committed installer with --network none and read-only bundle mounts."
+  },
+  "local_observations": {
+    "cold_download_seconds": 55.05,
+    "warm_verify_seconds": 0.1,
+    "offline_install_and_h264_probe_seconds": 4.37,
+    "raw_download_output": [
+      "Verified 87 pinned packages in 55.05s",
+      "Verified 87 pinned packages in 0.10s"
+    ],
+    "offline_exit_code": 0
+  },
+  "before": {
+    "run": 40479933250,
+    "job": 122108516868,
+    "completed_shard_job": 122108516561,
+    "fast_shard_setup_seconds": [
+      15,
+      27,
+      23,
+      21,
+      15
+    ],
+    "stalled_shard_setup_seconds_at_inspection": 982
+  }
+}

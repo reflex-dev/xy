@@ -169,12 +169,40 @@ jobs:
           .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.1'"
           .venv/bin/pytest -q tests/pyplot/test_modes.py tests/pyplot/test_public_protocols.py
 
+  # Resolve package-server traffic once, not independently in eight shards.
+  gallery_dependencies:
+    name: Shared gallery FFmpeg dependencies
+    needs: changes
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Cache pinned FFmpeg package bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: dist/gallery-ffmpeg
+          key: gallery-ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci_gallery_ffmpeg.lock.json') }}
+      - name: Fetch and verify pinned FFmpeg packages once
+        timeout-minutes: 5
+        run: python3 scripts/ci_gallery_dependencies.py download
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-gallery-ffmpeg
+          path: dist/gallery-ffmpeg
+          compression-level: 0
+          retention-days: 3
+
   # The compat canvas renders PNG through XY's native display-list rasterizer
   # and reports any forbidden fallback. The completed zero-waiver baseline
   # makes every accepted execution/render/behavior a required gate.
   pyplot_gallery:
     name: Pyplot gallery ratchet (${{ matrix.shard }}/8)
-    needs: [changes, build]
+    needs: [changes, build, gallery_dependencies]
     if: needs.changes.outputs.pyplot == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -203,10 +231,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.23.3"
-      - name: Install standard gallery system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y ffmpeg
+      - name: Restore verified shared FFmpeg packages
+        timeout-minutes: 5
+        uses: ./.github/actions/restore-gallery-dependencies
       - name: Install xy and Matplotlib 3.11
         env:
           XY_REQUIRE_CARGO: "1"
@@ -1313,7 +1340,7 @@ jobs:
     name: CI result
     runs-on: ubuntu-24.04
     if: always()
-    needs: [changes, build, test, rust_checks, browser_smokes, regression_checks, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust]
+    needs: [changes, build, test, rust_checks, browser_smokes, regression_checks, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust, gallery_dependencies]
     steps:
       - name: Require selected checks to succeed
         env:

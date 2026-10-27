@@ -872,6 +872,38 @@ def test_extended_gallery_job_requires_system_python_gi_bridge(tmp_path: Path) -
     )
 
 
+def test_gallery_rejects_reintroduced_per_shard_package_download(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = "      - name: Restore verified shared FFmpeg packages\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            needle,
+            "      - name: Fetch packages again\n        run: sudo apt-get update\n" + needle,
+        )
+    )
+    assert any(
+        "must not fetch packages independently" in e
+        for e in verify_ci_workflow.validate_ci_workflow(path)
+    )
+
+
+def test_gallery_producer_cannot_skip_digest_verification(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = "        run: python3 scripts/ci_gallery_dependencies.py download\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            needle,
+            "        # python3 scripts/ci_gallery_dependencies.py download\n        run: echo skipped\n",
+        )
+    )
+    assert any(
+        "pinned gallery dependency download" in e
+        for e in verify_ci_workflow.validate_ci_workflow(path)
+    )
+
+
 def test_extended_gallery_job_must_run_all_12_unsharded(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
