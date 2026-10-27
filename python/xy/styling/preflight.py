@@ -1,0 +1,576 @@
+"""Report-only export preflight: what survives an export, and what does not.
+
+`chart.style_compatibility_report(target=...)` answers `spec/api/export.md` §9
+programmatically, per chart, before any bytes exist: for the requested target
+and engine it lists which styling sources are present, how each styled slot
+routes, and exactly which declarations would not survive. The reporting core
+(`preflight`, `route_resolved`) changes no export behavior and can be trusted
+from any code path; `enforce` is the one function that acts on a report — it
+warns in `compatibility="warn"` and refuses in `"strict"`, and does nothing
+at all in the default `"legacy"`.
+
+Three rules keep the report honest:
+
+1. **No silent decisions (§28).** Every declared style ends in exactly one
+   route: it survives, it is state-gated chrome a clean static file does not
+   contain, or it is named as a loss. There is no fourth, quiet bucket.
+2. **Constant time when there is nothing to route.** A chart with no
+   `class_names`, no per-slot `styles`, and no `custom_css` short-circuits to
+   a lossless report without walking any slot — the preflight is free exactly
+   where exports are hot.
+3. **One source of truth per fact.** Slot routing derives from the capability
+   registry, the honored property subsets from `xy._svg` (which the writers
+   themselves read), and engine selection from `xy.export`'s own resolver.
+   This module restates none of them, so it cannot disagree with them.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Optional
+
+from ..dom import validate_dom_slots
+from . import capabilities
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
+    from .._figure import Figure
+
+#: Routes a declared style can take. Stable strings: the staged
+#: `compatibility=` modes and the tests key on them.
+ROUTE_SURVIVES = "survives"
+ROUTE_SUBSET = "native-subset"
+ROUTE_BROWSER_ONLY = "browser-only"
+ROUTE_STATE_GATED = "state-gated"
+
+#: The staged compatibility modes, in rollout order. `legacy` is today's
+#: behavior and the default; `warn` surfaces every loss as one
+#: `StyleCompatibilityWarning`; `strict` refuses to emit bytes that drop a
+#: declaration. "lossless" is reserved for the phase that lets `Engine.auto`
+#: re-route on preflight evidence — accepting it before that phase would make
+#: the name a lie, so it is rejected now. The default flips on the schedule in
+#: `spec/process/style-compatibility-migration.md`, never silently.
+COMPATIBILITY_MODES: tuple[str, ...] = ("legacy", "warn", "strict")
+
+
+class StyleCompatibilityWarning(UserWarning):
+    """An export in `compatibility="warn"` mode dropped declared styling."""
+
+
+class StyleCompatibilityError(ValueError):
+    """An export in `compatibility="strict"` mode refused to drop styling.
+
+    Carries the full preflight `report`; the message is its `explain()` plus
+    the ways out, so the fix is in the traceback rather than a docs hunt.
+    """
+
+    def __init__(self, message: str, report: StyleCompatibilityReport) -> None:
+        super().__init__(message)
+        self.report = report
+
+
+_RASTER_FORMATS = frozenset({"png", "jpeg", "webp"})
+_VECTOR_FORMATS = frozenset({"svg", "pdf"})
+
+_SLOTS_BY_ID = {slot.id: slot for slot in capabilities.CHART_SLOTS}
+
+#: Slots whose channel carries a condition the report cannot resolve from a
+#: declaration alone, so a lossless declaration still routes as a subset:
+#: `tick_mark` boxes exist only where the axis authored a tick_length.
+#:
+#: `legend` left this set in P4. It was here because the merged legend
+#: declaration honored only some spellings of its own vocabulary — kebab
+#: `border-color` was folded and then silently dropped, and `padding`/
+#: `row-gap` were honored in `em` but not in the px an author would write —
+#: so a declaration the report called lossless could still lose a property.
+#: Both spellings and both unit domains are now honored by the writers and
+#: named in `_svg.LEGEND_BOX_PROPS`, so every property the report can see
+#: routes provably and the qualifier is explanatory prose, not uncertainty.
+_CONDITIONAL_CHANNEL_SLOTS: frozenset[str] = frozenset({"tick_mark"})
+
+
+@dataclass(frozen=True)
+class SlotFinding:
+    """How one styled slot routes for the requested target."""
+
+    slot: str
+    source: str  # "styles" | "class_names"
+    applicability: str  # "static" or the gating export state
+    route: str  # one of the ROUTE_* strings
+    kept: tuple[str, ...] = ()
+    lost: tuple[str, ...] = ()
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class StyleCompatibilityReport:
+    """The preflight answer for one chart and one export target.
+
+    `lossless` is the single bit the staged modes will act on: True means the
+    export preserves every declared style that the target's document can
+    contain (state-gated chrome is recorded, not counted — a clean static
+    file has no tooltip to style). `error` carries the message of an export
+    that would refuse outright (for example `custom_css` with a pinned native
+    engine), mirroring the export path's own exception rather than predicting
+    a different outcome.
+    """
+
+    target: str
+    engine: str
+    sources: dict[str, bool] = field(default_factory=dict)
+    findings: tuple[SlotFinding, ...] = ()
+    losses: tuple[str, ...] = ()
+    lossless: bool = True
+    error: Optional[str] = None
+
+    def explain(self) -> str:
+        """The report as readable lines, one decision each."""
+        head = f"style compatibility for {self.target} via {self.engine} engine"
+        lines = [head]
+        present = [name for name, on in self.sources.items() if on] or ["(defaults only)"]
+        lines.append("sources: " + ", ".join(present))
+        if self.error is not None:
+            lines.append(f"refused: {self.error}")
+            return "\n".join(lines)
+        for finding in self.findings:
+            bits = [f"{finding.source}[{finding.slot!r}]: {finding.route}"]
+            if finding.lost:
+                bits.append("loses " + ", ".join(finding.lost))
+            if finding.detail:
+                bits.append(finding.detail)
+            lines.append("  " + " — ".join(bits))
+        lines.append("lossless" if self.lossless else f"{len(self.losses)} loss(es)")
+        return "\n".join(lines)
+
+
+def _sources(figure: Figure, custom_css: Optional[str]) -> dict[str, bool]:
+    """Which styling sources this chart carries. Attribute checks only."""
+    return {
+        "chart_style": bool(figure.style),
+        "slot_styles": bool(figure.chrome_styles),
+        "class_names": bool(figure.class_names),
+        "custom_css": custom_css is not None,
+    }
+
+
+def _resolve(target: str, engine: object, custom_css: Optional[str]) -> tuple[str, str, str]:
+    """(format, engine, error) via the export module's own resolver.
+
+    Deferred import: `export` pulls in the browser-discovery machinery, and
+    `capabilities` must stay importable from the docs generator without it.
+
+    Browser-resolved targets validate `custom_css` through the export path's
+    own `_custom_css_block` — the same type check and `</style>`/`<!--`
+    rejection the standalone document performs — in the same order the export
+    performs them (engine resolution first). A report may not say "lossless"
+    about an export that would refuse the stylesheet.
+    """
+    from .. import export
+
+    fmt = export._normalize_format(target, allow_html=True)
+    if fmt == "html":
+        resolved = "browser"
+    else:
+        try:
+            resolved = export._resolve_image_engine(engine, fmt, custom_css)
+        except ValueError as exc:
+            return fmt, "unresolved", str(exc)
+    if resolved == "browser" and custom_css is not None:
+        try:
+            export._custom_css_block(custom_css)
+        except (TypeError, ValueError) as exc:
+            return fmt, resolved, str(exc)
+    return fmt, resolved, ""
+
+
+def _slot_family(fmt: str) -> str:
+    """The writer family a format belongs to, refusing formats outside both.
+
+    Membership is explicit on both sides so a format added later to
+    `export._normalize_format` cannot silently be reported against the vector
+    subset — it fails here until someone classifies it.
+    """
+    if fmt in _RASTER_FORMATS:
+        return "native_raster"
+    if fmt in _VECTOR_FORMATS:
+        return "native_vector"
+    raise ValueError(f"preflight has no writer family for format {fmt!r}")
+
+
+def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
+    """(honored property names, qualifier) for a native-subset slot.
+
+    The subsets are the writers' own constants — the text properties per
+    family, the shared chrome-box vocabulary per box-capable slot
+    (`_svg.SLOT_BOX_PROPS_BY_SLOT`, `_svg.SLOT_BOX_PROPS`), and the legend
+    frame's merged-declaration box vocabulary (`_svg.LEGEND_BOX_PROPS`) —
+    all owned by the writer module so the report cannot drift from what the
+    writers actually draw.
+    """
+    from .. import _svg
+
+    text = frozenset(_svg.SLOT_RASTER_PROPS if family == "native_raster" else _svg.SLOT_TEXT_PROPS)
+    if slot == "legend":
+        return text | _svg.LEGEND_BOX_PROPS, (
+            "box properties route through the merged legend declaration, in the "
+            "CSS and the camelCase spelling alike; see the capability matrix "
+            "legend note"
+        )
+    if slot in ("legend_item", "legend_swatch"):
+        # Pure box slots: the legend's row and swatch cells have no text of
+        # their own (the label is `legend_label`).
+        return frozenset(_svg.SLOT_BOX_PROPS_BY_SLOT[slot]), (
+            "box properties only; the cell's size comes from the legend layout, "
+            "so padding is not accepted rather than accepted and ignored"
+        )
+    if slot in ("legend_title", "legend_label"):
+        return text | _svg.SLOT_BOX_PROPS, (
+            "the row box under the text; an authored font-size and letter-spacing "
+            "also feed the legend measurement, so the frame grows to contain them"
+        )
+    if slot in ("axis_line", "tick_mark"):
+        # Pure box slots: no text of their own, so the text subsets do not
+        # apply; the box vocabulary is honored by both writers.
+        qualifier = ""
+        if slot == "tick_mark":
+            qualifier = (
+                "tick marks exist only where an axis authors tick_length > 0; a "
+                "zero-length tick draws no box (no length is invented for a "
+                "styled slot)"
+            )
+        return frozenset(_svg.SLOT_BOX_PROPS), qualifier
+    if slot in ("tick_label", "axis_title"):
+        # Text slots that also draw a box: the union of the family's text
+        # subset and the box vocabulary. On the raster family a declared
+        # `opacity` reaches the box but not the glyphs (the atlas blit has
+        # no alpha channel) — recorded in the capability-matrix note.
+        return text | _svg.SLOT_BOX_PROPS, ""
+    if slot == "annotation_label":
+        return text | _svg.SLOT_BOX_PROPS, (
+            "box properties route through the shared chrome-box lowering; the "
+            "annotation's own style= is the narrower selector and wins per "
+            "property group"
+        )
+    if slot == "annotation_layer":
+        return frozenset({"background", "background-color", "opacity"}), (
+            "group opacity over the annotation shapes (raster folds it "
+            "per-primitive) and a plot-clipped background; the rest of the "
+            "overlay's box model stays browser-only"
+        )
+    if slot == "labels":
+        return text | frozenset({"background", "background-color"}), (
+            "the container's color and typography are defaults under the "
+            "contained slots; the background paints under the axis rules and "
+            "every label text (flag D)"
+        )
+    box = _svg.SLOT_BOX_PROPS_BY_SLOT.get(slot)
+    if box is not None:
+        if family == "native_raster":
+            box = box - _svg.SLOT_BOX_RASTER_UNSUPPORTED.get(slot, frozenset())
+        if slot == "title":
+            # The one slot with both text and a box under it.
+            return text | box, "box properties draw the title's own box (_svg.SLOT_BOX_PROPS)"
+        qualifier = (
+            "background/opacity only; the rest of the chrome slot's box model "
+            "is a recorded divergence (see the capability matrix chrome note)"
+            if slot == "chrome"
+            else (
+                "box properties only (this slot has no text of its own); raster "
+                "cannot round-clip or group-fade the marks, so border-radius and "
+                "opacity are raster losses"
+                if slot == "canvas" and family == "native_raster"
+                else "box properties only (this slot has no text of its own)"
+            )
+        )
+        return box, qualifier
+    return text, ""
+
+
+def _css_prop(name: str) -> str:
+    """Match the writers' spelling: kebab-case, custom properties untouched."""
+    text = str(name)
+    return text if text.startswith("--") else text.replace("_", "-")
+
+
+def _class_finding(slot: str, fmt: str) -> SlotFinding:
+    meta = _SLOTS_BY_ID[slot]
+    if meta.applicability != "static":
+        return SlotFinding(
+            slot=slot,
+            source="class_names",
+            applicability=meta.applicability,
+            route=ROUTE_STATE_GATED,
+            detail=(
+                f"{meta.applicability}-state chrome; a clean static {fmt} does not "
+                "contain it, so nothing in the file is unstyled"
+            ),
+        )
+    return SlotFinding(
+        slot=slot,
+        source="class_names",
+        applicability="static",
+        route=ROUTE_BROWSER_ONLY,
+        lost=("*",),
+        detail=(
+            "a class selects a rule out of a stylesheet, and a native export has no "
+            "stylesheet — browser and Chromium targets honor it"
+        ),
+    )
+
+
+def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
+    meta = _SLOTS_BY_ID[slot]
+    family = _slot_family(fmt)
+    props = tuple(_css_prop(name) for name in decls)
+    if meta.applicability != "static":
+        return SlotFinding(
+            slot=slot,
+            source="styles",
+            applicability=meta.applicability,
+            route=ROUTE_STATE_GATED,
+            detail=(
+                f"{meta.applicability}-state chrome; a clean static {fmt} does not "
+                "contain it, so nothing in the file is unstyled"
+            ),
+        )
+    if meta.support[family] == "none":
+        return SlotFinding(
+            slot=slot,
+            source="styles",
+            applicability="static",
+            route=ROUTE_BROWSER_ONLY,
+            lost=props,
+            detail="no native path for this slot yet",
+        )
+    honored, qualifier = _honored_props(slot, family)
+    kept = tuple(p for p in props if p in honored)
+    lost = tuple(p for p in props if p not in honored)
+    if qualifier and not lost and slot in _CONDITIONAL_CHANNEL_SLOTS:
+        # Nothing drops, but this slot's channel carries a CONDITION the
+        # report cannot resolve: the legend's merged declaration may or may
+        # not carry an unlisted property, and a tick mark exists only where
+        # the axis authored a tick_length. That uncertainty is the subset
+        # route — qualified, never silent (§28). Every other qualifier is
+        # explanatory prose about a channel that does carry what it was
+        # given, so it rides a `survives` route as detail rather than
+        # downgrading a lossless export.
+        return SlotFinding(
+            slot=slot,
+            source="styles",
+            applicability="static",
+            route=ROUTE_SUBSET,
+            kept=kept,
+            lost=(),
+            detail=qualifier,
+        )
+    if lost:
+        return SlotFinding(
+            slot=slot,
+            source="styles",
+            applicability="static",
+            route=ROUTE_SUBSET,
+            kept=kept,
+            lost=lost,
+            # The slot's own qualifier names WHY the loss exists (a raster
+            # canvas radius, the chrome background/opacity hedge) — more
+            # actionable than the generic subset sentence when there is one.
+            detail=qualifier or "outside the writer's honored subset for this slot",
+        )
+    return SlotFinding(
+        slot=slot,
+        source="styles",
+        applicability="static",
+        route=ROUTE_SURVIVES,
+        kept=kept,
+        detail=qualifier,
+    )
+
+
+def route_resolved(
+    figure: Figure,
+    *,
+    fmt: str,
+    resolved_engine: str,
+    custom_css: Optional[str] = None,
+) -> StyleCompatibilityReport:
+    """The routing core, for callers that already resolved format and engine.
+
+    The export paths call this with their own resolution result so the
+    resolver (and its deprecation warnings) runs exactly once per export;
+    `preflight()` wraps it with a resolution of its own for standalone use.
+    """
+    sources = _sources(figure, custom_css)
+    if resolved_engine == "browser":
+        # The live client renders the full cascade; nothing can drop.
+        return StyleCompatibilityReport(target=fmt, engine=resolved_engine, sources=sources)
+    if not (figure.class_names or figure.chrome_styles):
+        # The constant-time path: chart-level `style=` and mark/axis `style=`
+        # are full in every renderer (see the capability matrix), so with no
+        # class or per-slot declarations there is nothing that can drop.
+        return StyleCompatibilityReport(target=fmt, engine=resolved_engine, sources=sources)
+
+    # Mirror the spec build's own validation rather than skipping entries it
+    # would refuse: `Figure.class_names`/`chrome_styles` are assignable, so a
+    # report can be requested before `_dom_spec` validates them. A silently
+    # omitted entry would be a report claiming exhaustiveness while hiding a
+    # declaration — the exact §28 failure this module exists to end.
+    validate_dom_slots(figure.class_names, "class_names")
+    validate_dom_slots(figure.chrome_styles, "chrome_styles")
+    findings: list[SlotFinding] = []
+    for slot in figure.class_names:
+        findings.append(_class_finding(slot, fmt))
+    for slot, decls in figure.chrome_styles.items():
+        if not isinstance(decls, dict):
+            raise ValueError(
+                f"chrome_styles[{slot!r}] must be a mapping of declarations, got {decls!r}"
+            )
+        findings.append(_styles_finding(slot, decls, fmt))
+
+    losses = tuple(
+        f"{finding.source}[{finding.slot!r}] -> {', '.join(finding.lost)}"
+        for finding in findings
+        if finding.lost
+    )
+    return StyleCompatibilityReport(
+        target=fmt,
+        engine=resolved_engine,
+        sources=sources,
+        findings=tuple(findings),
+        losses=losses,
+        lossless=not losses,
+    )
+
+
+def preflight(
+    figure: Figure,
+    *,
+    target: str = "png",
+    engine: object = None,
+    custom_css: Optional[str] = None,
+) -> StyleCompatibilityReport:
+    """Route every declared style for one export target, without exporting.
+
+    `engine` accepts the same values as the export APIs (`Engine`, its string
+    aliases, or None for auto). The report mirrors the export path's actual
+    behavior, including its refusals — it never predicts a different outcome
+    than running the export would produce.
+    """
+    fmt, resolved, error = _resolve(target, engine, custom_css)
+    if error:
+        return StyleCompatibilityReport(
+            target=fmt,
+            engine=resolved,
+            sources=_sources(figure, custom_css),
+            lossless=False,
+            losses=(error,),
+            error=error,
+        )
+    return route_resolved(figure, fmt=fmt, resolved_engine=resolved, custom_css=custom_css)
+
+
+def validate_compatibility(value: object) -> str:
+    """The mode, or a loud error naming the vocabulary (and the reserved word)."""
+    if isinstance(value, str) and value in COMPATIBILITY_MODES:
+        return value
+    if value == "lossless":
+        raise ValueError(
+            'compatibility="lossless" is reserved for the lossless-routing phase '
+            "(spec/process/style-compatibility-migration.md); until it can re-route "
+            f"engines on preflight evidence, pick one of {COMPATIBILITY_MODES}"
+        )
+    raise ValueError(f"compatibility must be one of {COMPATIBILITY_MODES}, got {value!r}")
+
+
+def enforce(
+    figure: Figure,
+    *,
+    fmt: str,
+    resolved_engine: str,
+    custom_css: Optional[str],
+    compatibility: str,
+) -> None:
+    """Apply a compatibility mode to one already-resolved export.
+
+    `legacy` returns before doing anything at all — the default path pays
+    zero. `warn` and `strict` pay the preflight only when the chart carries
+    class or per-slot declarations and the engine is native; a lossless
+    report also returns quietly. Engines are never re-routed here: the mode
+    decides whether to proceed, warn, or refuse — never where to render
+    (spec/process/style-compatibility-migration.md pins that contract).
+    """
+    import warnings
+
+    mode = validate_compatibility(compatibility)
+    if mode == "legacy":
+        return
+    if resolved_engine == "browser" or not (figure.class_names or figure.chrome_styles):
+        return
+    report = route_resolved(figure, fmt=fmt, resolved_engine=resolved_engine, custom_css=custom_css)
+    if report.lossless:
+        return
+    # SVG is native-only (a browser screenshot cannot emit vector SVG), so
+    # recommending engine=Engine.chromium there would recommend a refusal.
+    keeps = (
+        "to_html() keeps everything (SVG is native-only, so Engine.chromium "
+        "is not a route for this format)"
+        if fmt == "svg"
+        else "engine=Engine.chromium or to_html() keeps everything"
+    )
+    if mode == "warn":
+        warnings.warn(
+            StyleCompatibilityWarning(
+                f"this {fmt} export drops declared styling — "
+                + "; ".join(report.losses)
+                + " — chart.style_compatibility_report() has the full routing; "
+                + keeps
+            ),
+            stacklevel=_caller_stacklevel(),
+        )
+        return
+    raise StyleCompatibilityError(
+        report.explain()
+        + "\nstrict compatibility refuses to drop declared styling; "
+        + keeps
+        + ", or move it into chart/mark style= or a supported styles= subset, "
+        'or export with compatibility="warn" during migration',
+        report,
+    )
+
+
+def _caller_stacklevel() -> int:
+    """The stacklevel that lands the warning on the caller's export line.
+
+    The distance from `enforce` to user code varies by entry point (module
+    function, Figure method, Chart method, batch plan), so it is measured:
+    walk outward from `enforce` until the first frame outside the xy
+    package. Counted so `warnings.warn(..., stacklevel=n)` inside `enforce`
+    attributes the warning to that frame.
+    """
+    import sys
+    from pathlib import Path
+
+    package_dir = str(Path(__file__).resolve().parents[1])
+    frame = sys._getframe(1)  # enforce's frame
+    level = 1
+    while frame.f_back is not None and str(Path(frame.f_code.co_filename).resolve()).startswith(
+        package_dir
+    ):
+        frame = frame.f_back
+        level += 1
+    return level
+
+
+__all__ = [
+    "COMPATIBILITY_MODES",
+    "ROUTE_BROWSER_ONLY",
+    "ROUTE_STATE_GATED",
+    "ROUTE_SUBSET",
+    "ROUTE_SURVIVES",
+    "SlotFinding",
+    "StyleCompatibilityError",
+    "StyleCompatibilityReport",
+    "StyleCompatibilityWarning",
+    "enforce",
+    "preflight",
+    "route_resolved",
+    "validate_compatibility",
+]

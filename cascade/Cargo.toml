@@ -1,0 +1,20 @@
+[package]
+name = "xy-cascade"
+version = "0.1.0"
+edition = "2021"
+description = "Optional mount-free CSS cascade for xy: Lightning CSS parsing plus a profile-scoped resolver over the synthetic chart DOM"
+license = "Apache-2.0"
+
+[lib]
+name = "xy_cascade"
+crate-type = ["cdylib"]
+
+# Lightning CSS does the real parsing/normalization; the matcher/cascade over
+# the synthetic slot DOM is profile-scoped and lives here. Everything outside
+# the published profile is reported, never guessed (§28). Pinned exactly:
+# the resolver's output is part of a deterministic export path.
+[dependencies]
+lightningcss = "=1.0.0-alpha.72"
+parcel_selectors = "=0.28.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

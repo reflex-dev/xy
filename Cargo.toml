@@ -1,3 +1,11 @@
+# Workspace: the core stays the root package; `cascade` is the optional
+# style-cascade extension (its own cdylib, loaded lazily and only when a
+# native-cascade export is requested — the §33 install budget and the
+# import-weight contract are measured with both, but the core never links it).
+[workspace]
+members = [".", "cascade"]
+default-members = [".", "cascade"]
+
 [package]
 name = "xy-core"
 version = "0.1.0"

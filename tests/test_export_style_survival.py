@@ -57,21 +57,44 @@ def test_native_writers_read_a_property_subset_not_the_whole_cascade() -> None:
         assert f"cls-{slot}" not in svg
 
 
-#: The paint property each static slot answers to. `legend` is the frame box,
-#: so it takes `background`; every other static slot is text, so it takes the
-#: SVG text paint.
-_SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {"legend": "background"}
+#: The paint property each static slot answers to. The box slots take
+#: `background` — `legend`'s frame, the P1 family (`root`, `chrome`,
+#: `canvas`), `annotation_layer`'s overlay, and the pure box slots
+#: `axis_line`/`tick_mark`; every other static slot is text, so it takes
+#: the SVG text paint.
+_SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {
+    slot: "background"
+    for slot in (
+        "legend",
+        "root",
+        "chrome",
+        "canvas",
+        "annotation_layer",
+        "axis_line",
+        "tick_mark",
+        # The legend's row and swatch cells are pure box slots — no text of
+        # their own, so `fill` would not be their paint.
+        "legend_item",
+        "legend_swatch",
+    )
+}
 
 
 @pytest.mark.parametrize("slot", STATIC_STYLED_SLOTS)
 def test_every_static_slot_carries_its_paint_into_svg(slot: str) -> None:
     # The headline of the per-slot contract: a slot that names chrome a static
-    # file contains must carry that chrome's paint into the file.
+    # file contains must carry that chrome's paint into the file. The chart
+    # carries one of everything a slot can address, including an annotation
+    # label for the annotation chrome family.
+    # file contains must carry that chrome's paint into the file. The x axis
+    # authors tick_length so the chart actually contains tick marks —
+    # tick_length defaults to 0 and a styled tick_mark slot invents no length.
     chart = xy.scatter_chart(
         xy.scatter(x=[0.0, 1.0], y=[1.0, 2.0], name="series", color=[0.0, 1.0], colormap="viridis"),
         xy.legend(title="Legend title"),
         xy.colorbar(title="Colorbar title"),
-        xy.x_axis(label="x label"),
+        xy.x_axis(label="x label", style={"tick_length": 4}),
+        xy.text(0.5, 1.5, "annotation"),
         title="chart title",
         styles={slot: {_SLOT_PAINT_PROPERTY[slot]: "#123456"}},
     )
@@ -134,7 +157,11 @@ def test_an_explicit_legend_background_is_opaque_like_the_browser() -> None:
     frame = next(
         node for node in re.findall(r"<rect[^>]*/>", chart.figure().to_svg()) if "#ff00ff" in node
     )
-    assert 'fill-opacity="1"' in frame
+    # Opaque means *untinted*: the shared chrome-box emitter omits a
+    # `fill-opacity` of 1 rather than spelling the default out, so the
+    # assertion is that no tint was applied — in particular not the 0.08 the
+    # default grey frame carries.
+    assert "fill-opacity" not in frame
 
 
 def test_unstyled_output_is_untouched() -> None:

@@ -63,7 +63,10 @@ def test_legend_bg_token_reaches_the_static_writers() -> None:
         xy.theme(legend_bg="#ff00ff"),
     )
     frame = next(node for node in re.findall(r"<rect[^>]*/>", chart.to_svg()) if "#ff00ff" in node)
-    assert 'fill-opacity="1"' in frame
+    # The token is the frame's paint at full strength, not a tint. Since the
+    # frame folded onto the shared chrome-box emitter, an opacity of 1 is
+    # spelled by omission — so the assertion is that no tint was applied.
+    assert "fill-opacity" not in frame
 
 
 def test_the_component_spelling_still_wins_over_the_token() -> None:
@@ -80,7 +83,9 @@ def test_the_component_spelling_still_wins_over_the_token() -> None:
 
 def test_an_unset_token_leaves_the_default_frame_untouched() -> None:
     svg = xy.line_chart(xy.line([0.0, 1.0], [0.0, 1.0], name="series")).to_svg()
-    assert 'fill="rgba(128,128,128,0.08)"' in svg
+    # The default grey frame, in the shared emitter's spelling: the same grey
+    # at the same 8% the one-off `rgba(128,128,128,0.08)` literal carried.
+    assert 'fill="rgb(128, 128, 128)" fill-opacity="0.08"' in svg
 
 
 @pytest.mark.parametrize("spelling", ["__grid_colour", "__chart_bg", "__anything"])

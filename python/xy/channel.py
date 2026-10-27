@@ -104,6 +104,12 @@ class ChannelCallbacks:
     on_view_change: Optional[Callable[[dict[str, Any]], None]] = None
     on_animation_start: Optional[Callable[[dict[str, Any]], None]] = None
     on_animation_end: Optional[Callable[[dict[str, Any]], None]] = None
+    #: The `style_snapshot` reply to a kernel-initiated capture request
+    #: (wire-protocol §8). Receives the raw reply content — request_id plus
+    #: either `snapshot` or `error` — so the transport can settle whatever
+    #: it used to track the request; validation belongs to the consumer
+    #: (`resolved.snapshot_from_payload`), not the dispatcher.
+    on_style_snapshot: Optional[Callable[[dict[str, Any]], None]] = None
 
 
 _NO_CALLBACKS = ChannelCallbacks()
@@ -215,6 +221,14 @@ def handle_message(
             if kind == "animation_end" and isinstance(content.get("cancelled"), bool):
                 event["cancelled"] = content["cancelled"]
             callback(event)
+        return None
+    if kind == "style_snapshot":
+        # Reply to a kernel-initiated capture request (wire-protocol §8):
+        # callback-only, no wire reply. The transport that sent the request
+        # settles its pending future; a message with no listener is a
+        # request nobody is waiting on anymore and drops harmlessly.
+        if callbacks.on_style_snapshot is not None:
+            callbacks.on_style_snapshot(content)
         return None
     if kind == "view":
         # Zoom/pan crossed what the shipped decimation can serve: recompute

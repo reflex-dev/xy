@@ -17,12 +17,29 @@ Mapping decisions:
   (``fill-opacity``/``stroke-opacity``/``opacity`` and rgba() color alpha)
   become deduplicated ExtGStates (/ca /CA). The generator only ever emits the
   default nonzero winding rule, so even-odd variants are never produced.
-- Text stays text: BT/Tf/Tm/Tj/ET with the base-14 Helvetica family
-  (weight >= 600 selects Helvetica-Bold) in WinAnsiEncoding, using the
-  standard AFM width tables so ``text-anchor="middle"/"end"`` offsets come
-  from real metrics. Characters outside WinAnsi are replaced with "?"
-  (``cp1252`` + ``errors="replace"``) — a deterministic, locale-independent
-  substitution policy.
+- Text stays text: BT/Tf/Tm/Tj/ET with the base-14 Helvetica family — four
+  faces: weight >= 600 selects the bold face, ``font-style: italic|oblique``
+  the oblique one — in WinAnsiEncoding, using the standard AFM width tables
+  so ``text-anchor="middle"/"end"`` offsets come from real metrics.
+  ``letter-spacing`` becomes ``Tc`` (reset after each run — text state
+  persists past ET), with the anchor width counting the len-1 inter-glyph
+  gaps ``Tc`` actually renders. ``opacity`` on text multiplies into the
+  ExtGState alpha alongside fill-opacity and the paint's own alpha. A
+  declared ``font-family`` is accepted and maps to the Helvetica family:
+  deterministic and metrically exact for the anchor math, recorded here
+  rather than silent (§28) — exact custom faces arrive with the font
+  registry. ``dominant-baseline`` has no PDF equivalent (text is always set
+  from the alphabetic baseline) and lowers to a baseline SHIFT along the
+  run's perpendicular: ``central``/``middle`` by 0.35em, ``hanging`` by
+  0.72em, ``text-after-edge`` by -0.21em. ``stroke``/``stroke-width``/
+  ``stroke-opacity`` on text become text render mode 2 (fill then stroke)
+  with the ordinary stroke graphics state, reset to mode 0 after each run
+  because text state persists past ET. Both exist for the glyph and
+  mathtext markers the SVG writer draws as outlined ``<text>``; before they
+  were accepted, any chart carrying one — including its legend entry —
+  raised instead of exporting. Characters outside WinAnsi are replaced with
+  "?" (``cp1252`` + ``errors="replace"``) — a deterministic,
+  locale-independent substitution policy.
 - ``<linearGradient>`` becomes an axial shading (/ShadingType 2; exponential
   function for 2 stops, stitching for more) painted inside the gradient
   geometry's clip; per-stop alpha becomes a luminosity soft mask.
@@ -202,7 +219,24 @@ _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "polyline": frozenset({"points"}) | _PAINT_ATTRS,
     "polygon": frozenset({"points"}) | _PAINT_ATTRS,
     "text": frozenset(
-        {"x", "y", "transform", "text-anchor", "font-size", "font-weight", "fill", "fill-opacity"}
+        {
+            "x",
+            "y",
+            "transform",
+            "text-anchor",
+            "dominant-baseline",
+            "font-size",
+            "font-weight",
+            "font-style",
+            "font-family",
+            "letter-spacing",
+            "opacity",
+            "fill",
+            "fill-opacity",
+            "stroke",
+            "stroke-width",
+            "stroke-opacity",
+        }
     ),
     "tspan": frozenset({"x", "y"}),
     "image": frozenset({"x", "y", "width", "height", "preserveAspectRatio", "style", "href"}),
@@ -678,8 +712,20 @@ class _Converter:
 
     # -- resource registration ---------------------------------------------
 
-    def _font(self, bold: bool) -> str:
-        base = "Helvetica-Bold" if bold else "Helvetica"
+    def _font(self, bold: bool, italic: bool = False) -> str:
+        # The four Helvetica base-14 faces. Any declared font-family maps to
+        # this family for now — deterministic, and the anchor math stays
+        # exact because _text_width_px speaks Helvetica metrics. The mapping
+        # is recorded in the module contract note, not silent (§28); exact
+        # custom faces arrive with the font registry.
+        if bold and italic:
+            base = "Helvetica-BoldOblique"
+        elif bold:
+            base = "Helvetica-Bold"
+        elif italic:
+            base = "Helvetica-Oblique"
+        else:
+            base = "Helvetica"
         if base not in self.fonts:
             num = self.pdf.reserve()
             name = f"F{len(self.fonts) + 1}"
@@ -1063,9 +1109,37 @@ class _Converter:
         _check_attrs(el, "text", _ALLOWED_ATTRS["text"])
         font_size = _float(el.get("font-size"), state.font_size, "font-size")
         bold = _weight(el.get("font-weight"), state.font_weight) >= 600
+        # font-style selects the oblique base-14 face; font-family is
+        # accepted and maps to the Helvetica family (module contract note) —
+        # the attribute must not be a crash, because the SVG writer emits it
+        # for any declared family and PDF inherits SVG's markup.
+        italic = str(el.get("font-style", "")).strip().lower() in ("italic", "oblique")
+        # The writer emits letter-spacing either as a bare number (author
+        # gave a number; normalized to px) or as an "Npx" string passed
+        # verbatim — both are px by the styling contract.
+        spacing_raw = str(el.get("letter-spacing") or "0").strip().removesuffix("px")
+        letter_spacing = _float(spacing_raw, 0.0, "letter-spacing")
         anchor = el.get("text-anchor", "start")
         if anchor not in ("start", "middle", "end"):
             _unsupported(f"text-anchor {anchor!r}")
+        # PDF has no baseline-alignment mode: text is always set from its
+        # alphabetic baseline, so a `dominant-baseline` lowers to a shift of
+        # that baseline. `central`/`middle` centre the glyph box on the
+        # anchor, which the SVG writer uses for glyph legend markers and for
+        # authored mathtext markers — the attribute reached the whitelist
+        # and raised, so those charts could not export to PDF at all.
+        # 0.35em is the usual cap-height/2 for the base-14 faces.
+        baseline = str(el.get("dominant-baseline", "")).strip().lower()
+        if baseline in ("", "auto", "alphabetic"):
+            baseline_shift = 0.0
+        elif baseline in ("central", "middle"):
+            baseline_shift = 0.35 * font_size
+        elif baseline in ("hanging", "text-before-edge"):
+            baseline_shift = 0.72 * font_size
+        elif baseline in ("text-after-edge", "ideographic"):
+            baseline_shift = -0.21 * font_size
+        else:
+            _unsupported(f"dominant-baseline {baseline!r}")
         fill = self._resolve_paint(el.get("fill", state.fill))
         if fill is None or fill[0] != "solid":
             _unsupported("text fill paint")
@@ -1073,8 +1147,29 @@ class _Converter:
         ca = (
             state.opacity
             * _float(el.get("fill-opacity"), state.fill_opacity, "fill-opacity")
+            * _float(el.get("opacity"), 1.0, "opacity")
             * alpha
         )
+        # An outlined glyph. The SVG writer strokes `<text>` for glyph and
+        # mathtext markers, so a chart using one could not reach PDF at all
+        # while the same marker exported to SVG and PNG. PDF expresses it as
+        # text render mode 2 (fill, then stroke) with the ordinary stroke
+        # graphics state; mode 1 when there is nothing to fill.
+        stroke_rgb: Optional[tuple[float, float, float]] = None
+        stroke_alpha = 1.0
+        stroke_width = _float(el.get("stroke-width"), 0.0, "stroke-width")
+        stroke_paint = self._resolve_paint(el.get("stroke"))
+        if stroke_paint is not None and stroke_width > 0.0:
+            if stroke_paint[0] != "solid":
+                _unsupported("text stroke paint")
+            s_red, s_green, s_blue, s_alpha = stroke_paint[1]
+            stroke_rgb = (s_red, s_green, s_blue)
+            stroke_alpha = (
+                state.opacity
+                * _float(el.get("stroke-opacity"), 1.0, "stroke-opacity")
+                * _float(el.get("opacity"), 1.0, "opacity")
+                * s_alpha
+            )
 
         angle = 0.0
         center: Optional[tuple[float, float]] = None
@@ -1110,7 +1205,7 @@ class _Converter:
                 (_float(el.get("x"), 0.0, "x"), _float(el.get("y"), 0.0, "y"), el.text or "")
             )
 
-        font_name = self._font(bold)
+        font_name = self._font(bold, italic)
         theta = math.radians(angle)
         cos_t, sin_t = math.cos(theta), math.sin(theta)
         for x, y, s in runs:
@@ -1124,20 +1219,41 @@ class _Converter:
                     cx + cos_t * (x - cx) - sin_t * (y - cy),
                     cy + sin_t * (x - cx) + cos_t * (y - cy),
                 )
+            # Letter-spacing widens every advance, including after the last
+            # glyph in SVG's model — anchor math must match what Tc renders,
+            # which spaces between glyphs only, so count len-1 gaps.
             width = _text_width_px(data, font_size, bold)
+            if letter_spacing:
+                width += letter_spacing * max(0, len(data) - 1)
             dx = -width / 2.0 if anchor == "middle" else (-width if anchor == "end" else 0.0)
-            tx = x + dx * cos_t
-            ty = y + dx * sin_t
-            self._set_gs(ca, ca)
+            # The baseline shift is perpendicular to the text direction, so
+            # it rotates with the run exactly as the anchor offset does.
+            tx = x + dx * cos_t + baseline_shift * sin_t
+            ty = y + dx * sin_t + baseline_shift * cos_t
+            self._set_gs(ca, stroke_alpha if stroke_rgb is not None else ca)
             self._set_fill_rgb((red, green, blue))
+            if stroke_rgb is not None:
+                self._set_stroke_rgb(stroke_rgb)
+                self.ops.append(f"{_f(stroke_width)} w")
             # Tm un-flips the top-level y flip so glyphs render upright; the
             # rotation is the SVG angle (clockwise in screen space).
             self.ops.append("BT")
             self.ops.append(f"/{font_name} {_f(font_size)} Tf")
+            if stroke_rgb is not None:
+                self.ops.append("2 Tr")
+            if letter_spacing:
+                # Text state persists past ET; reset below so a spaced run
+                # never leaks into a later unspaced one.
+                self.ops.append(f"{_f(letter_spacing)} Tc")
             self.ops.append(
                 f"{_f(cos_t)} {_f(sin_t)} {_f(sin_t)} {_f(-cos_t)} {_f(tx)} {_f(ty)} Tm"
             )
             self.ops.append(f"{_pdf_string(data)} Tj")
+            if letter_spacing:
+                self.ops.append("0 Tc")
+            if stroke_rgb is not None:
+                # Text state persists past ET, exactly like Tc above.
+                self.ops.append("0 Tr")
             self.ops.append("ET")
 
     # -- images -------------------------------------------------------------

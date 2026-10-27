@@ -48,7 +48,8 @@
 // full circular, centre-origin geometry.
 // v13: the `funnel` trace kind. markOf() falls back to scatter for unknown
 // kinds, so a v12 client would silently render funnel quads as a point cloud.
-export const PROTOCOL = 13;
+// v14 adds style snapshot request/reply capture (wire protocol §8).
+export const PROTOCOL = 14;
 
 // One wire-column -> generic GL-slot contract for funnel geometry. Object
 // insertion order is also the instance-attribute order used by build, filter,

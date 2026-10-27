@@ -97,4 +97,9 @@ export function renderStandalone(el, spec, arrayBuffer) {
 // these directly; the IIFE bundle (static/standalone.js) exposes the same
 // namespace as `window.xy`.
 export { decodeFrame, ChartView, MARK_KINDS, markOf };
+// The capture half of wire-protocol §8, public so a standalone document (no
+// kernel, no comm) can produce the same snapshot a widget request does —
+// which is also what lets the browser-oracle smoke validate the payload
+// against the Python schema without a notebook in the loop.
+export { captureStyleSnapshot, styleCaptureSettled } from "./16_style_capture";
 export default { render, decodeFrame };

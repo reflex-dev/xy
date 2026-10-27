@@ -180,6 +180,22 @@ class CustomBuildHook(BuildHookInterface):
             build_data.setdefault("force_include", {})[str(native_src)] = (
                 f"xy/_native_lib/{lib_name}"
             )
+            # The optional cascade extension builds in the same workspace
+            # cargo invocation (default-members) and lands beside the core.
+            # Ship it when present; a wheel without it still imports and
+            # exports — only style_source="native_cascade" raises, with the
+            # build instruction (§28: optional is announced, not silent).
+            cascade_name = lib_name.replace("xy_core", "xy_cascade")
+            cascade_src = native_src.parent / cascade_name
+            if cascade_src.is_file():
+                build_data["force_include"][str(cascade_src)] = f"xy/_native_lib/{cascade_name}"
+            else:
+                print(
+                    "xy: wheel built WITHOUT the optional xy-cascade extension "
+                    f"({cascade_src} not found); style_source='native_cascade' "
+                    "will raise with the build instruction.",
+                    file=sys.stderr,
+                )
         else:
             # No toolchain / build skipped: ship a pure-Python wheel (the JS
             # client is included via committed package data). There is no NumPy

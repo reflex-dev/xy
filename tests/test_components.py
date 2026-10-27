@@ -1982,6 +1982,11 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         custom_css=None,
         sandbox=True,
         gl="software",
+        compatibility="legacy",
+        style_snapshot=None,
+        style_source="declared",
+        stylesheets=(),
+        tailwind_profile=None,
     ):
         seen.update(
             {
@@ -1995,6 +2000,11 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "custom_css": custom_css,
                 "sandbox": sandbox,
                 "gl": gl,
+                "compatibility": compatibility,
+                "style_snapshot": style_snapshot,
+                "style_source": style_source,
+                "stylesheets": stylesheets,
+                "tailwind_profile": tailwind_profile,
             }
         )
         return b"PNG"
@@ -2011,6 +2021,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         custom_css=".chart { color: rebeccapurple; }",
         sandbox=False,
         gl="hardware",
+        compatibility="warn",
     )
 
     assert data == b"PNG"
@@ -2025,6 +2036,11 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "custom_css": ".chart { color: rebeccapurple; }",
         "sandbox": False,
         "gl": "hardware",
+        "compatibility": "warn",
+        "style_snapshot": None,
+        "style_source": "declared",
+        "stylesheets": (),
+        "tailwind_profile": None,
     }
 
 
