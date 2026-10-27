@@ -142,8 +142,8 @@ uv add pyarrow
 ### Reflex integration
 
 The bundled Reflex integration supports state-backed application charts and
-remains experimental. Install the extra to select a compatible Reflex
-version. With uv:
+remains experimental. Install the extra to select a supported Reflex version
+(`>=0.9.6,<=0.10.0`). With uv:
 
 ~~~bash
 uv add "xy[reflex]"
@@ -155,9 +155,9 @@ Or with pip:
 python -m pip install "xy[reflex]"
 ~~~
 
-The `xy` wheel already carries the `reflex_xy` integration; the extra adds
-only the supported Reflex dependency floor. Pin resolved versions for
-production deployments. Continue with the
+The `xy` wheel already carries the `reflex_xy` integration; the extra selects
+the supported Reflex bound. CI smoke coverage includes 0.9.6, 0.9.13, and
+0.10.0. Continue with the
 [Reflex integration guide](/docs/xy/integrations/reflex/) for its current
 limitations and setup.
 

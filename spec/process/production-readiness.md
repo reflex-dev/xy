@@ -100,6 +100,11 @@ The runtime selection runs four independent blocking jobs:
 | `browser_smokes` — Browser rendering + integration | Selector and shared wheel | JS parsing, native ABI, stdlib render/append/export probes, real-chart rendering, lifecycle, visuals, stress and dashboard reliability; focused pyplot gate when selected |
 | `regression_checks` — Blocking regression checks | Selector and shared wheel | Native/scatter/transport regression reports, deterministic payload gates, report upload and the benchmark smoke harness |
 
+The additional `reflex_compatibility` matrix is selected by runtime changes,
+reuses the shared native/client artifact, and remains a blocking dependency of
+`CI result`. Its exact-version installs exercise the supported Reflex window
+independently of the locked development environment.
+
 Runtime job and step mappings reject `continue-on-error` structurally, including
 quoted and escaped key spellings.
 Step conditions are structurally forbidden except the exact pyplot-selection
@@ -324,9 +329,9 @@ These must pass before publishing.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, retains partial larger rows, and applies the production shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including the `matplotlib` and `reflex` extras with their supported ranges) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
-| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info` (numeric local versions compare without leading zeros), complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
-| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
+| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including the `matplotlib` extra and bounded `reflex>=0.9.6,<=0.10.0` extra) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies and `matplotlib`/bounded `reflex` extras matching the wheel's own filename and `.dist-info` (numeric local versions compare without leading zeros), complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
+| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies and `matplotlib`/bounded `reflex` extras matching the wheel's own filename and `.dist-info` (numeric local versions compare without leading zeros), complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
@@ -839,8 +844,8 @@ Before merging a release pull request:
   the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24` as base requirements, plus
-  `matplotlib>=3.11,<3.12` and `reflex>=0.9.6` guarded by their respective
-  `matplotlib` and `reflex` extras. The wheel
+  `matplotlib>=3.11,<3.12` and `reflex>=0.9.6,<=0.10.0` guarded by their
+  respective `matplotlib` and `reflex` extras. The wheel
   must contain `reflex_xy` and `XYChart.jsx`, and `RECORD` must list every
   archive file exactly once with matching `sha256` and size fields. Wheels
   and the sdist remain distribution/build-input-only: docs, tests, benchmarks,
@@ -852,9 +857,13 @@ Before merging a release pull request:
 Every `xy` release carries the `reflex_xy` Python package and JSX wrapper. The
 wrapper links to the render client in the same installed distribution, so
 client, kernel, and framework bridge share one version. Plain `xy` must not
-install Reflex; `xy[reflex]` must install the declared supported floor.
-Release smoke tests install Reflex, import `reflex_xy`, and assert that its
-reported version matches the `xy` distribution version.
+install Reflex; `xy[reflex]` declares the compatibility bound
+`>=0.9.6,<=0.10.0`. CI samples it with component compile and state-event rebuild
+smokes on the minimum `0.9.6`, newest `0.9.x` release `0.9.13`, and `0.10.0`.
+The upper limit is the newest release covered by both smokes; raise it only
+after adding the new release to the matrix and passing both smokes. Release smoke tests
+install the bounded extra, import `reflex_xy`, and assert that its reported
+version matches the `xy` distribution version.
 
 ## Hardening Backlog
 

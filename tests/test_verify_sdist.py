@@ -34,9 +34,9 @@ DEFAULT_PKG_INFO = (
     "Requires-Python: >=3.11\n"
     "Requires-Dist: anywidget>=0.9\n"
     "Requires-Dist: numpy>=1.24\n"
+    "Requires-Dist: reflex>=0.9.6,<=0.10.0; extra == 'reflex'\n"
     "Provides-Extra: matplotlib\n"
     "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'\n"
-    "Requires-Dist: reflex>=0.9.6; extra == 'reflex'\n"
     "Provides-Extra: reflex\n"
 )
 

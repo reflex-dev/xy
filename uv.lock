@@ -2581,7 +2581,7 @@ requires-dist = [
     { name = "anywidget", specifier = ">=0.9" },
     { name = "matplotlib", marker = "extra == 'matplotlib'", specifier = ">=3.11,<3.12" },
     { name = "numpy", specifier = ">=1.24" },
-    { name = "reflex", marker = "extra == 'reflex'", specifier = ">=0.9.6" },
+    { name = "reflex", marker = "extra == 'reflex'", specifier = ">=0.9.6,<=0.10.0" },
 ]
 provides-extras = ["matplotlib", "reflex"]
 

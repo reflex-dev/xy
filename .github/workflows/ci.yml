@@ -538,6 +538,51 @@ jobs:
           .venv/bin/python scripts/verify_benchmark_report.py \
             dashboard-smoke.json --kind dashboard-browser
 
+  reflex_compatibility:
+    name: Reflex compatibility (${{ matrix.reflex-version }})
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      XY_SKIP_CARGO: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        # Verify the minimum supported release, newest 0.9.x, and 0.10.0.
+        # The extra is capped at the newest version represented by this matrix.
+        reflex-version: ["0.9.6", "0.9.13", "0.10.0"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.3"
+      - name: Install exact Reflex compatibility target
+        run: |
+          npm ci
+          uv venv .venv
+          uv pip install -p .venv/bin/python \
+            "reflex==${{ matrix.reflex-version }}" \
+            "numpy>=1.24" "anywidget>=0.9" "pytest>=8" "aiohttp>=3.9" "uvicorn>=0.23"
+          uv pip install -p .venv/bin/python -e . --no-deps
+      - name: Verify exact Reflex target and metadata window
+        run: |
+          .venv/bin/python -c "import importlib.metadata as m; assert m.version('reflex') == '${{ matrix.reflex-version }}'"
+          .venv/bin/python -c "from packaging.requirements import Requirement; import importlib.metadata as m; req = next(Requirement(value) for value in m.metadata('xy').get_all('Requires-Dist') if Requirement(value).name == 'reflex'); assert str(req.specifier) == '<=0.10.0,>=0.9.6'"
+      - name: Component compile and event smoke
+        run: .venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events
+      - name: State event and rebuild smoke
+        run: .venv/bin/pytest -q tests/reflex_adapter/test_state_bridge.py::test_rebuild_reads_session_state
+
   regression_checks:
     name: Blocking regression checks
     needs: [changes, build]
@@ -1086,7 +1131,7 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv smoke-native
-          uv pip install --no-cache -p smoke-native dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          uv pip install --no-cache -p smoke-native dist/*.tar.gz numpy anywidget "reflex>=0.9.6,<=0.10.0"
           ./smoke-native/bin/python - <<'PY'
           import importlib.metadata as metadata
 
@@ -1107,7 +1152,7 @@ jobs:
           XY_SKIP_CARGO: "1"
         run: |
           uv venv smoke-no-rust
-          uv pip install --no-cache -p smoke-no-rust dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          uv pip install --no-cache -p smoke-no-rust dist/*.tar.gz numpy anywidget "reflex>=0.9.6,<=0.10.0"
           ./smoke-no-rust/bin/python - <<'PY'
           import importlib.metadata as metadata
 
@@ -1313,7 +1358,7 @@ jobs:
     name: CI result
     runs-on: ubuntu-24.04
     if: always()
-    needs: [changes, build, test, rust_checks, browser_smokes, regression_checks, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust]
+    needs: [changes, build, test, rust_checks, browser_smokes, regression_checks, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust, reflex_compatibility]
     steps:
       - name: Require selected checks to succeed
         env:

@@ -18,6 +18,7 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
+REFLEX_COMPATIBILITY_JOB = "reflex_compatibility"
 REQUIRED_CI_JOBS = {
     "result",
     "changes",
@@ -35,6 +37,7 @@ REQUIRED_CI_JOBS = {
     "pyplot_gallery_extended",
     "test",
     "rust_checks",
+    "reflex_compatibility",
     "browser_smokes",
     "regression_checks",
     "python_floor",
@@ -44,8 +47,11 @@ REQUIRED_CI_JOBS = {
     "sdist",
     "wheels",
     "install_without_rust",
+    REFLEX_COMPATIBILITY_JOB,
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
+REFLEX_OPTIONAL_DEPENDENCY = "reflex>=0.9.6,<=0.10.0"
+REFLEX_SPECIFIER = "<=0.10.0,>=0.9.6"
 
 CI_SUMMARY_DEPENDENCIES = (
     "changes",
@@ -63,6 +69,7 @@ CI_SUMMARY_DEPENDENCIES = (
     "sdist",
     "wheels",
     "install_without_rust",
+    "reflex_compatibility",
 )
 CI_SUMMARY_COMMANDS = [
     "python3 - <<'PY'",
@@ -595,7 +602,12 @@ def _step_run_lines(step_block: str) -> list[str]:
 
 
 def _require_step_runs_exactly(
-    errors: list[str], job_text: str, step: str, description: str, *commands: str
+    errors: list[str],
+    job_text: str,
+    step: str,
+    description: str,
+    *commands: str,
+    allow_matrix_strategy: bool = False,
 ) -> None:
     """Require the exact active command list in a hard-gate named step."""
     block = _named_step_blocks(job_text).get(step)
@@ -610,16 +622,19 @@ def _require_step_runs_exactly(
         "continue-on-error",
         "defaults",
         "container",
-        "strategy",
-    )
+    ) + (() if allow_matrix_strategy else ("strategy",))
     has_forbidden_job_key = any(
         _has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys
     )
     # Scope/dependency controls are allowed only in their reviewed form.
     group = "pyplot" if job_text.startswith("  matplotlib_reference:") else "runtime"
     for key, expected in (
-        ("if", f"needs.changes.outputs.{group} == 'true'"),
-        ("needs", "changes" if job_text.startswith("  rust_checks:") else "[changes, build]"),
+        ()
+        if allow_matrix_strategy
+        else (
+            ("if", f"needs.changes.outputs.{group} == 'true'"),
+            ("needs", "changes" if job_text.startswith("  rust_checks:") else "[changes, build]"),
+        )
     ):
         values, ambiguous = _direct_yaml_key_values(job_text, key, indent=4)
         if ambiguous or values != [expected]:
@@ -632,6 +647,20 @@ def _require_step_runs_exactly(
         or has_forbidden_job_key
     ):
         errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
+
+
+def _require_matrix_step_runs_exactly(
+    errors: list[str], job_text: str, step: str, description: str, *commands: str
+) -> None:
+    """Require the complete active command list in one matrix step."""
+    _require_step_runs_exactly(
+        errors,
+        job_text,
+        step,
+        description,
+        *commands,
+        allow_matrix_strategy=True,
+    )
 
 
 def _require_job_contains(
@@ -1254,6 +1283,78 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     _require_job_contains(
         errors,
         jobs,
+        REFLEX_COMPATIBILITY_JOB,
+        "CI",
+        "minimum and maximum supported Reflex compatibility matrix",
+        "fail-fast: false",
+        'reflex-version: ["0.9.6", "0.9.13", "0.10.0"]',
+    )
+    reflex_job = jobs.get(REFLEX_COMPATIBILITY_JOB, "")
+    matrix_values, matrix_unsafe = _direct_yaml_key_values(reflex_job, "reflex-version", indent=8)
+    if matrix_values != ['["0.9.6", "0.9.13", "0.10.0"]'] or matrix_unsafe:
+        errors.append(
+            "CI reflex_compatibility job must test exactly Reflex 0.9.6, 0.9.13, and 0.10.0"
+        )
+    if _has_yaml_key(reflex_job, "exclude", indent=8):
+        errors.append("CI reflex_compatibility job must not exclude compatibility versions")
+    if _has_yaml_key(reflex_job, "include", indent=8):
+        errors.append("CI reflex_compatibility job must not include additional versions")
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "Install exact Reflex compatibility target",
+        "exact Reflex installation",
+        "npm ci",
+        "uv venv .venv",
+        "uv pip install -p .venv/bin/python \\",
+        '"reflex==${{ matrix.reflex-version }}" \\',
+        '"numpy>=1.24" "anywidget>=0.9" "pytest>=8" "aiohttp>=3.9" "uvicorn>=0.23"',
+        "uv pip install -p .venv/bin/python -e . --no-deps",
+    )
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "Verify exact Reflex target and metadata window",
+        "Reflex version and metadata assertions",
+        ".venv/bin/python -c \"import importlib.metadata as m; assert m.version('reflex') == '${{ matrix.reflex-version }}'\"",
+        f".venv/bin/python -c \"from packaging.requirements import Requirement; import importlib.metadata as m; req = next(Requirement(value) for value in m.metadata('xy').get_all('Requires-Dist') if Requirement(value).name == 'reflex'); assert str(req.specifier) == '{REFLEX_SPECIFIER}'\"",
+    )
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "Component compile and event smoke",
+        "component compile and event smoke",
+        ".venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events",
+    )
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "State event and rebuild smoke",
+        "state event and rebuild smoke",
+        ".venv/bin/pytest -q tests/reflex_adapter/test_state_bridge.py::test_rebuild_reads_session_state",
+    )
+    try:
+        project_metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"cannot read project metadata for Reflex compatibility gate: {exc}")
+    else:
+        try:
+            project = tomllib.loads(project_metadata).get("project", {})
+        except tomllib.TOMLDecodeError as exc:
+            errors.append(f"cannot parse pyproject.toml for Reflex compatibility gate: {exc}")
+        else:
+            try:
+                optional_dependencies = project.get("optional-dependencies", {})
+                reflex_dependencies = optional_dependencies.get("reflex")
+            except AttributeError:
+                reflex_dependencies = None
+            if reflex_dependencies != [REFLEX_OPTIONAL_DEPENDENCY]:
+                errors.append(
+                    f"pyproject.toml must bound the xy[reflex] extra to {REFLEX_OPTIONAL_DEPENDENCY!r}"
+                )
+    _require_job_contains(
+        errors,
+        jobs,
         "browser_conformance",
         "CI",
         "accessibility and three-engine conformance gate",
@@ -1535,7 +1636,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Rust-backed sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',
@@ -1547,6 +1648,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "coreless sdist import contract",
         "XY_SKIP_CARGO",
         "uv pip install --no-cache",
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import reflex_xy",
         "assert reflex_xy.__version__ == version",
         "native Rust core",
