@@ -20,17 +20,28 @@ from ._png import encode as encode_png
 from ._png import png_truecolor
 from ._raster import render_raster
 
+_FACET_ROWS_MISMATCH = (
+    "facet_chart by= has {n} values but {what} has {rows} rows; "
+    "by= must name a column of the data or supply one value per row"
+)
+
 
 def _subset_data(data: Any, mask: np.ndarray, n: int) -> Any:
     """Row-subset a table for one facet panel.
 
     Only 1-D columns of exactly `n` rows are masked; scalars and short config
-    values pass through untouched. Multi-dimensional columns whose first axis
-    happens to equal `n` are ambiguous (row-masking would corrupt e.g. a
-    heatmap z matrix), so they raise instead of silently guessing.
+    values in a mapping pass through untouched. A DataFrame is rows and nothing
+    else, so one whose row count differs from the `n` facet values cannot be
+    split by them at all — passing it through unsplit handed every panel the
+    whole dataset under its own label, so it raises. Multi-dimensional columns
+    whose first axis happens to equal `n` are ambiguous (row-masking would
+    corrupt e.g. a heatmap z matrix), so they raise instead of silently
+    guessing.
     """
     if hasattr(data, "iloc"):
-        return data.iloc[mask] if len(data) == n else data
+        if len(data) != n:
+            raise ValueError(_FACET_ROWS_MISMATCH.format(n=n, rows=len(data), what="data"))
+        return data.iloc[mask]
     if isinstance(data, Mapping):
         out: dict[Any, Any] = {}
         for key, value in data.items():

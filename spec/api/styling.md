@@ -490,7 +490,11 @@ from the public API and exists for hand-authored specs.
 The gradient form shares `mark_fill`'s CSS stop-position grammar and therefore
 its 2–8 stop bound; the sequence forms take up to 256. A direction keyword
 (`to top`) is refused rather than ignored — a colormap maps values to colors and
-has no spatial axis, so reverse the stop order instead.
+has no spatial axis, so reverse the stop order instead. Positioned stops in the
+sequence form must be non-decreasing: CSS clamps a stop placed before its
+predecessor, which for a colormap silently turned `[(1, "red"), (0, "blue")]`
+into 255 red texels and one blue, so a decreasing position is a `ValueError`
+(reverse the stop order).
 
 Every form normalizes to **evenly spaced 8-bit RGB stops** — the shape the
 built-in tables already use — so the WebGL client, the SVG writer, and the

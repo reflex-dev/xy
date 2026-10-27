@@ -175,9 +175,35 @@ function fmtTime(ms, step) {
   return `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
 }
 
+// Mantissa digits so exponential tick labels stay distinct at `step`: the
+// digits between the value's magnitude and the step's last significant digit
+// (1.25e6 at step 2.5e5 -> (6 - 5) + 1 = 2 -> "1.25e6"). One fixed decimal
+// labelled a 50,000-step axis "1.0e6, 1.1e6, 1.1e6, 1.2e6, …". Mirrors
+// `_exp_digits` in python/xy/_svg.py exactly.
+// Cap: 16 fractional digits are 17 significant, the most any two adjacent f64
+// values need to print distinctly (1e6 and its next float at a one-ulp step);
+// beyond that only representation noise would print.
+const EXP_DIGITS_MAX = 16;
+
+function expDigits(av, step) {
+  if (!step || !Number.isFinite(step) || av === 0) return 1;
+  step = Math.abs(step);
+  const eStep = Math.floor(Math.log10(step));
+  // 10 ** eStep underflows to 0 below 1e-308 and 10 ** -eStep overflows above
+  // 1e308, so a subnormal step is scaled in two stages instead of clamped —
+  // clamping threw the step's real exponent away and collapsed labels on a
+  // (legal) subnormal axis.
+  const mantissa = eStep < -300 ? (step * 1e300) * 10 ** (-eStep - 300) : step / 10 ** eStep;
+  let k = 0;
+  while (k < 8 && Math.abs(Number(mantissa.toFixed(k)) - mantissa) > mantissa / 1000) k++;
+  return Math.max(1, Math.min(EXP_DIGITS_MAX, Math.floor(Math.log10(av)) - eStep + k));
+}
+
 export function fmtLinear(v, step) {
   const av = Math.abs(v);
-  if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
+  if (av >= 1e6 || (av !== 0 && av < 1e-4)) {
+    return v.toExponential(expDigits(av, step)).replace("e+", "e");
+  }
   let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
   while (dec < 8 && Math.abs(Number(step.toFixed(dec)) - step) > Math.abs(step) / 1000) dec++;
   return v.toFixed(Math.min(dec, 8));
