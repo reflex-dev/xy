@@ -3079,9 +3079,28 @@ export class ChartView {
       }
       // Click-to-toggle (interaction spec §10): hide/show what the row
       // stands for. Same trace-linkage rule keeps extra_legends rows inert.
-      if (options.toggle !== false && it.traces && it.traces.length) {
+      const linked = !!(it.traces && it.traces.length);
+      const toggle = linked && options.toggle !== false;
+      const isolate = linked && options.isolate !== false;
+      if (toggle || isolate) {
         row.style.cursor = "pointer";
-        row.addEventListener("click", () => this._legendToggle(it, row));
+        // A double-click would also select the label text. Suppress only the
+        // second press, so a single click keeps native focus/selection rules.
+        row.addEventListener("mousedown", (e) => {
+          if (e.detail > 1) e.preventDefault();
+        });
+      }
+      if (toggle) {
+        row.addEventListener("click", (e) => {
+          // The second click of a double-click belongs to the isolate gesture
+          // (§10): the first click already committed its toggle, and the
+          // dblclick handler decides against the pre-gesture state.
+          if (isolate && e.detail >= 2) return;
+          this._legendToggle(it, row);
+        });
+      }
+      if (isolate) {
+        row.addEventListener("dblclick", () => this._legendIsolate(it, row, toggle));
       }
       this._syncLegendRow(row, it);
       rows.push({ row, it });
@@ -3425,11 +3444,75 @@ export class ChartView {
   // aggregates and re-request a kernel re-bin computed under the mask.
   // Either way the kernel records the state so selections stay truthful.
   _legendToggle(it, row) {
-    const off = !it.off;
-    it.off = off;
     this._clearLegendHover();
-    this._syncLegendRow(row, it);
     this._hideTooltip?.();
+    const batch = { cats: new Set(), traces: false };
+    this._legendSetOff(it, row, !it.off, batch);
+    this._legendApplyBatch(batch);
+    this._dispatchLegendToggle(it);
+    this._markBestLegendsDirty();
+    this.draw();
+  }
+
+  // Legend double-click isolate (interaction spec §10, Plotly's
+  // `legenddoubleclick` model): show only the double-clicked entry, or —
+  // when it is already the only entry showing — bring everything back.
+  // Single clicks commit immediately (no disambiguation delay), so by the
+  // time `dblclick` fires the gesture's first click has already toggled
+  // this row; the decision is therefore made against the PRE-gesture state,
+  // and the end state is exactly what a fresh isolate would have produced.
+  // Rows change through the same per-row path as a single toggle (kernel
+  // notified per row, `xy:legendtoggle` per changed row), then one
+  // `xy:legendisolate` names the gesture. Per-trace category re-filtering
+  // runs once per affected trace after the whole batch, not once per row.
+  _legendIsolate(it, row, toggleEnabled) {
+    const rows = this._legendLinkedRows();
+    if (!rows.length) return;
+    const preOff = toggleEnabled ? !it.off : !!it.off;
+    const othersOff = rows.every((r) => r.it === it || r.it.off);
+    const restoreAll = !preOff && othersOff;
+    this._clearLegendHover();
+    this._hideTooltip?.();
+    const batch = { cats: new Set(), traces: false };
+    const changed = [];
+    for (const r of rows) {
+      const off = restoreAll ? false : r.it !== it;
+      if (off === !!r.it.off) continue;
+      this._legendSetOff(r.it, r.row, off, batch);
+      changed.push(r.it);
+    }
+    if (!changed.length) return;
+    this._legendApplyBatch(batch);
+    for (const c of changed) this._dispatchLegendToggle(c);
+    this._dispatchChartEvent("legendisolate", {
+      name: it.name,
+      isolated: !restoreAll,
+      traces: it.traces.map((ti) => this.spec.traces[ti].id),
+      ...(it.cat != null ? { category: it.cat } : {}),
+    });
+    this._markBestLegendsDirty();
+    this.draw();
+  }
+
+  // Every legend row that stands for live traces, across all legend boxes.
+  // extra_legends rows carry no trace linkage and never take part.
+  _legendLinkedRows() {
+    const out = [];
+    for (const lg of this._legends || []) {
+      for (const r of lg._xyItemRows || []) {
+        if (r.it.traces && r.it.traces.length) out.push(r);
+      }
+    }
+    return out;
+  }
+
+  // One row's visibility: row chrome, the view-held off-sets (survive chrome
+  // and GPU rebuilds), the per-trace draw/pick flag, and the fire-and-forget
+  // kernel notification. Category rows only record which trace's predicate
+  // changed in `batch.cats`; `_legendApplyBatch` re-filters each once.
+  _legendSetOff(it, row, off, batch) {
+    it.off = off;
+    this._syncLegendRow(row, it);
     if (it.cat != null) {
       const ti = it.traces[0];
       let set = this._legendOffCats.get(ti);
@@ -3441,7 +3524,7 @@ export class ChartView {
           type: "legend_toggle", trace: this.spec.traces[ti].id, category: it.cat, hidden: off,
         });
       }
-      this._applyCategoryVisibility(ti);
+      batch.cats.add(ti);
     } else {
       for (const ti of it.traces) {
         if (off) this._legendOffTraces.add(ti);
@@ -3452,18 +3535,24 @@ export class ChartView {
           this.comm.send({ type: "legend_toggle", trace: this.spec.traces[ti].id, hidden: off });
         }
       }
-      this._refreshReductionBadges();
+      batch.traces = true;
     }
+  }
+
+  _legendApplyBatch(batch) {
+    for (const ti of batch.cats) this._applyCategoryVisibility(ti);
+    if (batch.traces) this._refreshReductionBadges();
     this._pickDirty = true;
     this._updatePickable();
+  }
+
+  _dispatchLegendToggle(it) {
     this._dispatchChartEvent("legendtoggle", {
       name: it.name,
-      hidden: off,
+      hidden: !!it.off,
       traces: it.traces.map((ti) => this.spec.traces[ti].id),
       ...(it.cat != null ? { category: it.cat } : {}),
     });
-    this._markBestLegendsDirty();
-    this.draw();
   }
 
   _applyCategoryVisibility(ti) {
