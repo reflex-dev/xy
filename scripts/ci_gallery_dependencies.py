@@ -212,9 +212,11 @@ Acquire::http::Timeout "20";
 Acquire::https::Timeout "20";
 Acquire::https::Verify-Peer "true";
 Acquire::https::Verify-Host "true";
+Acquire::Check-Valid-Until "true";
 Acquire::AllowInsecureRepositories "false";
 Acquire::AllowDowngradeToInsecureRepositories "false";
 APT::Get::AllowUnauthenticated "false";
+APT::Update::Error-Mode "any";
 ''')
         environment = {**os.environ, "LC_ALL": "C"}
         subprocess.run(

@@ -114,3 +114,20 @@ def test_lock_rejects_untrusted_sources_and_duplicate_files(bundle):
     lock.write_text(json.dumps(data))
     with pytest.raises(ValueError):
         deps.load_lock(lock)
+
+
+def test_refresh_fails_closed_on_incomplete_or_untrusted_indexes(bundle, monkeypatch):
+    lock, _, _ = bundle
+    original = lock.read_bytes()
+
+    def reject_indexes(command, **kwargs):
+        config = deps.Path(command[2]).read_text()
+        assert 'APT::Update::Error-Mode "any";' in config
+        assert 'Acquire::Check-Valid-Until "true";' in config
+        assert 'Acquire::AllowInsecureRepositories "false";' in config
+        raise deps.subprocess.CalledProcessError(100, command)
+
+    monkeypatch.setattr(deps.subprocess, "run", reject_indexes)
+    with pytest.raises(deps.subprocess.CalledProcessError):
+        deps.refresh_lock(lock)
+    assert lock.read_bytes() == original

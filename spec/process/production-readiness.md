@@ -221,6 +221,12 @@ Local raw results, lock identity and container provenance are recorded in
 0.10 seconds for warm verification, and 4.37 seconds for offline installation plus
 an H.264 encoding probe. Network throughput is environment-dependent; no hosted
 elapsed-time speedup is asserted from these local observations.
+The first hosted [run 40485681835](https://github.com/reflex-dev/xy/actions/runs/40485681835)
+had a cold producer cache: all 87 packages were downloaded and verified in 9.65
+seconds, one artifact was published, and all eight consumer restoration steps
+succeeded in 7–17 seconds. Job IDs, artifact digest and step timings are recorded
+in the same JSON evidence file. These are individual observed runs, not a
+guarantee of future mirror or artifact-service throughput.
 
 Reproduce the offline restoration with a disposable Ubuntu fixture. Preparing
 the fixture requires network access; running the committed installer does not:
