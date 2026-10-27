@@ -13,8 +13,9 @@ import { chartBackdrop, parseColor } from "./20_theme";
 //                                     mark with its own vertex layout (bars,
 //                                     candles) uploads its own buffers.
 //   draw(view, g, x0, x1, y0, y1)   — one frame in the current data window.
-//                                     xy marks map with view._map(); a mark
-//                                     with a different transform maps itself.
+//                                     Draws take axis WINDOWS ([lo, hi]); the
+//                                     view→clip fold is per encoded column and
+//                                     happens in _setAxisUniforms (§4/§16).
 //
 // Tiering is orthogonal: a density-tier trace is handled by 45_lod.js before
 // this registry is consulted (its drilled marks still render as points today).
@@ -41,14 +42,7 @@ const RECT_MARK = {
     const edgePad = g.trace.kind === "histogram"
       ? [0, 0, view._edgePadForValue(0, y0, y1, view.canvas.height), 0]
       : [0, 0, 0, 0];
-    view._drawRects(
-      g,
-      view._map(g.x0Meta, x0, x1, g.xAxis),
-      view._map(g.x1Meta, x0, x1, g.xAxis),
-      view._map(g.y0Meta, y0, y1, g.yAxis),
-      view._map(g.y1Meta, y0, y1, g.yAxis),
-      edgePad
-    );
+    view._drawRects(g, [x0, x1], [y0, y1], edgePad);
   },
   refreshColor: (view, g) => {
     if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
@@ -69,11 +63,6 @@ const BAR_MARK = {
     const vAxis = horizontal ? g.xAxis : g.yAxis;
     const [p0, p1] = view._axisRange(pAxis);
     const [v0, v1] = view._axisRange(vAxis);
-    const pmap = view._map(g.posMeta, p0, p1, pAxis);
-    const v1map = view._map(g.value1Meta, v0, v1, vAxis);
-    const v0map = g.value0Mode === 1
-      ? view._map(g.value0Meta, v0, v1, vAxis)
-      : null;
     const v0Const = g.value0Mode === 0
       ? view._mapConst(g.value0Const, v0, v1, vAxis)
       : null;
@@ -85,7 +74,7 @@ const BAR_MARK = {
         horizontal ? view.canvas.width : view.canvas.height
       )
       : 0;
-    view._drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad);
+    view._drawBars(g, [p0, p1], [v0, v1], v0Const, v0EdgePad);
   },
   refreshColor: (view, g) => {
     if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
@@ -99,11 +88,7 @@ const SEGMENT_MARK = {
   draw: (view, g) => {
     const [x0, x1] = view._axisRange(g.xAxis);
     const [y0, y1] = view._axisRange(g.yAxis);
-    view._drawSegments(
-      g,
-      view._map(g.x0Meta, x0, x1, g.xAxis),
-      view._map(g.y0Meta, y0, y1, g.yAxis),
-    );
+    view._drawSegments(g, [x0, x1], [y0, y1]);
   },
   refreshColor: (view, g) => {
     if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
@@ -113,13 +98,11 @@ const SEGMENT_MARK = {
 const AREA_MARK = {
   build: (view, g, t, buffer) => view._buildAreaMark(g, t, buffer),
   draw: (view, g) => {
-    const [x0, x1] = view._axisRange(g.xAxis);
-    const [y0, y1] = view._axisRange(g.yAxis);
-    const xm = view._map(g.xMeta, x0, x1, g.xAxis);
-    const ym = view._map(g.yMeta, y0, y1, g.yAxis);
-    view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
+    const xr = view._axisRange(g.xAxis);
+    const yr = view._axisRange(g.yAxis);
+    view._drawArea(g, xr, yr);
     if ((g.trace.style.line_width ?? 0) > 0) {
-      view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+      view._drawLine(g, xr, yr, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
       if (g.trace.style.stroke_perimeter) {
         // fill_between is a closed polygon. Draw its second boundary too;
         // the generic area mark intentionally outlines only the value curve.
@@ -127,7 +110,7 @@ const AREA_MARK = {
         g.yBuf = g.baseBuf;
         g.yMeta = g.baseMeta;
         g._dashY = g._cpu.base;
-        view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+        view._drawLine(g, xr, yr, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
         g.yBuf = yBuf;
         g.yMeta = yMeta;
         g._dashY = dashY;
@@ -146,7 +129,7 @@ const MESH_MARK = {
   draw: (view, g) => {
     const [x0, x1] = view._axisRange(g.xAxis);
     const [y0, y1] = view._axisRange(g.yAxis);
-    view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+    view._drawMesh(g, [x0, x1], [y0, y1]);
   },
   refreshColor: (view, g) => {
     if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
@@ -171,11 +154,7 @@ export const MARK_KINDS = {
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);
-      view._drawRibbons(
-        g,
-        view._map(g.x0Meta, x0, x1, g.xAxis),
-        view._map(g.y0Meta, y0, y1, g.yAxis),
-      );
+      view._drawRibbons(g, [x0, x1], [y0, y1]);
     },
     // No pointPick: the GPU id pass draws gl.POINTS from the xy slots, which
     // for a ribbon are the target span's y values — garbage ids. Hover works
@@ -199,7 +178,7 @@ export const MARK_KINDS = {
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);
-      view._drawFunnels(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+      view._drawFunnels(g, [x0, x1], [y0, y1]);
     },
     // No pointPick: the GPU id pass draws gl.POINTS from the xy slots, which
     // for a funnel hold trailing cross edges — garbage ids. Hover works
@@ -232,7 +211,7 @@ export const MARK_KINDS = {
       if (g.authoredMarker) return;
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);
-      view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+      view._drawMesh(g, [x0, x1], [y0, y1]);
     },
     refreshColor: (view, g) => {
       if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
@@ -251,7 +230,7 @@ export const MARK_KINDS = {
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);
-      view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+      view._drawPoints(g, [x0, x1], [y0, y1]);
     },
     pointPick: true,
     retainCpu: true,
@@ -267,7 +246,7 @@ export const MARK_KINDS = {
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);
-      view._drawLine(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+      view._drawLine(g, [x0, x1], [y0, y1]);
     },
     refreshColor: (view, g) => {
       g.color = parseColor(view.root, g.trace.style.color, g.color);
