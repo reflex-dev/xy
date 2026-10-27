@@ -9,9 +9,13 @@
 //! Only the kernels where the restructure measurably wins live here (this
 //! box, 10M points): min_max +89%, bin_2d +~50%, local-density gather +~42%,
 //! range scan +20–50% at ≤1M (wash at 10M where it's bandwidth-bound).
-//! M4 and histogram were tried and REVERTED — measured slower (the bucket
-//! state machine / scatter increment dominates and the extra block pass costs
-//! more than the vector math saves); see the notes on their scalar kernels.
+//! Histogram was tried and REVERTED — measured slower (the scatter increment
+//! dominates and the extra block pass costs more than the vector math saves);
+//! see the note on its scalar kernel. The same two-phase restructure lost on
+//! M4 too, so M4 windows that average 8+ rows per bucket scan whole buckets
+//! instead: [`try_argminmax`] hands the y of each bucket of 32+ rows to the
+//! `argminmax` crate, which picks its own SIMD width at run time
+//! (SSE4.1/AVX2/AVX-512, NEON): M4 at 1M points runs 3–9× faster.
 //!
 //! Rules (rust-engine doc §3.4):
 //! - Only kernels whose outputs are **order-independent** are accelerated:
@@ -27,7 +31,8 @@
 //!   before/after benchmark and a debugging escape hatch.
 //!
 //! Non-x86_64 (e.g. aarch64) needs nothing here: NEON is part of the aarch64
-//! baseline, so the scalar kernels already autovectorize at full width there.
+//! baseline, so the scalar kernels already autovectorize at full width there
+//! (argminmax uses NEON on its own).
 
 #![allow(
     dead_code,
@@ -44,14 +49,16 @@ const BLOCK: usize = 1024;
 /// bucket indices are always well below this (grids are screen-sized).
 const SKIP: u32 = u32::MAX;
 
-#[cfg(target_arch = "x86_64")]
-pub(crate) fn use_avx2() -> bool {
+/// The `XY_SIMD=0` kill switch, read once.
+fn simd_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var_os("XY_SIMD").is_none_or(|v| v != "0")
-            && std::arch::is_x86_feature_detected!("avx2")
-    })
+    *ON.get_or_init(|| std::env::var_os("XY_SIMD").is_none_or(|v| v != "0"))
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn use_avx2() -> bool {
+    simd_enabled() && std::arch::is_x86_feature_detected!("avx2")
 }
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -275,6 +282,13 @@ unsafe fn density_gather_avx2(
 // enabled, `None` to tell the caller to run its scalar path. This keeps
 // every `unsafe` call site inside this module.
 // ---------------------------------------------------------------------------
+
+/// Rows of the first minimum and the first maximum of a non-empty `data`,
+/// NaN skipped (±∞ count as values), from the `argminmax` crate. It detects
+/// the CPU itself, so this needs only the kill switch.
+pub(crate) fn try_argminmax(data: &[f64]) -> Option<(usize, usize)> {
+    simd_enabled().then(|| argminmax::ArgMinMax::argminmax(&data))
+}
 
 pub(crate) fn try_min_max(data: &[f64]) -> Option<(f64, f64)> {
     #[cfg(target_arch = "x86_64")]

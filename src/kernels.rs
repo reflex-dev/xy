@@ -2523,11 +2523,42 @@ pub(crate) fn m4_flush(first: u32, min_i: u32, max_i: u32, last: u32, out: &mut 
 
 /// Serial M4 over rows `[lo, hi)` — the shared building block: the serial path
 /// runs it once over the whole window; the parallel path runs it per bucket-
-/// aligned segment and concatenates. Stays scalar deliberately: a two-phase
-/// SIMD restructure (precomputed bucket ids) measured *slower* (472 vs
-/// 915 Mpt/s at 1M) — the sequential bucket state machine dominates, and the
-/// extra block store/load pass outweighs vectorizing the cheap float math.
+/// aligned segment and concatenates. Windows whose buckets average at least
+/// `M4_BUCKET_WALK_MIN_ROWS` rows walk bucket by bucket; sparser ones (deep
+/// zooms) keep the per-row loop, which is faster there. Both emit the same rows.
 fn m4_range(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    inv_bucket_w: f64,
+    n_buckets: usize,
+    lo: usize,
+    hi: usize,
+) -> Vec<u32> {
+    let bucket_of = |v: f64| (((v - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
+    let spanned = bucket_of(x[hi - 1]) - bucket_of(x[lo]) + 1;
+    if hi - lo < M4_BUCKET_WALK_MIN_ROWS * spanned {
+        m4_range_rows(x, y, x0, inv_bucket_w, n_buckets, lo, hi)
+    } else {
+        m4_range_buckets(x, y, x0, inv_bucket_w, n_buckets, lo, hi)
+    }
+}
+
+/// Average rows per bucket from which the bucket walk beats the per-row loop.
+/// At 4–5 rows its per-bucket search and call made it up to 1.3× slower on
+/// Tiger Lake (Zen 3 gained); at 8 rows it is 1.1–1.4× faster on both (1M
+/// rows, 2048 buckets, one core).
+const M4_BUCKET_WALK_MIN_ROWS: usize = 8;
+
+/// Per-row M4 state machine over rows `[lo, hi)`: one pass, one bucket id per
+/// row. Stays scalar deliberately: a two-phase SIMD restructure (precomputed
+/// bucket ids) measured *slower* (472 vs 915 Mpt/s at 1M) — the sequential
+/// bucket state machine dominates, and the extra block store/load pass
+/// outweighs vectorizing the cheap float math. Kept out of line: inlined next
+/// to the bucket walk, its loop lost registers to stack reloads (+8% on
+/// Tiger Lake for deep zooms).
+#[inline(never)]
+fn m4_range_rows(
     x: &[f64],
     y: &[f64],
     x0: f64,
@@ -2583,7 +2614,112 @@ fn m4_range(
     out
 }
 
-fn m4_bucket_end<F>(values: &[f64], bucket: usize, bucket_of: &F) -> usize
+/// Bucket-at-a-time M4 over rows `[lo, hi)`. x is ascending, so every
+/// bucket's rows are contiguous: `m4_bucket_end` probes x for where a bucket
+/// stops and `m4_bucket` scans its y, so x is only probed and y is read once.
+fn m4_range_buckets(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    inv_bucket_w: f64,
+    n_buckets: usize,
+    lo: usize,
+    hi: usize,
+) -> Vec<u32> {
+    let bucket_of = |v: f64| (((v - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
+    let mut out: Vec<u32> = Vec::with_capacity((n_buckets * 4).min((hi - lo) * 4));
+    let (mut start, mut len) = (lo, 1);
+    while start < hi {
+        let b = bucket_of(x[start]);
+        let end = m4_bucket_end(x, start, hi, len, |v| bucket_of(v) <= b);
+        m4_bucket(y, start, end, &mut out);
+        (start, len) = (end, end - start);
+    }
+    out
+}
+
+/// End of the bucket that starts at row `start`: the first row in
+/// `(start, hi]` that fails `in_bucket` (monotone, as x is ascending). Probes
+/// around `start + guess` (the previous bucket's length) first, so
+/// equal-width buckets cost two probes; otherwise gallops, then bisects.
+fn m4_bucket_end(
+    x: &[f64],
+    start: usize,
+    hi: usize,
+    guess: usize,
+    in_bucket: impl Fn(f64) -> bool,
+) -> usize {
+    let g = start + guess;
+    // Rows [start, lo) are in the bucket; the end lies in [lo, end].
+    let (mut lo, mut end) = (start + 1, hi);
+    if g < hi {
+        if !in_bucket(x[g]) {
+            if in_bucket(x[g - 1]) {
+                return g;
+            }
+            end = g - 1;
+        } else {
+            lo = g + 1;
+            let mut step = 1;
+            while lo + step <= hi {
+                let p = lo + step - 1;
+                if !in_bucket(x[p]) {
+                    end = p;
+                    break;
+                }
+                lo = p + 1;
+                step *= 2;
+            }
+        }
+    }
+    lo + x[lo..end].partition_point(|&v| in_bucket(v))
+}
+
+/// Buckets shorter than this skip argminmax (uneven x leaves some in a dense
+/// window): its per-call cost outweighs the SIMD scan.
+const M4_SIMD_MIN_ROWS: usize = 32;
+
+/// Emit the {first, min, max, last} rows of bucket `[start, end)` over its
+/// finite y (NaN and ±∞ are non-plottable, §19). Ties keep the first row.
+/// `simd::try_argminmax` skips NaN but not ±∞, so a bucket with a ±∞ extreme
+/// takes the scalar scan too (as does `XY_SIMD=0`); both give the same rows.
+fn m4_bucket(y: &[f64], start: usize, end: usize, out: &mut Vec<u32>) {
+    if end - start >= M4_SIMD_MIN_ROWS {
+        let bucket = &y[start..end];
+        let Some(first) = bucket.iter().position(|v| v.is_finite()) else {
+            return;
+        };
+        let last = bucket
+            .iter()
+            .rposition(|v| v.is_finite())
+            .expect("first is finite");
+        let ys = &bucket[first..=last];
+        if let Some((min_i, max_i)) = crate::simd::try_argminmax(ys) {
+            if ys[min_i].is_finite() && ys[max_i].is_finite() {
+                let row = |i: usize| (start + first + i) as u32;
+                m4_flush(row(0), row(min_i), row(max_i), row(ys.len() - 1), out);
+                return;
+            }
+        }
+    }
+    let mut rows = (start..end).filter(|&i| y[i].is_finite());
+    let Some(first) = rows.next() else {
+        return;
+    };
+    let (mut min_i, mut max_i, mut last) = (first, first, first);
+    for i in rows {
+        if y[i] < y[min_i] {
+            min_i = i;
+        }
+        if y[i] > y[max_i] {
+            max_i = i;
+        }
+        last = i;
+    }
+    m4_flush(first as u32, min_i as u32, max_i as u32, last as u32, out);
+}
+
+fn m4_partition_bucket_end<F>(values: &[f64], bucket: usize, bucket_of: &F) -> usize
 where
     F: Fn(f64) -> usize,
 {
@@ -2621,7 +2757,7 @@ fn m4_indices_impl(
         let mut j = (start + t * chunk).min(end);
         if j < end {
             let bucket = bucket_of(x[j - 1]);
-            j += m4_bucket_end(&x[j..end], bucket, &bucket_of);
+            j += m4_partition_bucket_end(&x[j..end], bucket, &bucket_of);
         }
         let prev = *bounds.last().expect("bounds never empty");
         if j > prev && j < end {
@@ -6826,7 +6962,7 @@ mod tests {
             value as usize
         };
 
-        let offset = m4_bucket_end(&x[10_000..], 0, &bucket_of);
+        let offset = m4_partition_bucket_end(&x[10_000..], 0, &bucket_of);
 
         assert_eq!(offset, 184_000);
         assert!(
@@ -7331,6 +7467,40 @@ mod fuzz {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn fuzz_m4_bucket_walk_matches_per_row_loop() {
+        let mut rng = Rng(0x5EED_00A4);
+        for it in 0..2000 {
+            let n = 1 + (rng.next() % 3000) as usize;
+            // Ascending x: uniform, duplicate-heavy, or irregular.
+            let mut x: Vec<f64> = match it % 3 {
+                0 => (0..n).map(|i| i as f64).collect(),
+                1 => (0..n).map(|i| (i / (1 + it % 7)) as f64).collect(),
+                _ => (0..n).map(|_| rng.f01() * n as f64).collect(),
+            };
+            x.sort_by(f64::total_cmp);
+            let mut y = rng.hostile_vec(n, -1.0, 1.0);
+            for v in y.iter_mut() {
+                // Every other case drops ±∞ so long buckets reach argminmax;
+                // repeated values exercise first-row tie-breaking.
+                if it % 2 == 0 && v.is_infinite() {
+                    *v = 0.25;
+                }
+                if rng.next().is_multiple_of(8) {
+                    *v = 0.5;
+                }
+            }
+            let buckets = 1 + (rng.next() % 300) as usize;
+            let (x0, x1) = (-1.0, n as f64 + 1.0);
+            let inv = buckets as f64 / (x1 - x0);
+            assert_eq!(
+                m4_range_buckets(&x, &y, x0, inv, buckets, 0, n),
+                m4_range_rows(&x, &y, x0, inv, buckets, 0, n),
+                "it={it} n={n} buckets={buckets}"
+            );
         }
     }
 
