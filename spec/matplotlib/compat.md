@@ -254,3 +254,6 @@ python scripts/sync_matplotlib_compat.py
 
 Review the snapshot and generated matrix diff as an API change. Release-level
 changes are recorded in [the compatibility changelog](compat-changelog.md).
+
+The shared `AxesProtocol` exposes `tick_params`, `margins`, and `locator_params`
+so the module-level wrappers stay typed in both native and compat modes.
