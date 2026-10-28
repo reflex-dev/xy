@@ -196,6 +196,39 @@ def test_expect_artifacts_matches_what_the_build_workflow_produces() -> None:
     assert "*.tar.gz" in entry["expect-artifacts"]
 
 
+def test_every_native_wheel_target_runs_the_install_smoke() -> None:
+    entry = RELEASE_CONFIG["custom-build"][0]
+    build = (ROOT / ".github" / "workflows" / entry["workflow"]).read_text(encoding="utf-8")
+    wheel_entries = [
+        line for line in build.splitlines() if line.lstrip().startswith("- {") and "plat:" in line
+    ]
+
+    assert wheel_entries, "the native wheel matrix must not be empty"
+    assert all(re.search(r"\bnative: true\b", line) for line in wheel_entries), wheel_entries
+    targets = set(re.findall(r"plat: ([A-Za-z0-9_]+)", build))
+    assert targets == {
+        "manylinux_2_17_x86_64",
+        "manylinux_2_17_aarch64",
+        "manylinux_2_17_armv7l",
+        "musllinux_1_2_x86_64",
+        "musllinux_1_2_aarch64",
+        "musllinux_1_2_armv7l",
+        "macosx_10_12_x86_64",
+        "macosx_11_0_arm64",
+        "win_amd64",
+        "win32",
+        "win_arm64",
+    }
+    smoke_modes = set(re.findall(r"\bsmoke: ([A-Za-z0-9-]+)", "\n".join(wheel_entries)))
+    assert smoke_modes == {"host", "manylinux-armv7", "alpine", "alpine-armv7"}
+    assert "if: matrix.smoke == 'host'" in build
+    assert "if: matrix.smoke == 'manylinux-armv7'" in build
+    assert "if: matrix.smoke == 'alpine'" in build
+    assert "if: matrix.smoke == 'alpine-armv7'" in build
+    assert "docker/setup-qemu-action@" in build
+    assert "scripts/wheel_smoke.py" in build
+
+
 def test_post_release_workflow_declares_the_dispatch_contract() -> None:
     # The release pipeline dispatches this workflow with `tag`, `package` and
     # `version` once a tag is published. reflex-release checks only that the name

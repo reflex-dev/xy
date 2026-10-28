@@ -288,7 +288,7 @@ release-timezone = "America/Los_Angeles"
 tag-prefix = "v"
 
 # `xy` cannot be built by `uv build` on one runner: it publishes eleven
-# cross-compiled platform wheels, a runtime-verified PyEmscripten wheel and an
+# runtime-verified native platform wheels, a runtime-verified PyEmscripten wheel and an
 # sdist, each needing its own operating system or toolchain. So the build is
 # delegated to a workflow this repository owns, and the pipeline keeps
 # everything either side of it — same changelog detection, same version, same

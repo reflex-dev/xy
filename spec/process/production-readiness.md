@@ -685,7 +685,7 @@ artifacts carry it. Three consequences worth knowing:
 | `dispatch_release.yml` | manual | Materializes `news/` fragments into `CHANGELOG.md` at the next version. Final releases land through a pull request; prereleases go straight to an `r/pre-*` branch. |
 | `release_from_changelog.yml` | push to `main`, `r/pre-**`, `r/hotfix/**` | Publishes any changelog version that has no git tag, by calling `publish.yml`. |
 | `publish.yml` | called by the above, or manual | Validates the request, calls the build workflow below, waits for `pypi` environment approval, uploads, then tags and creates the GitHub release. |
-| `build_release_artifacts.yml` | called by `publish.yml`, or manual for a dry run | **This repository's own**: the release matrix — eleven platform wheels, the runtime-verified PyEmscripten wheel, and the sdist. |
+| `build_release_artifacts.yml` | called by `publish.yml`, or manual for a dry run | **This repository's own**: the release matrix — eleven runtime-verified native wheels, the runtime-verified PyEmscripten wheel, and the sdist. |
 | `deploy-docs-stg.yml` | dispatched by `publish.yml` per published tag, or manual | **This repository's own**: builds and deploys the docs site for the version just published. |
 | `deploy-docs-site.yml` | manual (`source_ref`, default `main`) | **This repository's own**: builds the docs site from a branch, tag, or commit and promotes the same images through staging and production approval, independently of a library release. |
 
@@ -728,7 +728,7 @@ pull request, so a stale workflow (or a configuration change made without
 re-syncing) is a red PR rather than a surprise at release time.
 
 What this repository owns is `build_release_artifacts.yml`, because `xy` cannot
-be built by `uv build` on one runner: eleven cross-compiled platform wheels, a
+be built by `uv build` on one runner: eleven runtime-verified native platform wheels, a
 runtime-verified PyEmscripten wheel and an sdist, each needing its own operating
 system or toolchain. `[[tool.reflex-release.custom-build]]` points the pipeline
 at it, and `publish.yml` calls it in place of its own build job. Everything
@@ -902,16 +902,15 @@ Before merging a release pull request:
   keeps the generated four honest, and `collect` verifies the artifacts at
   release time.
 - Before the first release after a change to the wheel matrix (new target,
-  cross-compile toolchain, or tagging scheme), manually run
-  `build_release_artifacts.yml` (`workflow_dispatch`) and confirm every leg of
-  the cross-compile matrix — including the newer aarch64/armv7/musllinux/
-  win-arm64 targets and the wasm job — actually builds, since a target added to
-  the matrix but never exercised in CI is unverified, not working. That run
-  reaches no publish path at all. Add the new platform to `expect-artifacts` in
-  the same change, or a release can ship without it.
-- Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
+  toolchain, or tagging scheme), manually run `build_release_artifacts.yml`
+  (`workflow_dispatch`) and confirm every native target and the wasm job builds
+  and passes its runtime gate, including native or emulated install and kernel
+  smokes for each published architecture. That run reaches no publish path. Add each
+  published platform to `expect-artifacts` in the same change, or a release can
+  ship without it.
+- Confirm CI built and installed the native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
-  arm64).
+  arm64). ARMv7 smokes run in QEMU containers; other targets use native runners.
 - Confirm the Pyodide/Emscripten wheel passes its runtime load gate, not only
   its structural wheel check. The tested toolchain is Rust 1.97.0 with
   `panic=abort`, Emscripten 5.0.3, cibuildwheel 4.1.0, the PEP 783
@@ -932,8 +931,10 @@ Before merging a release pull request:
   runtime dependencies, and Matplotlib/Reflex extras. It must exclude
   repository-only docs, tests, gallery evidence, scripts, benchmarks, examples,
   native binaries, generated caches, unsafe paths, and duplicate members.
-- Confirm each platform wheel passes `scripts/verify_wheel.py --expect-native`
-  and its install smoke loads `xy.kernels.BACKEND == "native"`. Confirm the
+- Confirm each native platform wheel passes `scripts/verify_wheel.py
+  --expect-native --expect-platform <tag> --require-symbol xy_abi_version
+  --require-linkage` and its install smoke calls a representative kernel and
+  loads `xy.kernels.BACKEND == "native"`. Confirm the
   fallback `py3-none-any` wheel passes `--expect-pure` and fails compute with
   the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
