@@ -4,6 +4,7 @@ buffers in one self-contained file — interactive with no kernel attached."""
 from __future__ import annotations
 
 import base64
+import gzip
 import html as _html
 import json
 import math
@@ -215,6 +216,59 @@ _DECODE_B64_JS = (
     "} return bytes.buffer; }"
 )
 
+# Inline gzip inflater for `compress=True` exports: browser-native
+# DecompressionStream (baseline in all major browsers since mid-2023), no
+# bundled inflate code. Returns a Promise<ArrayBuffer> sized exactly to the
+# decompressed bytes, so `spec.columns[i].byte_offset` stays valid end-to-end.
+_INFLATE_JS = (
+    "function xyInflate(buf) {"
+    'const ds = new DecompressionStream("gzip");'
+    "return new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer(); }"
+)
+
+# Shown in the chart div (plain text node — no markup) when a compress=True
+# export lands in a browser without DecompressionStream.
+_COMPRESS_UNSUPPORTED_TEXT = (
+    "This chart export uses gzip compression (compress=True) and needs a "
+    "browser with DecompressionStream (all major browsers since mid-2023). "
+    "Re-export with compress=False for maximum compatibility."
+)
+# The same notice as a ready-to-embed JS string literal (assigned to
+# textContent, so it renders as plain text, never markup).
+_COMPRESS_UNSUPPORTED_JS = json.dumps(_COMPRESS_UNSUPPORTED_TEXT)
+
+
+def _gzip_deterministic(data: bytes, *, level: int) -> bytes:
+    """gzip with a pinned mtime so identical exports stay byte-identical."""
+    return gzip.compress(data, compresslevel=level, mtime=0)
+
+
+def _chunk_scripts(var: str, blob: bytes) -> str:
+    """One `<script>` push per base64 chunk (see the chunking note in to_html)."""
+    return "\n".join(f'<script>{var}.push("{c}");</script>' for c in _base64_chunks(blob))
+
+
+def _client_assets(compress: bool) -> tuple[str, str]:
+    """(client block HTML, async-boot prelude JS) for the inline render client.
+
+    With `compress` the bundle embeds as base64(gzip(bundle)) chunks; the
+    prelude inflates them and injects a script element (an inline script under
+    CSP, executed synchronously on append) so `window.xy` exists before first
+    render. The plain block needs no prelude: it has already run."""
+    if not compress:
+        return f"<script>{_javascript_for_inline_script(_bundled_js('standalone'))}</script>", ""
+    gz = _gzip_deterministic(_bundled_js("standalone").encode("utf-8"), level=9)
+    block = "<script>var __xyClient = [];</script>\n" + _chunk_scripts("__xyClient", gz)
+    prelude = (
+        "const __xyCode = new TextDecoder().decode("
+        f"await xyInflate(xyDecodeB64(__xyClient, {len(gz)})));\n"
+        "    __xyClient.length = 0;\n"
+        '    const __xyTag = document.createElement("script");\n'
+        "    __xyTag.textContent = __xyCode;\n"
+        "    document.head.appendChild(__xyTag);"
+    )
+    return block, prelude
+
 
 def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
     """Write bytes through a same-directory temp file, then replace atomically."""
@@ -283,6 +337,113 @@ def _custom_css_block(custom_css: Optional[str]) -> str:
 
 
 def to_html(
+    fig: "Figure",
+    path: Optional[str | PathLike[str]] = None,
+    *,
+    custom_css: Optional[str] = None,
+    animation_progress: Optional[float] = None,
+    compress: bool = False,
+) -> str:
+    """Render `fig` to a standalone interactive HTML string (optionally saved).
+
+    User strings (title, names, labels) ride inside <script>/<title> blocks:
+    HTML-sensitive JSON characters are escaped so user text cannot alter the
+    script parse state, and the <title> text is entity-escaped.
+
+    `custom_css` injects an author stylesheet into the document <head> so the
+    utility classes referenced by `class_names` (e.g. Tailwind) resolve in the
+    standalone export; it must not contain a `</style>` breakout sequence.
+
+    `compress=True` makes the export self-extracting: the embedded client and
+    data payload ride as base64 of gzip bytes and are inflated in the browser
+    via DecompressionStream — roughly halving the file with no server-side
+    compression required. Needs a 2023+ browser; unsupported browsers get a
+    plain-text notice instead of a chart."""
+    compress = _bool_option(compress, "to_html compress")
+    if not compress:
+        return _to_html_plain(
+            fig, path, custom_css=custom_css, animation_progress=animation_progress
+        )
+    spec, blob = fig.build_payload()
+    if animation_progress is not None:
+        progress = float(animation_progress)
+        if not math.isfinite(progress) or not 0.0 <= progress <= 1.0:
+            raise ValueError("animation progress must be between 0 and 1")
+        spec["animation_capture_progress"] = progress
+    if len(blob) > EMBED_WARN_BYTES:
+        import warnings
+
+        warnings.warn(
+            f"embedding {len(blob) / 2**20:.0f} MB of data (+33% as base64) "
+            "into HTML; consider the aggregated embed once Tier 2 lands.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    spec_js = _json_for_inline_script(spec)
+    title_html = _html.escape(fig.title or "xy")
+    client_html, client_prelude = _client_assets(compress)
+    # One <script> block PER chunk: a script element's source is itself a V8
+    # string, so folding every chunk into one block would rebuild the very
+    # ~512 MB single-string ceiling the chunking removed. Per-block sources
+    # stay at ~64 MB regardless of payload size. Chunk text is standard base64
+    # (`[A-Za-z0-9+/=]`) — it can hold no `"`, `\`, newline, or `<`, so it is a
+    # valid JS string literal verbatim and can never close the <script>. Quote
+    # it directly rather than via `json.dumps`, whose full-string escape scan
+    # dominated small-chart export cost.
+    wire = _gzip_deterministic(bytes(blob), level=6) if compress else blob
+    chunk_scripts = _chunk_scripts("__xyChunks", wire)
+    if compress:
+        boot = f"""<script>
+  {_DECODE_B64_JS}
+  {_INFLATE_JS}
+  (async () => {{
+    const el = document.getElementById("chart");
+    if (typeof DecompressionStream === "undefined") {{
+      el.textContent = {_COMPRESS_UNSUPPORTED_JS};
+      return;
+    }}
+    {client_prelude}
+    const spec = {spec_js};
+    const buf = await xyInflate(xyDecodeB64(__xyChunks, {len(wire)}));
+    __xyChunks.length = 0;
+    xy.renderStandalone(el, spec, buf);
+  }})();
+</script>"""
+    else:
+        boot = f"""<script>
+  {_DECODE_B64_JS}
+  const spec = {spec_js};
+  const buf = xyDecodeB64(__xyChunks, {len(wire)});
+  __xyChunks.length = 0;
+  xy.renderStandalone(document.getElementById("chart"), spec, buf);
+</script>"""
+    doc = f"""<!doctype html>
+<html>
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{_STANDALONE_CSP}">
+<title>{title_html}</title>
+<style>
+html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
+#chart{{width:100%;}}
+</style>
+{_custom_css_block(custom_css)}</head>
+<body>
+<div id="chart"></div>
+{client_html}
+<script>var __xyChunks = [];</script>
+{chunk_scripts}
+{boot}
+</body>
+</html>"""
+    if path is not None:
+        _atomic_write_text(path, doc)
+    return doc
+
+
+_NOTEBOOK_DIMENSION_RE = _re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:px|%|vw|vh|rem|em)?$")
+
+
+def _to_html_plain(
     fig: "Figure",
     path: Optional[str | PathLike[str]] = None,
     *,

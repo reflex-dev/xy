@@ -4254,15 +4254,19 @@ class Chart(Component):
         *,
         custom_css: Optional[str] = None,
         animation_progress: Optional[float] = None,
+        compress: bool = False,
     ) -> str:
         """A self-contained HTML document for the chart.
 
         Writes it to ``path`` when given; returns the HTML either way.
+        `compress=True` follows `export.to_html`: gzip self-extraction via
+        DecompressionStream, roughly halving the file.
         """
         return self.figure().to_html(
             path,
             custom_css=custom_css,
             animation_progress=animation_progress,
+            compress=compress,
         )
 
     def html(
@@ -4271,12 +4275,14 @@ class Chart(Component):
         *,
         custom_css: Optional[str] = None,
         animation_progress: Optional[float] = None,
+        compress: bool = False,
     ) -> str:
         """Alias of `to_html`."""
         return self.to_html(
             path,
             custom_css=custom_css,
             animation_progress=animation_progress,
+            compress=compress,
         )
 
     def _repr_html_(self) -> str:
@@ -5553,16 +5559,24 @@ class FacetChart(Component):
         return export.HtmlView(self._repr_html_())
 
     def to_html(
-        self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        custom_css: Optional[str] = None,
+        compress: bool = False,
     ) -> str:
         """A self-contained HTML document laying the panels out as a grid."""
-        return self.figure().to_html(path, custom_css=custom_css)
+        return self.figure().to_html(path, custom_css=custom_css, compress=compress)
 
     def html(
-        self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        custom_css: Optional[str] = None,
+        compress: bool = False,
     ) -> str:
         """Alias of `to_html`."""
-        return self.to_html(path, custom_css=custom_css)
+        return self.to_html(path, custom_css=custom_css, compress=compress)
 
     def _repr_html_(self) -> str:
         grid = self.figure()

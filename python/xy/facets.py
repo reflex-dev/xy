@@ -175,21 +175,26 @@ class FacetGrid:
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        compress: bool = False,
     ) -> str:
         """A self-contained HTML document laying the panels out as a grid.
 
         Writes it to ``path`` when given; returns the HTML either way.
+        `compress` follows `export.to_html`: gzip self-extraction via
+        DecompressionStream.
         """
+        compress = export._bool_option(compress, "to_html compress")
         panels: list[str] = []
         for i, fig in enumerate(self.figures):
             spec, blob = fig.build_payload(px_width=self.panel_width)
+            wire = export._gzip_deterministic(bytes(blob), level=6) if compress else blob
             panels.append(
                 "{" + f'"id":"xy-facet-{i}",'
                 f'"spec":{export._json_for_inline_script(spec)},'
-                f'"chunks":{export._json_for_inline_script(export._base64_chunks(blob))},'
-                f'"n":{len(blob)}' + "}"
+                f'"chunks":{export._json_for_inline_script(export._base64_chunks(wire))},'
+                f'"n":{len(wire)}' + "}"
             )
-        js = export._javascript_for_inline_script(export._bundled_js("standalone"))
+        client_html, client_prelude = export._client_assets(compress)
         title = export._html.escape(self.title or "xy facets")
         # Grid title rendered once here; each panel's own chart title is its
         # facet label, so labels are not duplicated in a separate strip.
@@ -199,6 +204,36 @@ class FacetGrid:
             else ""
         )
         css = export._custom_css_block(custom_css)
+        if compress:
+            boot = f"""<script>
+{export._DECODE_B64_JS}
+{export._INFLATE_JS}
+(async () => {{
+  const grid=document.getElementById("xy-facet-grid");
+  if (typeof DecompressionStream === "undefined") {{
+    grid.textContent = {export._COMPRESS_UNSUPPORTED_JS};
+    return;
+  }}
+  {client_prelude}
+  const panels=[{",".join(panels)}];
+  for(const p of panels){{
+    const panel=document.createElement("div"); panel.className="xy-facet-panel";
+    const host=document.createElement("div"); host.id=p.id; panel.append(host); grid.appendChild(panel);
+    const buf=await xyInflate(xyDecodeB64(p.chunks,p.n)); xy.renderStandalone(host,p.spec,buf);
+  }}
+}})();
+</script>"""
+        else:
+            boot = f"""<script>
+{export._DECODE_B64_JS}
+const panels=[{",".join(panels)}];
+const grid=document.getElementById("xy-facet-grid");
+for(const p of panels){{
+  const panel=document.createElement("div"); panel.className="xy-facet-panel";
+  const host=document.createElement("div"); host.id=p.id; panel.append(host); grid.appendChild(panel);
+  const buf=xyDecodeB64(p.chunks,p.n); xy.renderStandalone(host,p.spec,buf);
+}}
+</script>"""
         doc = f"""<!doctype html>
 <html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{export._STANDALONE_CSP}">
@@ -211,17 +246,8 @@ class FacetGrid:
 </style>
 {css}</head><body class="xy-facet-document">
 {heading}<div class="xy-facet-grid" id="xy-facet-grid"></div>
-<script>{js}</script>
-<script>
-{export._DECODE_B64_JS}
-const panels=[{",".join(panels)}];
-const grid=document.getElementById("xy-facet-grid");
-for(const p of panels){{
-  const panel=document.createElement("div"); panel.className="xy-facet-panel";
-  const host=document.createElement("div"); host.id=p.id; panel.append(host); grid.appendChild(panel);
-  const buf=xyDecodeB64(p.chunks,p.n); xy.renderStandalone(host,p.spec,buf);
-}}
-</script></body></html>"""
+{client_html}
+{boot}</body></html>"""
         if path is not None:
             export._atomic_write_text(path, doc)
         return doc
