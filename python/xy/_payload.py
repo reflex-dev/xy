@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from . import _native, channels, interaction, kernels, lod
+from ._legend import automatic_legend_visible
 from ._trace import Trace
 from .columns import Column
 from .config import (
@@ -345,7 +346,11 @@ class PayloadMixin(_Host):
             "traces": spec_traces,
             "columns": pw.columns,
             "backend": kernels.BACKEND,
-            "show_legend": self.show_legend,
+            "show_legend": (
+                automatic_legend_visible(spec_traces)
+                if self.legend_options.get("show") == "auto"
+                else self.show_legend
+            ),
             "view": {
                 "ranges": {axis_id: list(axis["range"]) for axis_id, axis in axis_specs.items()}
             },
@@ -413,6 +418,7 @@ class PayloadMixin(_Host):
             spec["animation"] = dict(self.animation_options)
         if self.legend_options:
             legend = dict(self.legend_options)
+            legend.pop("show", None)
             auto_loc = (
                 self.coords == "cartesian"
                 and legend.get("anchor") is None

@@ -31,6 +31,7 @@ import numpy as np
 
 from . import _fontmetrics, _native, _paint, _png, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
+from ._legend import legend_items
 from .config import DEFAULT_PALETTE, polar_bar_segments
 
 
@@ -6411,38 +6412,6 @@ def _legend_text(value: Any, max_width: float, char_width: float = _LEGEND_CHAR_
         if _legend_text_width("." * count, char_width) <= max_width + _LEGEND_FIT_EPS:
             return "." * count
     return ""
-
-
-def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -> list[dict]:
-    """Legend rows for a trace list — shared by the SVG and raster exporters.
-
-    A categorical `color=` channel is ONE trace carrying N categories, so the
-    old `[t for t in traces if t.get("name")]` drew a single row bearing the
-    trace's name and the trace's constant color: a legend that actively
-    misdescribed the picture beside it. Expand those into one row per category,
-    exactly as `ChartView._legend` does for the live client."""
-    items: list[dict] = []
-    for trace in traces:
-        style = dict(trace.get("style") or {})
-        use_trace_size = bool(style.pop("_legend_trace_size", False))
-        size = trace.get("size") or {}
-        if trace.get("kind") == "scatter" and use_trace_size and size.get("mode") == "constant":
-            style["size"] = float(size.get("size", 8.0))
-        color = trace.get("color") or {}
-        if color.get("mode") == "categorical":
-            categories = color.get("categories") or []
-            entry_palette = list(color.get("palette") or palette) or list(palette)
-            for index, category in enumerate(categories):
-                item_style = dict(style)
-                item_style["color"] = entry_palette[index % len(entry_palette)]
-                items.append(
-                    {"name": str(category), "kind": trace.get("kind"), "style": item_style}
-                )
-        elif trace.get("name"):
-            item = dict(trace)
-            item["style"] = style
-            items.append(item)
-    return items
 
 
 def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:

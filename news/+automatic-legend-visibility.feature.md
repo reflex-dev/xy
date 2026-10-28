@@ -1,0 +1,1 @@
+Add opt-in `xy.legend(show="auto")` to hide redundant legends for zero or one ordinary named series while retaining encoding legends. The default `show=True` and explicit `show=False` remain unchanged across browser and native exports.

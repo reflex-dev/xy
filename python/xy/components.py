@@ -266,7 +266,7 @@ class Axis(Component):
 class Legend(Component):
     """Legend chrome; ``render`` remains opaque for Reflex adapters."""
 
-    show: bool = True
+    show: Union[bool, Literal["auto"]] = True
     loc: Optional[str] = None
     ncols: int = 1
     title: Optional[str] = None
@@ -3122,7 +3122,7 @@ def r_axis(
 
 def legend(
     *children: Any,
-    show: bool = True,
+    show: Union[bool, Literal["auto"]] = True,
     loc: Optional[str] = None,
     anchor: Optional[tuple[float, ...]] = None,
     ncols: int = 1,
@@ -3137,7 +3137,9 @@ def legend(
 
     Args:
         *children: Optional opaque replacement content.
-        show: Whether to display the legend.
+        show: Whether to display the legend. ``"auto"`` hides zero or one
+            ordinary named series while retaining legends for per-row color,
+            size, stroke, or style encodings. The default remains ``True``.
         loc: Legend placement within or around the plot. ``"best"`` selects
             automatic least-overlap placement for an unanchored Cartesian
             chart; concrete names and ``None`` remain fixed.
@@ -3160,7 +3162,7 @@ def legend(
         if not all(math.isfinite(value) for value in anchor):
             raise ValueError("legend anchor must contain 2 or 4 finite numbers")
     return Legend(
-        show=_strict_bool(show, "legend show"),
+        show=_legend_show(show),
         loc=_validate.legend_loc(loc, "legend loc"),
         anchor=anchor,
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
@@ -3793,7 +3795,7 @@ class Chart(Component):
         themes = [c for c in self.children if isinstance(c, Theme)]
         interactions = [c for c in self.children if isinstance(c, Interaction)]
         animations = [c for c in self.children if isinstance(c, Animation)]
-        legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
+        legend_shows = [_legend_show(c.show) for c in legends]
         known = (
             Mark,
             Annotation,
@@ -4014,6 +4016,8 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if legend_shows[-1] == "auto":
+                fig.legend_options["show"] = "auto"
             if node.anchor is not None:
                 fig.legend_options["anchor"] = list(node.anchor)
             if node.title is not None:
@@ -5312,6 +5316,13 @@ def _merge_tooltip_aliases(aliases: dict[str, str], mark: Mark, traces: list[Any
         channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
         if channel is not None:
             aliases.setdefault(size, "size_value")
+
+
+def _legend_show(value: Any) -> Union[bool, Literal["auto"]]:
+    """Validate built-in legend visibility without treating other strings as booleans."""
+    if isinstance(value, str) and value == "auto":
+        return "auto"
+    return _strict_bool(value, "legend show")
 
 
 def _strict_bool(value: Any, label: str) -> bool:

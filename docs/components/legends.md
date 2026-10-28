@@ -34,6 +34,21 @@ The legend is available by default when the chart contains named series.
 Use `show=False` to suppress it. If more than one legend component is present,
 the last one supplies the effective built-in configuration.
 
+Use `xy.legend(show="auto")` to hide a redundant legend for zero or one ordinary
+named series while keeping legends for multiple series. Color, size, stroke,
+or style encodings keep their legend enabled, including a single categorical
+group. The default remains `show=True`; choose it explicitly when the
+single-series legend's toggle is useful. `show=False` always hides the built-in
+legend. Automatic visibility does not add direct labels or move the legend.
+
+```python
+xy.line_chart(
+    xy.line([0, 1, 2], [3, 5, 4], name="Revenue"),
+    xy.legend(show="auto"),
+    title="Revenue",
+)
+```
+
 ## Basic Legend from Named Series
 
 Giving each mark a `name=` is all it takes — a bare `xy.legend()` simply opts
@@ -215,6 +230,7 @@ lays the entries out in two columns under an optional legend title.
 
 ### How do I hide the legend or keep a series out of it?
 
-Use `xy.legend(show=False)` to suppress the legend entirely. Only marks with a
+Use `xy.legend(show=False)` to suppress the legend entirely, or
+`xy.legend(show="auto")` for conservative single-series suppression. Only marks with a
 `name=` participate in the legend, so omitting `name=` on a mark keeps that
 series out.

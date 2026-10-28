@@ -630,6 +630,25 @@ placeholder.
 
 ### Legend placement — `loc` and `anchor`
 
+`xy.legend(show="auto")` opts into conservative redundancy suppression for the
+built-in main legend. After trace names and channels resolve, zero or one
+ordinary named-series entry hides the legend; two or more retain it. Per-row
+color (including a single categorical group), size, stroke, or style encodings
+retain the existing enabled behavior, as do specialized mark families outside
+the ordinary line/scatter/area/bar/segment families. Those legends can describe
+an encoding beyond the series name. This policy does not infer meaning from a
+chart title, add direct labels, or reposition a legend.
+
+`show=True` remains the default, including a named single series and its
+interactive toggle. `show=False` always disables the built-in main legend.
+Opaque adapter replacement content and independently authored extra legends
+retain their own visibility semantics. The payload compiler re-evaluates
+`"auto"` from the resolved entries on each build and ships a boolean
+`show_legend`; browser layout, SVG, and native raster therefore consume the
+same decision, including polar gutter reservation and responsive resizing.
+Ordinary entry resolution is shared with the static exporters without changing
+their existing row construction.
+
 `xy.legend(loc=...)` places the legend against the plot rectangle by name
 (`"upper right"`, `"lower left"`, `"center"`, …). The box is inset 6 px from the
 named edge and kept inside the plot rectangle — static export clamps it there
