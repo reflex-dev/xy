@@ -677,6 +677,13 @@ re-scoring is a Cartesian in-plot behavior only. Supplying either one therefore
 omits `auto_loc`, even if Python had to settle a `"best"` spelling to a concrete
 location for the initial render.
 
+Every unanchored polar location resolves both coordinates against the reserved
+legend gutter, including left and centered locations. On compact charts the
+gutter becomes a band below the disc; upper, center, and lower locations then
+select positions within that band, rather than within the disc. Responsive
+resizing recomputes the gutter and both coordinates together. SVG and native
+raster export use the same gutter-relative location contract.
+
 In the browser the legend is a DOM overlay above the marks canvas, positioned
 through the private `--xy-legend-left` / `--xy-legend-top` custom properties and
 a matching `translate()`, with `--xy-legend-right` / `--xy-legend-bottom` set to

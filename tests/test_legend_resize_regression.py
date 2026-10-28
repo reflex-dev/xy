@@ -17,13 +17,50 @@ from pathlib import Path
 
 import pytest
 
-from conftest import run_browser_probe
+from conftest import probe_document, run_browser_probe
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
 import xy  # noqa: E402
+from xy import _svg  # noqa: E402
 from xy.export import find_chromium  # noqa: E402
+
+_POLAR_LEGEND_GUTTER_PROBE = r"""
+<script>
+(() => {
+  try {
+    const view = window.__fcProbeView;
+    const results = [];
+    view.fluid = true;
+    view.fluidH = true;
+    for (const width of [720, 380, 720]) {
+      view.root.style.width = width + "px";
+      view._resize(width, 520);
+      if (view._raf) cancelAnimationFrame(view._raf);
+      view._raf = null;
+      view._drawNow();
+      const root = view.root.getBoundingClientRect();
+      const legend = view._legends[0].getBoundingClientRect();
+      results.push({
+        width,
+        gutter: view._legendRect,
+        plot: view.plot,
+        legend: {
+          x: legend.left - root.left,
+          y: legend.top - root.top,
+          w: legend.width,
+          h: legend.height,
+        },
+      });
+    }
+    document.body.setAttribute("data-xy-polar-gutter", JSON.stringify({ results }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-polar-gutter-error", String(err.stack || err));
+  }
+})();
+</script>
+"""
 
 # Capture the standalone render call's return value so the probe can drive the
 # view directly (the same swap the visual-regression smoke uses).
@@ -671,6 +708,69 @@ def test_long_legend_and_edge_tooltip_stay_inside_narrow_chart() -> None:
     assert payload["tooltipColor"] == "rgb(250, 251, 252)", payload
     assert payload["tooltipPadding"] == "9px 11px", payload
     assert payload["tooltipRadius"] == "13px", payload
+
+
+@pytest.mark.parametrize(
+    "loc",
+    [
+        "upper left",
+        "upper center",
+        "upper right",
+        "center left",
+        "center",
+        "center right",
+        "lower left",
+        "lower center",
+        "lower right",
+    ],
+)
+def test_polar_legend_stays_in_its_gutter_across_resizes(loc: str, tmp_path: Path) -> None:
+    """Every location uses the reserved box, including the compact bottom band."""
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the polar legend gutter probe")
+    chart = xy.polar_chart(
+        xy.line([0.0, 1.0, 2.0, 3.0], [1.0, 2.0, 1.5, 1.0], name="Alpha"),
+        xy.line([0.0, 1.0, 2.0, 3.0], [2.0, 1.0, 2.5, 2.0], name="Beta"),
+        xy.legend(loc=loc, ncols=2),
+        width=720,
+        height=520,
+    )
+    payload = run_browser_probe(
+        chromium,
+        probe_document(chart, _POLAR_LEGEND_GUTTER_PROBE),
+        tmp_path / "polar_gutter.html",
+        "data-xy-polar-gutter",
+        label="polar legend gutter",
+    )
+    for result in payload["results"]:
+        box = result["gutter"]
+        legend = result["legend"]
+        plot = result["plot"]
+        assert box is not None, result
+        assert legend["x"] >= box["x"] - 1, result
+        assert legend["y"] >= box["y"] - 1, result
+        assert legend["x"] + legend["w"] <= box["x"] + box["w"] + 1, result
+        assert legend["y"] + legend["h"] <= box["y"] + box["h"] + 1, result
+        assert (
+            legend["x"] + legend["w"] <= plot["x"] + 1
+            or legend["x"] >= plot["x"] + plot["w"] - 1
+            or legend["y"] >= plot["y"] + plot["h"] - 1
+        ), result
+        spec, _ = chart.figure().build_payload()
+        spec["width"] = result["width"]
+        _, _, _, static_plot = _svg.layout(spec)
+        static_legend = _svg._legend_layout(
+            _svg.legend_items(spec["traces"]), static_plot, spec["legend"]
+        )
+        hx = 0 if "left" in loc else 1 if "right" in loc else 0.5
+        vy = 0 if "upper" in loc else 1 if "lower" in loc else 0.5
+        assert legend["x"] + hx * legend["w"] == pytest.approx(
+            static_legend["x"] + hx * static_legend["box_w"], abs=8
+        ), result
+        assert legend["y"] + vy * legend["h"] == pytest.approx(
+            static_legend["y"] + vy * static_legend["box_h"], abs=8
+        ), result
 
 
 def test_midpoint_annotation_labels_are_visually_centered() -> None:

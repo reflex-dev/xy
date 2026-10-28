@@ -4085,10 +4085,10 @@ export class ChartView {
       : loc.includes("lower") || locTokens.includes("bottom")
         ? "lower"
         : "center";
-    let left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
+    let left = h === "left" ? plot.x + 6 : h === "center" ? plot.x + plot.w / 2 : null;
     let right = h === "right" ? rightInset + 6 : null;
-    let top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
-    let bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    let top = v === "upper" ? plot.y + 6 : v === "center" ? plot.y + plot.h / 2 : null;
+    let bottom = v === "lower" ? this.size.h - (plot.y + plot.h) + 6 : null;
     if (Array.isArray(anchor) && (anchor.length === 2 || anchor.length === 4)) {
       const hx = h === "left" ? 0 : h === "right" ? 1 : 0.5;
       const vy = v === "lower" ? 0 : v === "upper" ? 1 : 0.5;
