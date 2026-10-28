@@ -190,7 +190,12 @@ def test_line_area_decimate_view_routes_through_shared_buffer_writer(monkeypatch
 
     assert [trace["x"]["buf"], trace["y"]["buf"], trace["base"]["buf"]] == [0, 1, 2]
     assert len(calls) == 3
-    assert len(buffers) == 3
+    assert len(buffers) == 5
+    runs = np.frombuffer(buffers[trace["runs"]["buf"]], dtype="<u4")
+    source_rows = np.frombuffer(buffers[trace["source_rows"]["buf"]], dtype="<u4")
+    np.testing.assert_array_equal(runs, [0, trace["x"]["len"]])
+    assert len(source_rows) == trace["x"]["len"]
+    assert np.all(np.diff(source_rows.astype(np.int64)) > 0)
     assert all(call["len"] == trace["x"]["len"] for call in calls)
     assert {"offset", "scale"} <= set(calls[0]["meta"])
 

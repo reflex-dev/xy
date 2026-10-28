@@ -179,7 +179,7 @@ def pick(
     canonical store, never through the f32 GPU path (design dossier §16/§17).
 
     Point-mark `index` is a shipped vertex index, translated to a canonical
-    row when the shipped copy dropped NaN rows. Lines send canonical indices
+    row when the shipped copy dropped NaN rows. Connected traces send canonical indices
     through their binary source-row map, so retained and refined windows can
     coexist without changing exact-row identity. Returns None if out of range.
 
@@ -534,9 +534,9 @@ def decimate_view(
                 "len": len(runs),
                 "dtype": "u32",
             }
-        if t.kind == "line" and len(idx):
+        if len(idx):
             if t.n_points > np.iinfo(np.uint32).max:
-                raise ValueError("Decimated lines exceed the uint32 source-row limit")
+                raise ValueError("Decimated traces exceed the uint32 source-row limit")
             update["source_rows"] = {
                 "buf": writer.add_raw(idx.astype("<u4").tobytes()),
                 "len": len(idx),

@@ -1988,9 +1988,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def pick(
         self, trace_id: int, index: int, drill_seq: Optional[int] = None
     ) -> Optional[dict[str, Any]]:
-        """Exact source-row readout for a hover/pick; `index` is a shipped
-        vertex index, translated to a canonical row when NaN rows were dropped
-        at ship time. Pass the client's `drill_seq` to reject a pick that
+        """Return an exact canonical readout for a hover/pick.
+
+        Connected traces send canonical indices; point marks send shipped
+        vertex indices, translated when rows were filtered or decimated.
+        Pass the client's `drill_seq` to reject a pick that
         raced a drill update (wrong index space → None, never a wrong row)."""
         return interaction.pick(self, trace_id, index, drill_seq)
 
@@ -2011,7 +2013,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def decimate_view(
         self, x0: float, x1: float, px_width: int
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Re-decimate the visible line windows on zoom, re-centering the
+        """Re-decimate visible connected-trace windows on zoom, re-centering the
         f32 upload offsets so precision holds at deep zoom."""
         return interaction.decimate_view(self, x0, x1, px_width)
 
