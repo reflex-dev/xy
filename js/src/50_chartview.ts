@@ -1,7 +1,7 @@
 import { FUNNEL_SLOTS, LINE_RUN_GPU_BUFFERS, PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
-import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtNumberSpec, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, FUNNEL_VS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { acquireGLHost } from "./42_glhost";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
@@ -847,13 +847,21 @@ export class ChartView {
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
-    const right = marginRight + this._rightAxisRoom;
+    let right = marginRight + this._rightAxisRoom;
     // Measurement can consume spare canvas room, but it must not move the
     // y-axis anchor past the viewport on a chart whose authored padding has
     // already reached the 40 px plot floor. In that compact case the tick
     // labels retain their full text in `title`/ARIA and ellipsize in bounds.
     const measuredLeftCap = Math.max(authoredLeft, this.size.w - right - 40);
-    const marginLeft = Math.min(measuredLeft, measuredLeftCap);
+    let marginLeft = Math.min(measuredLeft, measuredLeftCap);
+    // Only the disambiguated numeric labels need this new live reservation.
+    // Static exports already measure terminal label ink in their layout.
+    for (let pass = 0; pass < 2; pass++) {
+      const room = this._numericPrecisionRoom(Math.max(40, this.size.w - marginLeft - right), plotHeight);
+      right = Math.max(right, room.right);
+      marginLeft = Math.min(Math.max(marginLeft, room.left),
+        Math.max(authoredLeft, this.size.w - right - 40));
+    }
     const plotWidth = Math.max(40, this.size.w - marginLeft - right);
     const measuredTopAxisRoom = this._xAxisRoom("top", plotWidth);
     const measuredBottomAxisRoom = this._xAxisRoom("bottom", plotWidth);
@@ -1068,6 +1076,48 @@ export class ChartView {
       title.style.maxWidth = `${Math.max(40, Number(this._titleWrapWidth) || 40)}px`;
       title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
     }
+  }
+
+  _numericPrecisionRoom(plotWidth, plotHeight) {
+    let left = 0, right = 0;
+    if (this.spec?.coords === "polar") return { left, right };
+    const inheritedSize = (this.root && parseFloat(getComputedStyle(this.root).fontSize)) || 12;
+    for (const axis of Object.values<any>(this.axes || {})) {
+      if (!axis || axis.show === false || axis.kind === "time" || axis.kind === "category" ||
+          (axis.scale && axis.scale !== "linear") || fmtNumberSpec(0, axis.format) !== null || axis.tick_labels ||
+          this._axisTickLabelStrategy(axis) !== "auto" ||
+          this._axisTickLabelAngle(axis) !== null || this._axisTickLabelAnchor(axis)) continue;
+      const dim = this._axisDim(axis.id);
+      const sides = this._axisTickLabelSides(axis);
+      if (!sides.length) continue;
+      const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id,
+        Math.max(3, dim === "x" ? plotWidth / 80 : plotHeight / 45)));
+      const values = ticks.labels || ticks.ticks;
+      if (!values.some(value => this._axisTickText(axis, value, ticks.step) !== fmtLinear(value, ticks.step))) continue;
+      const size = this._axisStyleNumber(axis, "tick_label_size",
+        this._axisStyleNumber(axis, "tick_size", this._slotFontSize("tick_label", inheritedSize)));
+      const [lo, hi] = this._axisRange(axis.id);
+      for (const value of values) {
+        const width = this._estimateTickLabel(this._axisTickText(axis, value, ticks.step), size).w;
+        if (dim === "x") {
+          const pos = hi === lo ? plotWidth / 2 : (value - lo) / (hi - lo) * plotWidth;
+          left = Math.max(left, Math.ceil(4 + width / 2 - pos));
+          right = Math.max(right, Math.ceil(4 + pos + width / 2 - plotWidth));
+        } else {
+          if (sides.includes("left")) {
+            const priorSize = this._axisStyleNumber(axis, "tick_label_size",
+              this._axisStyleNumber(axis, "tick_size", 11));
+            const priorWidth = this._estimateTickLabel(this._axisTickText(axis, value, ticks.step), priorSize).w;
+            // Retain the existing outside-title reservation while recovering
+            // the inherited font width and the default 8px tick offset.
+            left = Math.max(left, Math.ceil(12 + width),
+              Math.ceil(this._yAxisLeftRoom(plotHeight) + Math.max(0, width - priorWidth) + 8));
+          }
+          if (sides.includes("right")) right = Math.max(right, Math.ceil(12 + width));
+        }
+      }
+    }
+    return { left, right };
   }
 
   _yAxisLeftRoom(plotHeight) {

@@ -183,6 +183,23 @@ export function fmtLinear(v, step) {
   return v.toFixed(Math.min(dec, 8));
 }
 
+// Default numeric ticks retain the compact style unless its rounding merges
+// adjacent step values. Mirror `_fmt_numeric_tick` in python/xy/_svg.py.
+function fmtNumericTick(v, step) {
+  const compact = fmtLinear(v, step);
+  const av = Math.abs(v), spacing = Math.abs(step);
+  if (!Number.isFinite(v) || !Number.isFinite(spacing) || spacing === 0 ||
+      !(av >= 1e6 || (av !== 0 && av < 1e-4))) return compact;
+  if (Number(compact) !== Number(fmtLinear(v + spacing, step)) &&
+      Number(compact) !== Number(fmtLinear(v - spacing, step))) return compact;
+  let decimals = Math.max(0, Math.ceil(-Math.log10(spacing)));
+  while (decimals < 100 && Math.abs(Number(spacing.toFixed(decimals)) - spacing) > spacing / 1000) decimals++;
+  const significant = Math.max(1, Math.min(17, Math.ceil(Math.log10(av) - Math.log10(spacing)) + 1));
+  const exponential = v.toExponential(significant).replace("e+", "e");
+  const fixed = v.toFixed(Math.min(decimals, 100));
+  return fixed.length <= exponential.length ? fixed : exponential;
+}
+
 // Match Python's default ``:g`` formatting used by the SVG/native colorbar
 // exporters. Explicit ticks are authored values, so their precision must not
 // be inferred from the unrelated automatic tick step for the whole domain.
@@ -303,7 +320,7 @@ export function fmtAxis(axis, v, tickStep) {
     // fallback. Either way the magnitude-derived label is the useful one.
     if (collapsedToZero(formatted)) return fmtLog(v);
   }
-  return formatted || fmtLinear(v, tickStep);
+  return formatted || (axis && axis.scale === "log" ? fmtLinear(v, tickStep) : fmtNumericTick(v, tickStep));
 }
 
 export function fmtValue(v, kind?: any) {

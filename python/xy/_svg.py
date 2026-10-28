@@ -688,6 +688,31 @@ def _fmt_linear(v: float, step: float) -> str:
     return f"{v:.{min(dec, 8)}f}"
 
 
+def _fmt_numeric_tick(v: float, step: float) -> str:
+    """Widen only default exponential labels that merge adjacent step values."""
+    compact = _fmt_linear(v, step)
+    av, spacing = abs(v), abs(step)
+    if (
+        not math.isfinite(v)
+        or not math.isfinite(spacing)
+        or spacing == 0
+        or not (av >= 1e6 or 0 < av < 1e-4)
+    ):
+        return compact
+    if float(compact) not in (
+        float(_fmt_linear(v + spacing, step)),
+        float(_fmt_linear(v - spacing, step)),
+    ):
+        return compact
+    decimals = max(0, math.ceil(-math.log10(spacing)))
+    while decimals < 100 and abs(round(spacing, decimals) - spacing) > spacing / 1000:
+        decimals += 1
+    significant = max(1, min(17, math.ceil(math.log10(av) - math.log10(spacing)) + 1))
+    exponential = f"{v:.{significant}e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
+    fixed = f"{v:.{min(decimals, 100)}f}"
+    return fixed if len(fixed) <= len(exponential) else exponential
+
+
 # `<prefix>(,).N[f|%]<suffix>` — the numeric format grammar of
 # spec/api/styling.md. Deliberately the same regex as `fmtNumberSpec` in
 # js/src/30_ticks.ts: an axis must not read "$1,000,000" in the browser and
@@ -825,7 +850,9 @@ def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
     # either way. Mirrors `fmtAxis`.
     if axis.get("scale") == "log" and 0 < v < 1 and _collapsed_to_zero(formatted):
         return _fmt_log(v)
-    return formatted if formatted is not None else _fmt_linear(v, step)
+    if formatted is not None:
+        return formatted
+    return _fmt_linear(v, step) if axis.get("scale") == "log" else _fmt_numeric_tick(v, step)
 
 
 def _tick_text(axis: dict[str, Any], value: float, step: float) -> str:

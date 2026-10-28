@@ -37,6 +37,14 @@ def axes_domain_demo():
     return reflex_xy.chart(ax_domain_chart, height="320px")
 ~~~
 
+Automatic numeric labels retain enough precision to distinguish small steps
+around a large offset. For example, ticks at `1e12` and `1e12 + 200` display
+as `1000000000000` and `1000000000200` rather than two identical `1.0e12`
+labels. XY measures the recovered labels and applies its usual responsive
+label spacing. Values and domains are unchanged. An authored `format=` or
+`tick_labels=` remains authoritative; choose those when a compact custom
+presentation is preferable to displaying full values.
+
 ## Set the Scale Contract
 
 ~~~python demo exec

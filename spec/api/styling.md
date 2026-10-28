@@ -554,6 +554,17 @@ but they fail differently, and only the numeric grammar falls back.
   automatic ones, so `layout()` measures them and widens the left gutter when
   they need it (`_left_tick_label_room`); a chart whose labels already fit keeps
   its previous geometry byte for byte.
+  Default numeric ticks retain their compact exponential text unless that
+  rounding merges adjacent step values. In that case, the default formatter
+  uses sufficient step-derived precision and chooses the shorter fixed or
+  exponential representation. The browser and SVG/native PNG share this
+  rule; authored `format` and `tick_labels` still win. Live layout reserves
+  terminal x-label ink and the inherited tick font width only for these
+  precision-recovered numeric labels; ordinary numeric, time, category, log,
+  and hidden-axis layout rules remain unchanged. Existing automatic label
+  thinning/staggering still applies. This is full-value notation, without an
+  offset annotation or any change to data, domains, or hover values. Automatic
+  tick density can adapt to the plot width remaining after text reservation.
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
   **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)
