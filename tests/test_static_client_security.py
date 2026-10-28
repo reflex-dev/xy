@@ -156,6 +156,7 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
             "icon.innerHTML = this._icon(name);",
             "icon.innerHTML = this._icon(name);",
             "icon.innerHTML = this._icon(name);",
+            'headerIcon.innerHTML = this._icon("controls");',
             "this._selectMenuIcon.innerHTML = this._icon(iconName);",
         ]
 
