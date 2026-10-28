@@ -1,0 +1,22 @@
+{
+  "xy_module": "/workspace/xy-area-gap-baseline/python/xy/__init__.py",
+  "results": [
+    {
+      "width": 720,
+      "center_gap_blue_pixels": 936,
+      "finite_band_blue_pixels": 936,
+      "protocol": 14,
+      "trace_count": 2,
+      "upper_has_runs": false
+    },
+    {
+      "width": 380,
+      "center_gap_blue_pixels": 960,
+      "finite_band_blue_pixels": 960,
+      "protocol": 14,
+      "trace_count": 2,
+      "upper_has_runs": false
+    }
+  ],
+  "client_sha256": "5816e94b2db3543400e449575a46218d18602b452ce880d068b7904c46379f31"
+}

@@ -5766,16 +5766,41 @@ export class ChartView {
     g.baseMeta = { ...this.spec.columns[t.base] };
     g.n = Math.min(x.length, y.length, base.length);
     g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };
-    const sm = this._smoothArrays(t, x, y, base, g.n);
-    g.xBuf = this._upload(sm ? sm.x : x);
-    g.yBuf = this._upload(sm ? sm.y : y);
-    g.baseBuf = this._upload(sm ? sm.extra : base);
-    if (sm) g.n = sm.n;
-    g._dashX = sm ? sm.x : x;
-    g._dashY = sm ? sm.y : y;
+    const runs = Number.isInteger(t.runs) ? this._columnView(buffer, this.spec.columns[t.runs]) : null;
+    g._sourceRows = Number.isInteger(t.source_rows) ? this._columnView(buffer, this.spec.columns[t.source_rows]) : null;
+    const expanded = this._areaArrays(t, x, y, base, g.n, runs);
+    g.xBuf = this._upload(expanded.x);
+    g.yBuf = this._upload(expanded.y);
+    g.baseBuf = this._upload(expanded.base);
+    g.n = expanded.n;
+    g._lineRanges = expanded.ranges;
+    g._dashX = expanded.x;
+    g._dashY = expanded.y;
+    g._dashBase = expanded.base;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.lineColor = parseColor(this.root, t.style && (t.style.line_color || t.style.color), g.color);
     g.grad = this._resolveMarkFill(t.style, g.color);
+  }
+
+  _areaArrays(t, x, y, base, n, runs = null) {
+    const expand = (xx, yy, bb) => {
+      const sm = this._smoothArrays(t, xx, yy, bb, xx.length);
+      return sm ? { x: sm.x, y: sm.y, base: sm.extra, n: sm.n } : { x: xx, y: yy, base: bb, n: xx.length };
+    };
+    if (!runs) return { ...expand(x, y, base), ranges: null };
+    const parts = [], ranges = [];
+    let count = 0;
+    for (let i = 1; i < runs.length; i++) {
+      const start = Number(runs[i - 1]), end = Math.min(n, Number(runs[i]));
+      const part = expand(x.subarray(start, end), y.subarray(start, end), base.subarray(start, end));
+      ranges.push([count, part.n]); count += part.n; parts.push(part);
+    }
+    const xx = new Float32Array(count), yy = new Float32Array(count), bb = new Float32Array(count);
+    let offset = 0;
+    for (const part of parts) {
+      xx.set(part.x, offset); yy.set(part.y, offset); bb.set(part.base, offset); offset += part.n;
+    }
+    return { x: xx, y: yy, base: bb, n: count, ranges };
   }
 
   _buildRectMark(g, t, buffer) {
@@ -7313,16 +7338,27 @@ export class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     this._setGradientUniforms(prog, g.grad);
-    this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
-      this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
-      this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
-      this._vaoAttr(ATTR_SLOTS.ab0, g.baseBuf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ab1, g.baseBuf, 4, 1);
-    });
-    const count = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+    const ranges = g._lineRanges || [[0, g.n]];
+    const total = ranges.reduce((sum, range) => sum + Math.max(0, range[1] - 1), 0);
+    let remaining = total * reveal;
+    for (const [start, count] of ranges) {
+      const segments = Math.max(0, count - 1);
+      const visible = Math.max(0, Math.min(segments, remaining));
+      remaining -= segments;
+      if (!visible) continue;
+      gl.uniform1f(u("u_revealProgress"), visible / segments);
+      gl.uniform1f(u("u_revealSegments"), segments);
+      const offset = start * 4;
+      this._bindVao(g, `area:${start}`, [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
+        this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, offset, 1);
+        this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, offset + 4, 1);
+        this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, offset, 1);
+        this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, offset + 4, 1);
+        this._vaoAttr(ATTR_SLOTS.ab0, g.baseBuf, offset, 1);
+        this._vaoAttr(ATTR_SLOTS.ab1, g.baseBuf, offset + 4, 1);
+      });
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, Math.ceil(visible));
+    }
   }
 
   _drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
@@ -8848,7 +8884,7 @@ export class ChartView {
     let best = null;
     const polarGeom = this._polarGeometry();
     for (const candidate of this.gpuTraces) {
-      const g = candidate.trace.kind === "line" ? this._decimatedDrawable(candidate) : candidate;
+      const g = ["line", "area", "error_band"].includes(candidate.trace.kind) ? this._decimatedDrawable(candidate) : candidate;
       if (g.tier === "density") continue;
       // A legend-hidden series draws nothing, so it must not answer hover
       // either (interaction spec §10) — before this guard every CPU-hover

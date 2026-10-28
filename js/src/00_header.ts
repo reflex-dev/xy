@@ -49,7 +49,8 @@
 // v13: the `funnel` trace kind. markOf() falls back to scatter for unknown
 // kinds, so a v12 client would silently render funnel quads as a point cloud.
 // v14: binary line run boundaries preserve gaps; a v13 client bridges them.
-export const PROTOCOL = 14;
+// v15: area/error-band run boundaries preserve disconnected fills.
+export const PROTOCOL = 15;
 
 // One wire-column -> generic GL-slot contract for funnel geometry. Object
 // insertion order is also the instance-attribute order used by build, filter,

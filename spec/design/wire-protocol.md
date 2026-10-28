@@ -30,6 +30,15 @@ canonical mapped row; point-mark requests retain their shipped-index contract.
 Missing topology is emitted only for invalid-sample lines; ordinary finite lines
 retain their existing hot path. Area and error-band gap topology is not included.
 
+Protocol 15 extends these same binary fields to `area` and `error_band`.
+Each emitted run closes its own fill between upper and explicit baseline; no
+polygon or outline crosses an invalid x, y or baseline row. M4 unions upper,
+baseline and thickness extrema within each finite run. Constant boundaries use
+the equivalent single-score selection. Decimated finite filled traces also
+carry canonical `source_rows`; direct finite traces keep their original path.
+No new JSON data columns or native ABI change are required. A v14 client must
+reject these specs instead of ignoring fill topology.
+
 - Non-dict `content`, an unknown `type`, a missing required field, or a value
   that fails coercion returns `None`. Client-supplied data never raises;
   exceptions from *user callbacks* do propagate.
@@ -65,8 +74,8 @@ Every request is a dict with a `type`. Coordinate fields are JSON numbers in
 **`view`** — sent by `_scheduleViewRequest` when the chart holds any trace at
 `tier === "decimated"` and a pan/zoom crossed what the shipped decimation can
 serve. `x0`/`x1` are coerced with `float()` and must satisfy `x1 > x0`; `px`
-defaults to `2048` and the client passes the rounded plot width. Only `line`
-and `area` traces above `DECIMATION_THRESHOLD` are re-decimated; if that
+defaults to `2048` and the client passes the rounded plot width. Only `line`,
+`area` and `error_band` traces above `DECIMATION_THRESHOLD` are re-decimated; if that
 produces no traces, there is no reply at all (silence, not an empty message).
 
 **`density_view`** — one request per density-tier trace, each naming its
@@ -94,8 +103,10 @@ covering texture stands, however blurry; traces with no recorded counts
 always request.
 
 **`pick`** — `trace` and `index` pass through `_integer_id`. `index` is a
-*shipped-vertex* index, translated kernel-side to a canonical row when the
-shipped copy dropped non-finite rows. `drill_seq`, when present, is the drill
+canonical row for connected line/area/error-band geometry: its client-side
+`source_rows` map translates the displayed vertex before sending. Direct finite
+connected geometry uses identity indices. Point marks send a *shipped-vertex*
+index, translated kernel-side when their shipped copy dropped non-finite rows. `drill_seq`, when present, is the drill
 subset version the client picked against; a non-current seq translates
 through the kernel's bounded subset history when it is still remembered (the
 client may be drawing a retired cached point window, LOD doc T13) and
@@ -489,12 +500,12 @@ Two independent version constants:
 The in-process native ABI is separate from these wire versions. Batched line
 decimation adds `xy_m4_runs_indices` at native ABI 48, with matching Python
 bindings required. Its selected rows and boundaries match the prior per-run
-implementation exactly, so renderer protocol 14 and frame version 1 do not
-change.
+implementation exactly; batching itself did not change the renderer protocol
+or frame version 1. The subsequent filled-run extension uses renderer protocol 15.
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 14` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 15` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 14` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 15` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -549,7 +560,9 @@ change.
   unknown kinds, so a cached v12 client would silently draw every funnel as a
   point cloud of trailing cross edges. v14 adds line run boundaries and canonical
   source-row maps; a cached v13 client would ignore the fields and bridge missing
-  samples, so the version mismatch must reject it before rendering.
+  samples, so the version mismatch must reject it before rendering. v15 extends
+  that topology to filled areas/error bands; a v14 client would ignore those
+  boundaries and close the fill across missing intervals.
   The optional `legend.auto_loc` field described in §5.1 deliberately does
   **not** increment v13: it accompanies an already concrete `legend.loc`, so a
   cached client that does not recognize the hint renders the same correct

@@ -850,7 +850,7 @@ def _column(blob: bytes, meta: dict[str, Any]) -> np.ndarray:
 
 
 def _line_runs(blob: bytes, cols: list[dict[str, Any]], trace: dict[str, Any], n: int):
-    """Yield finite-run slices from binary line topology, or the whole line."""
+    """Yield finite-run slices from connected geometry, or the whole trace."""
     if "runs" not in trace:
         yield slice(0, n)
         return
@@ -4141,7 +4141,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 bv = np.clip(bv, radial_min, radial_max)
             # Still needed for the (non-perimeter) outline below; the fill
             # builds its own paired paths so each visible run can close alone.
-            top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth, polar)
+            topology = list(_line_runs(blob, cols, t, len(xv)))
+            top_path = " ".join(
+                _curve_path(xv[run], yv[run], trace_sx, trace_sy, smooth, polar) for run in topology
+            )
             fill_spec = style.get("fill")
             fill = (
                 svg.gradient(fill_spec, color, plot)
@@ -4155,7 +4158,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             # " L  Z", malformed path data that also reached the PDF
             # converter's _parse_path, or stitched the first top run onto the
             # base with a stray L. Close each visible run on its own.
-            joined = _area_fill_path(xv, yv, bv, trace_sx, trace_sy, smooth, polar)
+            joined = " ".join(
+                _area_fill_path(xv[run], yv[run], bv[run], trace_sx, trace_sy, smooth, polar)
+                for run in topology
+            )
             if joined:
                 marks.append(f'<path d="{joined}" fill="{fill}" fill-opacity="{_num(op)}"/>')
             lw = float(style.get("line_width", 1.2))

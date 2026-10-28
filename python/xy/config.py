@@ -45,7 +45,9 @@ import warnings
 # cloud.
 # v14 adds binary finite-run boundaries to lines. A v13 client would ignore
 # those boundaries and invent a connection across missing samples.
-PROTOCOL_VERSION = 14
+# v15 extends run topology to filled areas and error bands. A v14 client
+# would join disconnected fills, so these payloads require matching clients.
+PROTOCOL_VERSION = 15
 
 # Mark kinds the polar transform renders correctly today. Everything else is
 # refused by Figure._validate_coords rather than approximated: the rect, area,

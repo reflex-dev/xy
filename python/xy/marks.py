@@ -1729,7 +1729,14 @@ def area(
         if len(bc) != len(xc):
             raise ValueError(f"area base must have length {len(xc)}, got {len(bc)}")
         if self.coords != "polar" and not kernels.is_sorted(xc.values):
-            order = np.argsort(xc.values, kind="stable")
+            valid = np.isfinite(xc.values) & np.isfinite(yc.values) & np.isfinite(bc.values)
+            if bool(valid.all()):
+                order = np.argsort(xc.values, kind="stable")
+            else:
+                edges = np.flatnonzero(np.diff(np.r_[False, valid, False]))
+                order = np.arange(len(xc.values))
+                for start, stop in edges.reshape(-1, 2):
+                    order[start:stop] = start + np.argsort(xc.values[start:stop], kind="stable")
             xc = self.store.ingest(xc.values[order])
             yc = self.store.ingest(yc.values[order])
             bc = self.store.ingest(bc.values[order])
@@ -1806,7 +1813,14 @@ def error_band(
         if len(uc) != len(xc):
             raise ValueError(f"error_band upper must have length {len(xc)}, got {len(uc)}")
         if self.coords != "polar" and not kernels.is_sorted(xc.values):
-            order = np.argsort(xc.values, kind="stable")
+            valid = np.isfinite(xc.values) & np.isfinite(lc.values) & np.isfinite(uc.values)
+            if bool(valid.all()):
+                order = np.argsort(xc.values, kind="stable")
+            else:
+                edges = np.flatnonzero(np.diff(np.r_[False, valid, False]))
+                order = np.arange(len(xc.values))
+                for start, stop in edges.reshape(-1, 2):
+                    order[start:stop] = start + np.argsort(xc.values[start:stop], kind="stable")
             xc = self.store.ingest(xc.values[order])
             lc = self.store.ingest(lc.values[order])
             uc = self.store.ingest(uc.values[order])

@@ -1,0 +1,145 @@
+{
+  "source": "/workspace/xy-area-gap-work/python/xy/__init__.py",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+  "numpy": "2.5.1",
+  "process_peak_rss_kib": 97024,
+  "measure": "payload construction only; no browser/FPS/memory-delta claim",
+  "records": [
+    {
+      "rows": 1000,
+      "fragmentation": "finite",
+      "ms": [
+        0.33097699997597374,
+        0.1461799997741764,
+        0.09862799970505876
+      ],
+      "median_ms": 0.1461799997741764,
+      "marks": 1000,
+      "payload_bytes": 12000,
+      "runs": false,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 1000,
+      "fragmentation": "one-gap",
+      "ms": [
+        0.32276499996442,
+        0.17620499966142233,
+        0.18855300004361197
+      ],
+      "median_ms": 0.18855300004361197,
+      "marks": 999,
+      "payload_bytes": 15996,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 1000,
+      "fragmentation": "every-100",
+      "ms": [
+        0.20966499960195506,
+        0.15072599990162416,
+        16.74920299956284
+      ],
+      "median_ms": 0.20966499960195506,
+      "marks": 990,
+      "payload_bytes": 15884,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 100000,
+      "fragmentation": "finite",
+      "ms": [
+        11.921020000045246,
+        2.3602649998792913,
+        2.174456999910035
+      ],
+      "median_ms": 2.3602649998792913,
+      "marks": 2083,
+      "payload_bytes": 33336,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 100000,
+      "fragmentation": "one-gap",
+      "ms": [
+        1.8312719998903049,
+        1.1876539997501823,
+        1.0194120000051043
+      ],
+      "median_ms": 1.1876539997501823,
+      "marks": 2083,
+      "payload_bytes": 33340,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 100000,
+      "fragmentation": "every-100",
+      "ms": [
+        2.9115040001670422,
+        2.5818190001700714,
+        2.1639510000568407
+      ],
+      "median_ms": 2.5818190001700714,
+      "marks": 4017,
+      "payload_bytes": 68276,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 1000000,
+      "fragmentation": "finite",
+      "ms": [
+        11.258733999966353,
+        8.97861399971589,
+        13.064371999917057
+      ],
+      "median_ms": 11.258733999966353,
+      "marks": 5345,
+      "payload_bytes": 85528,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 1000000,
+      "fragmentation": "one-gap",
+      "ms": [
+        11.592752000069595,
+        14.791682999657496,
+        9.289365999848087
+      ],
+      "median_ms": 11.592752000069595,
+      "marks": 5345,
+      "payload_bytes": 85532,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    },
+    {
+      "rows": 1000000,
+      "fragmentation": "every-100",
+      "ms": [
+        19.74010799995085,
+        19.316960999731236,
+        19.893262000096
+      ],
+      "median_ms": 19.74010799995085,
+      "marks": 28391,
+      "payload_bytes": 494260,
+      "runs": true,
+      "canonical_top_unchanged": true,
+      "canonical_base_unchanged": true
+    }
+  ]
+}

@@ -482,7 +482,7 @@ Object.assign(ChartView.prototype, {
     // geometry; ordinary point-series navigation deliberately keeps the full
     // retained CPU rows even when the legend hides their paint, preserving
     // the pre-funnel accessibility path and stable "Point N of total" count.
-    return (this.gpuTraces || []).map((g) => g.trace.kind === "line" ? this._decimatedDrawable(g) : g).filter((g) => {
+    return (this.gpuTraces || []).map((g) => ["line", "area", "error_band"].includes(g.trace.kind) ? this._decimatedDrawable(g) : g).filter((g) => {
       const mark = markOf(g.trace.kind);
       return (mark.pointPick || mark.stageNav) && g.tier !== "density" &&
         (!mark.stageNav || !g._legendHidden) && g._cpu &&

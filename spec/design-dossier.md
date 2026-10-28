@@ -877,7 +877,14 @@ no NaN reaches a vertex buffer. A retained home view keeps its own topology and
 source-row map for hover/keyboard fallback. Gap-bearing appends rebuild, and
 position interpolation snaps instead of inventing connections. Cartesian ingest
 preserves invalid-x separators and sorts finite runs independently. This does not
-complete Arrow validity bitmaps or area/error-band/stack baseline gap semantics.
+complete Arrow validity bitmaps. Protocol 15 extends the same run topology to
+areas and error bands: invalid x, top or explicit baseline breaks the fill and
+outline. M4 preserves upper, baseline and thickness extrema by unioning selected
+rows within each run; constant boundaries use the equivalent single score.
+Composed stacks preserve their explicitly supplied top/base arrays without
+imputation or a new stacking API. Smooth fills, SVG/native raster, refined/home
+geometry and canonical hover keep those boundaries. Direct finite filled traces
+remain unchanged. Filled-trace append and polar error bands remain unsupported.
 Highly fragmented lines require one draw per nontrivial run and are not a
 performance-equivalent substitute for an unbroken line.
 

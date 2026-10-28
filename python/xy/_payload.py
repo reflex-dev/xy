@@ -627,7 +627,9 @@ class PayloadMixin(_Host):
             if not bool(valid.all()):
                 decimated = self.coords != "polar" and t.n_points > DECIMATION_THRESHOLD
                 mx, bounds = self._binning_coords(t.x_axis, t.x.values, xr)
-                window = (bounds[0], bounds[1] + np.finfo(np.float64).eps) if decimated else None
+                window = (
+                    (bounds[0], bounds[1] + float(np.finfo(np.float64).eps)) if decimated else None
+                )
                 sel, runs = lod.line_run_indices(mx, t.y.values, valid, window, px_width)
                 entry = self._base_entry(
                     t,
@@ -671,6 +673,43 @@ class PayloadMixin(_Host):
     ) -> dict[str, Any]:
         if t.base is None:
             raise ValueError("area trace missing baseline column")
+        decimated = self.coords != "polar" and t.n_points > DECIMATION_THRESHOLD
+        valid = (
+            self._log_visible_mask(t, t.x.values, t.y.values, t.base.values)
+            if self._visible_mask_needed(t, prefiltered=False, base_column=t.base)
+            else None
+        )
+        if decimated or (valid is not None and not bool(valid.all())):
+            if valid is None:
+                valid = np.ones(t.n_points, dtype=bool)
+            mx, bounds = self._binning_coords(t.x_axis, t.x.values, xr)
+            window = (bounds[0], bounds[1] + float(np.finfo(np.float64).eps)) if decimated else None
+            sel, runs = lod.area_run_indices(
+                mx,
+                t.y.values,
+                t.base.values,
+                valid,
+                window,
+                px_width,
+                top_constant=t.y.min == t.y.max,
+                base_constant=t.base.min == t.base.max,
+            )
+            entry = self._base_entry(
+                t,
+                pw,
+                t.x.values[sel],
+                t.y.values[sel],
+                "decimated" if decimated else "direct",
+                self._default_styled(t),
+            )
+            entry["base"] = pw.ship(t.base.values[sel], t.base, scale=self._axis_scale(t.y_axis))
+            entry["runs"] = pw.ship_u32(runs)
+            entry["source_rows"] = pw.ship_u32(sel.astype(np.uint32))
+            if decimated:
+                entry["decimation_px"] = int(px_width)
+            if t.transition_keys is not None:
+                self._transition_entry(entry, t, pw, sel)
+            return entry
         tier, (xv, yv, bv) = self._m4_decimate(
             t, xr, px_width, t.x.values, t.y.values, t.base.values
         )

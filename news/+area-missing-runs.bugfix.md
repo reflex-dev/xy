@@ -1,0 +1,1 @@
+Preserve missing intervals in areas and error bands across live rendering and native exports. Decimation retains upper, baseline and thickness extrema, with canonical hover row IDs. Renderer protocol 15 requires matching clients.

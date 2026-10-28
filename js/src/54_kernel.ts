@@ -753,12 +753,14 @@ Object.assign(ChartView.prototype, {
         // tier swaps instead of collapsing to a plain polyline.
         const runs = upd.runs ? this._asU32(buffers[upd.runs.buf]).subarray(0, upd.runs.len) : null;
         const line = g.trace.kind === "line" ? this._lineArrays(g.trace, xArr, yArr, n, runs) : null;
-        const sm = line ? null : this._smoothArrays(g.trace, xArr, yArr, bArr, n);
-        const src = line || sm || { x: xArr, y: yArr, n };
-        const st = line ? null : this._stepArrays(g.trace, src.x, src.y, src.n);
-        if (line) {
+        const area = bArr ? this._areaArrays(g.trace, xArr, yArr, bArr, n, runs) : null;
+        const connected = line || area;
+        const sm = connected ? null : this._smoothArrays(g.trace, xArr, yArr, bArr, n);
+        const src = connected || sm || { x: xArr, y: yArr, n };
+        const st = connected ? null : this._stepArrays(g.trace, src.x, src.y, src.n);
+        if (connected) {
           this._deleteVaos(g);
-          g._lineRanges = line.ranges;
+          g._lineRanges = connected.ranges;
           g._sourceRows = upd.source_rows ? this._asU32(buffers[upd.source_rows.buf]).subarray(0, upd.source_rows.len) : null;
         }
         if (g.tier === "decimated" && !g._decimatedRefined) {
@@ -784,12 +786,13 @@ Object.assign(ChartView.prototype, {
         g.yBuf._fcCapBytes = 0;
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
-        if (line) g._cpu = { x: xArr, y: yArr, xMeta: g.xMeta, yMeta: g.yMeta };
+        if (connected) g._cpu = { x: xArr, y: yArr, base: bArr, xMeta: g.xMeta, yMeta: g.yMeta };
         g._dashX = st ? st.x : src.x;
         g._dashY = st ? st.y : src.y;
         if (bArr) {
           gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
-          gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
+          gl.bufferData(gl.ARRAY_BUFFER, area ? area.base : sm ? sm.extra : bArr, gl.STATIC_DRAW);
+          g._dashBase = area ? area.base : sm ? sm.extra : bArr;
           g.baseBuf._fcCapBytes = 0;
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
         }

@@ -2000,15 +2000,12 @@ def _emit_area(
         top_r = np.clip(yv, radial_min, radial_max)
         base_r = np.clip(bv, radial_min, radial_max)
         visible = polar.position_mask(xv, top_r) & polar.position_mask(xv, base_r)
-        if bool(visible.all()):
-            runs = [np.arange(len(xv))]
-        else:
-            indices = np.flatnonzero(visible)
-            runs = (
-                []
-                if indices.size == 0
-                else np.split(indices, np.flatnonzero(np.diff(indices) > 1) + 1)
-            )
+        runs = []
+        for block in _line_runs(blob, cols, t, len(xv)):
+            indices = np.arange(block.start, block.stop)
+            indices = indices[visible[block]]
+            if len(indices):
+                runs.extend(np.split(indices, np.flatnonzero(np.diff(indices) > 1) + 1))
         pieces = []
         for run in runs:
             if len(run) < 2:
@@ -2017,9 +2014,14 @@ def _emit_area(
             run_base = np.column_stack(polar(xv[run][::-1], base_r[run][::-1]))
             pieces.append((run_top, run_base))
     else:
-        top = _scene.curve_points(xv, yv, sx, sy, smooth)
-        base = _scene.curve_points(xv[::-1], bv[::-1], sx, sy, smooth)
-        pieces = [(top, base)]
+        pieces = [
+            (
+                _scene.curve_points(xv[run], yv[run], sx, sy, smooth),
+                _scene.curve_points(xv[run][::-1], bv[run][::-1], sx, sy, smooth),
+            )
+            for run in _line_runs(blob, cols, t, len(xv))
+            if run.stop - run.start >= 2
+        ]
     op = _fill_opacity(style, 0.35)
     fill_spec = style.get("fill")
     for top, base in pieces:

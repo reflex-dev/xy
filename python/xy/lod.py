@@ -86,6 +86,56 @@ def line_run_indices(
     )
 
 
+def area_run_indices(
+    x: np.ndarray,
+    y: np.ndarray,
+    base: np.ndarray,
+    valid: np.ndarray,
+    window: tuple[float, float] | None = None,
+    px_width: int = 0,
+    *,
+    top_constant: bool = False,
+    base_constant: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Select filled runs while retaining top, baseline and thickness extrema.
+
+    Args:
+        x: Axis-space binning coordinates.
+        y: Canonical upper values.
+        base: Canonical baseline values.
+        valid: Rows valid on all three geometry columns.
+        window: M4 window, or None for direct geometry.
+        px_width: Screen bucket count when decimating.
+        top_constant: Canonical zone metadata proves a constant upper boundary.
+        base_constant: Canonical zone metadata proves a constant baseline.
+
+    Returns:
+        Canonical row indices and cumulative finite-run boundaries.
+
+    Raises:
+        ValueError: The geometry exceeds the binary source-row limit.
+    """
+    if window is None:
+        return line_run_indices(x, y, valid)
+    if base_constant:
+        return line_run_indices(x, y, valid, window, px_width)
+    if top_constant:
+        return line_run_indices(x, base, valid, window, px_width)
+    with np.errstate(over="ignore", invalid="ignore"):
+        thickness = np.nan_to_num(y - base)
+    if len(x) > np.iinfo(np.uint32).max:
+        raise ValueError("Gap-preserving areas exceed the uint32 source-row limit")
+    edges = np.flatnonzero(np.diff(np.r_[False, valid, False])).astype(np.uint32)
+    selections = [
+        kernels.m4_runs_indices(x, values, edges, *window, px_width)[0]
+        for values in (y, base, thickness)
+    ]
+    indices = np.unique(np.concatenate(selections))
+    ends = np.flatnonzero(np.diff(np.r_[False, valid, False]))[1::2]
+    boundaries = np.unique(np.r_[0, np.searchsorted(indices, ends)]).astype(np.uint32)
+    return indices, boundaries
+
+
 @dataclass(frozen=True)
 class ViewportRequest:
     """Normalized client viewport shared by every tiered chart kind.

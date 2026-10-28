@@ -453,20 +453,36 @@ def decimate_view(
     updates: list[dict[str, Any]] = []
     writer = lod.BufferWriter()
     for t in fig.traces:
-        if t.kind not in {"line", "area"} or t.n_points <= DECIMATION_THRESHOLD:
+        if t.kind not in {"line", "area", "error_band"} or t.n_points <= DECIMATION_THRESHOLD:
             continue
         # A legend-hidden trace is not drawn; re-decimating it per pan/zoom
         # would ship dead buffers (§34 — hidden means out of every pipeline).
         if t.hidden:
             continue
-        if t.kind == "area" and t.base is None:
+        if t.kind in {"area", "error_band"} and t.base is None:
             continue
         x_scale = fig._axis_scale(t.x_axis)
         y_scale = fig._axis_scale(t.y_axis)
         # Bucket in scale coordinates so every bucket covers one screen strip.
         mx, (m_lo, m_hi) = fig._binning_coords(t.x_axis, t.x.values, (lo_x, hi_x))
         runs = None
-        if t.kind == "line" and fig._visible_mask_needed(t, prefiltered=False):
+        if t.kind in {"area", "error_band"} and t.base is not None:
+            valid = (
+                fig._log_visible_mask(t, t.x.values, t.y.values, t.base.values)
+                if fig._visible_mask_needed(t, prefiltered=False, base_column=t.base)
+                else np.ones(t.n_points, dtype=bool)
+            )
+            idx, runs = lod.area_run_indices(
+                mx,
+                t.y.values,
+                t.base.values,
+                valid,
+                (m_lo, m_hi),
+                max(16, px_width),
+                top_constant=t.y.min == t.y.max,
+                base_constant=t.base.min == t.base.max,
+            )
+        elif t.kind == "line" and fig._visible_mask_needed(t, prefiltered=False):
             valid = fig._log_visible_mask(t, t.x.values, t.y.values)
             if not bool(valid.all()):
                 idx, runs = lod.line_run_indices(
@@ -478,14 +494,22 @@ def decimate_view(
             idx = kernels.m4_indices(mx, t.y.values, m_lo, m_hi, max(16, px_width))
         if len(idx):
             xv, yv = t.x.values[idx], t.y.values[idx]
-            bv = t.base.values[idx] if t.kind == "area" and t.base is not None else None
+            bv = (
+                t.base.values[idx]
+                if t.kind in {"area", "error_band"} and t.base is not None
+                else None
+            )
             if bv is not None:
                 sel = np.flatnonzero(np.isfinite(bv))
                 if len(sel) != len(xv):
                     xv, yv, bv = xv[sel], yv[sel], bv[sel]
         else:
             xv, yv = t.x.values[:0], t.y.values[:0]
-            bv = t.base.values[:0] if t.kind == "area" and t.base is not None else None
+            bv = (
+                t.base.values[:0]
+                if t.kind in {"area", "error_band"} and t.base is not None
+                else None
+            )
         x_col = lod.encode_f32_values(xv, lod.geometry_offset(x_scale, lo_x, hi_x), lo_x, hi_x)
         y_col = lod.encode_f32_values(
             yv, lod.geometry_offset(y_scale, t.y.min, t.y.max), t.y.min, t.y.max
@@ -499,6 +523,11 @@ def decimate_view(
             "x": writer.add_encoded(x_col),
             "y": writer.add_encoded(y_col),
         }
+        if bv is not None and t.base is not None:
+            b_col = lod.encode_f32_values(
+                bv, lod.geometry_offset(y_scale, t.base.min, t.base.max), t.base.min, t.base.max
+            )
+            update["base"] = writer.add_encoded(b_col)
         if runs is not None:
             update["runs"] = {
                 "buf": writer.add_raw(runs.astype("<u4").tobytes()),
@@ -510,11 +539,6 @@ def decimate_view(
                 "len": len(idx),
                 "dtype": "u32",
             }
-        if bv is not None and t.base is not None:
-            b_col = lod.encode_f32_values(
-                bv, lod.geometry_offset(y_scale, t.base.min, t.base.max), t.base.min, t.base.max
-            )
-            update["base"] = writer.add_encoded(b_col)
         updates.append(update)
     return {"traces": updates}, writer.buffers
 
