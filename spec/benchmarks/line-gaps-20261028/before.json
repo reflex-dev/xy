@@ -1,0 +1,128 @@
+{
+  "label": "before",
+  "checkout": "/workspace/xy-gap-baseline",
+  "xy_module": "/workspace/xy-gap-baseline/python/xy/__init__.py",
+  "python": "3.12.14",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "numpy": "2.5.1",
+  "scope": "three local payload builds; no interaction/FPS/memory performance claim",
+  "records": [
+    {
+      "n": 1000,
+      "pattern": "finite",
+      "build_ms": [
+        0.3251260000070033,
+        0.21397000000433763,
+        0.1388079999742331
+      ],
+      "median_ms": 0.21397000000433763,
+      "marks": 1000,
+      "runs": null,
+      "payload_bytes": 8000
+    },
+    {
+      "n": 1000,
+      "pattern": "one_gap",
+      "build_ms": [
+        0.163524000072357,
+        0.10362500006522168,
+        0.09563300000081654
+      ],
+      "median_ms": 0.10362500006522168,
+      "marks": 999,
+      "runs": null,
+      "payload_bytes": 7992
+    },
+    {
+      "n": 1000,
+      "pattern": "fragmented",
+      "build_ms": [
+        0.12449699988792418,
+        0.13796700000057172,
+        0.1143109998338332
+      ],
+      "median_ms": 0.12449699988792418,
+      "marks": 990,
+      "runs": null,
+      "payload_bytes": 7920
+    },
+    {
+      "n": 100000,
+      "pattern": "finite",
+      "build_ms": [
+        0.5113359998176747,
+        0.3922770001736353,
+        0.28268400001252303
+      ],
+      "median_ms": 0.3922770001736353,
+      "marks": 1675,
+      "runs": null,
+      "payload_bytes": 13400
+    },
+    {
+      "n": 100000,
+      "pattern": "one_gap",
+      "build_ms": [
+        0.3641250000328,
+        0.34644800007299636,
+        0.3756329999760055
+      ],
+      "median_ms": 0.3641250000328,
+      "marks": 1675,
+      "runs": null,
+      "payload_bytes": 13400
+    },
+    {
+      "n": 100000,
+      "pattern": "fragmented",
+      "build_ms": [
+        0.27275800016468565,
+        0.17995999996855971,
+        0.16086099981293955
+      ],
+      "median_ms": 0.17995999996855971,
+      "marks": 1674,
+      "runs": null,
+      "payload_bytes": 13392
+    },
+    {
+      "n": 1000000,
+      "pattern": "finite",
+      "build_ms": [
+        0.8301530001517676,
+        0.6848959999388171,
+        0.6163929999729589
+      ],
+      "median_ms": 0.6848959999388171,
+      "marks": 2717,
+      "runs": null,
+      "payload_bytes": 21736
+    },
+    {
+      "n": 1000000,
+      "pattern": "one_gap",
+      "build_ms": [
+        3.8505439999880764,
+        1.073727999937546,
+        1.240996999968047
+      ],
+      "median_ms": 1.240996999968047,
+      "marks": 2717,
+      "runs": null,
+      "payload_bytes": 21736
+    },
+    {
+      "n": 1000000,
+      "pattern": "fragmented",
+      "build_ms": [
+        1.132846000018617,
+        2.042477000031795,
+        2.708338000047661
+      ],
+      "median_ms": 2.042477000031795,
+      "marks": 2718,
+      "runs": null,
+      "payload_bytes": 21744
+    }
+  ]
+}

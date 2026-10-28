@@ -849,6 +849,17 @@ def _column(blob: bytes, meta: dict[str, Any]) -> np.ndarray:
     return raw.astype(np.float64) / (meta.get("scale") or 1.0) + meta.get("offset", 0.0)
 
 
+def _line_runs(blob: bytes, cols: list[dict[str, Any]], trace: dict[str, Any], n: int):
+    """Yield finite-run slices from binary line topology, or the whole line."""
+    if "runs" not in trace:
+        yield slice(0, n)
+        return
+    meta = cols[trace["runs"]]
+    boundaries = np.frombuffer(blob, dtype="<u4", count=meta["len"], offset=meta["byte_offset"])
+    for start, stop in pairwise(boundaries):
+        yield slice(int(start), int(stop))
+
+
 def _density_column(blob: bytes, meta: dict[str, Any], density: dict[str, Any]) -> np.ndarray:
     """Decode either legacy f32 counts or the compact log-u8 density wire."""
     if density.get("enc") != "log-u8":
@@ -4108,9 +4119,15 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         if kind == "line":
             xv = _column(blob, cols[t["x"]])
             yv = _column(blob, cols[t["y"]])
-            if style.get("step"):
-                xv, yv = _step_arrays(xv, yv, style["step"])
-            d = _curve_path(xv, yv, trace_sx, trace_sy, style.get("curve") == "smooth", polar)
+            paths = []
+            for run in _line_runs(blob, cols, t, len(xv)):
+                xx, yy = xv[run], yv[run]
+                if style.get("step"):
+                    xx, yy = _step_arrays(xx, yy, style["step"])
+                paths.append(
+                    _curve_path(xx, yy, trace_sx, trace_sy, style.get("curve") == "smooth", polar)
+                )
+            d = " ".join(paths)
             marks.append(f'<path d="{d}" {line_attrs(style, color)}/>')
 
         elif kind in ("area", "error_band"):

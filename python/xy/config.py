@@ -43,7 +43,9 @@ import warnings
 # v13 adds the `funnel` trace kind. `markOf()` falls back to scatter for
 # unknown kinds, so a v12 client would silently render funnel quads as a point
 # cloud.
-PROTOCOL_VERSION = 13
+# v14 adds binary finite-run boundaries to lines. A v13 client would ignore
+# those boundaries and invent a connection across missing samples.
+PROTOCOL_VERSION = 14
 
 # Mark kinds the polar transform renders correctly today. Everything else is
 # refused by Figure._validate_coords rather than approximated: the rect, area,

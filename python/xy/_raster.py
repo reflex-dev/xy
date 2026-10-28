@@ -52,6 +52,7 @@ from ._svg import (
     _estimated_text_width,
     _heatmap_rgba_grid,
     _legend_layout,
+    _line_runs,
     _lut,
     _physical_density_alpha,
     _PolarProjection,
@@ -1636,6 +1637,21 @@ def _emit_line(
     polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
+    for run in _line_runs(blob, cols, t, len(xv)):
+        _emit_line_values(cmd, xv[run], yv[run], sx, sy, style, color, polar)
+
+
+def _emit_line_values(
+    cmd: _Cmd,
+    xv: np.ndarray,
+    yv: np.ndarray,
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+    polar: "Optional[_PolarProjection]" = None,
+) -> None:
+    """Emit one connected finite run without interpolating across missing rows."""
     if style.get("step"):
         xv, yv = _step_arrays(xv, yv, style["step"])
     c = _rgba(style.get("color"), color, _stroke_opacity(style))

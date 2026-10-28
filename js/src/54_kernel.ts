@@ -530,6 +530,7 @@ Object.assign(ChartView.prototype, {
     if (g.tier !== "direct" || oldT.tier !== "direct" || t.tier !== "direct") return false;
     if (t.kind !== oldT.kind || (t.kind !== "scatter" && t.kind !== "line")) return false;
     if (t.keys || oldT.keys) return false; // key-matched transitions rebuild
+    if (Number.isInteger(t.runs) || Number.isInteger(oldT.runs)) return false;
     const style = t.style || {};
     if (style.curve === "smooth" || style.step) return false; // expanded vertices
     if (JSON.stringify(oldT.style || {}) !== JSON.stringify(style)) return false;
@@ -750,9 +751,16 @@ Object.assign(ChartView.prototype, {
         // survives zoom-driven re-decimation instead of snapping to segments.
         // style.step traces likewise re-expand so the step corners survive
         // tier swaps instead of collapsing to a plain polyline.
-        const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
-        const src = sm || { x: xArr, y: yArr, n };
-        const st = this._stepArrays(g.trace, src.x, src.y, src.n);
+        const runs = upd.runs ? this._asU32(buffers[upd.runs.buf]).subarray(0, upd.runs.len) : null;
+        const line = g.trace.kind === "line" ? this._lineArrays(g.trace, xArr, yArr, n, runs) : null;
+        const sm = line ? null : this._smoothArrays(g.trace, xArr, yArr, bArr, n);
+        const src = line || sm || { x: xArr, y: yArr, n };
+        const st = line ? null : this._stepArrays(g.trace, src.x, src.y, src.n);
+        if (line) {
+          this._deleteVaos(g);
+          g._lineRanges = line.ranges;
+          g._sourceRows = upd.source_rows ? this._asU32(buffers[upd.source_rows.buf]).subarray(0, upd.source_rows.len) : null;
+        }
         if (g.tier === "decimated" && !g._decimatedRefined) {
           // The initial buffers belong to the retained home drawable (T1).
           // Give refinements their own stores rather than destroying that
@@ -776,6 +784,7 @@ Object.assign(ChartView.prototype, {
         g.yBuf._fcCapBytes = 0;
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
+        if (line) g._cpu = { x: xArr, y: yArr, xMeta: g.xMeta, yMeta: g.yMeta };
         g._dashX = st ? st.x : src.x;
         g._dashY = st ? st.y : src.y;
         if (bArr) {

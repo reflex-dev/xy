@@ -1,0 +1,1 @@
+Preserve gaps in line traces at missing or axis-invalid samples in live charts, view decimation and static exports. Binary run topology uses renderer protocol 14; cached clients must update with the Python package.

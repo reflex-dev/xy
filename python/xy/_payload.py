@@ -504,7 +504,7 @@ class PayloadMixin(_Host):
         Non-finite (NaN or ±inf) never reaches a vertex buffer — it silently
         corrupts primitives, driver-dependently (§19). Zone maps count both as
         null, so we only scan when a null is present. Canonical keeps every row;
-        real gap semantics (segment index list) arrive with validity bitmaps.
+        connected lines preserve finite-run topology separately in `_emit_line`.
         """
         if not (t.x.zone.null_count or t.y.zone.null_count):
             return None
@@ -622,6 +622,28 @@ class PayloadMixin(_Host):
     def _emit_line(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
+        if self._visible_mask_needed(t, prefiltered=False):
+            valid = self._log_visible_mask(t, t.x.values, t.y.values)
+            if not bool(valid.all()):
+                decimated = self.coords != "polar" and t.n_points > DECIMATION_THRESHOLD
+                mx, bounds = self._binning_coords(t.x_axis, t.x.values, xr)
+                window = (bounds[0], bounds[1] + np.finfo(np.float64).eps) if decimated else None
+                sel, runs = lod.line_run_indices(mx, t.y.values, valid, window, px_width)
+                entry = self._base_entry(
+                    t,
+                    pw,
+                    t.x.values[sel],
+                    t.y.values[sel],
+                    "decimated" if decimated else "direct",
+                    self._default_styled(t),
+                )
+                entry["runs"] = pw.ship_u32(runs)
+                entry["source_rows"] = pw.ship_u32(sel.astype(np.uint32))
+                if decimated:
+                    entry["decimation_px"] = int(px_width)
+                if t.transition_keys is not None:
+                    self._transition_entry(entry, t, pw, sel)
+                return entry
         tier, (xv, yv) = self._m4_decimate(t, xr, px_width, t.x.values, t.y.values)
         sel = None
         if tier == "direct":

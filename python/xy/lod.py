@@ -44,6 +44,49 @@ _DEFAULT_SAMPLE_BASE_FRACTION = 1.0 / 1024.0
 _MAX_DIRECT_CATEGORY_CODE = 1 << 20
 
 
+def line_run_indices(
+    x: np.ndarray,
+    y: np.ndarray,
+    valid: np.ndarray,
+    window: tuple[float, float] | None = None,
+    px_width: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Select finite line runs without letting an M4 bucket cross a gap.
+
+    Args:
+        x: Binning coordinates, transformed for nonlinear axes.
+        y: Canonical values used for extrema selection.
+        valid: Rows valid on both authored axes.
+        window: M4 window, or None for direct geometry.
+        px_width: Screen bucket count when decimating.
+
+    Returns:
+        Canonical row indices and binary-ready cumulative run boundaries.
+    """
+    edges = np.flatnonzero(np.diff(np.r_[False, valid, False]))
+    if len(x) > np.iinfo(np.uint32).max:
+        raise ValueError("Gap-preserving lines exceed the uint32 source-row limit")
+    selected = []
+    boundaries = [0]
+    for start, stop in edges.reshape(-1, 2):
+        if window is None:
+            indices = np.arange(start, stop, dtype=np.intp)
+        else:
+            indices = (
+                kernels.m4_indices(x[start:stop], y[start:stop], *window, px_width).astype(np.intp)
+                + start
+            )
+        if len(indices):
+            selected.append(indices)
+            boundaries.append(boundaries[-1] + len(indices))
+    if boundaries[-1] > np.iinfo(np.uint32).max:
+        raise ValueError("Gap-preserving line geometry exceeds the uint32 run limit")
+    return (
+        np.concatenate(selected) if selected else np.empty(0, dtype=np.intp),
+        np.asarray(boundaries, dtype=np.uint32),
+    )
+
+
 @dataclass(frozen=True)
 class ViewportRequest:
     """Normalized client viewport shared by every tiered chart kind.

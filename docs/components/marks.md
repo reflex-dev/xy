@@ -72,6 +72,27 @@ tables described in [Data and columns](/docs/xy/core-concepts/data/).
 XY validates missing columns and incompatible channel lengths when the chart is
 built.
 
+## Missing Samples in Lines
+
+`line()` and `step()` leave a gap at a missing or non-finite sample. A value
+rejected by a logarithmic axis also breaks the line. Smoothing and decimation
+operate separately within each finite run, and native SVG/PNG exports preserve
+the same breaks. Hover and click readouts retain the original canonical row
+index after a gap. This uses renderer protocol 14, so update the Python package
+and restart the kernel when a cached client reports a version mismatch.
+
+~~~python
+chart = xy.line_chart(
+    xy.line([0, 1, 2, 3, 4], [1, 9, float("nan"), 2, 1], name="Observed"),
+)
+~~~
+
+`curve="smooth"` remains an explicit visual interpolation choice; it does not
+estimate a statistical trend or replace the canonical observations. A line with
+many tiny finite runs requires many drawing operations. Area/error-band and
+stacked-baseline gap semantics, and line brush selection, are outside this line
+fix's supported scope.
+
 ## Choose a Mark Family
 
 | Geometry | Factories |

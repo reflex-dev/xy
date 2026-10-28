@@ -19,6 +19,17 @@ emits it (§2).
 returns either `None` or `(message, buffers)`, where `buffers` is a list of
 binary attachments the reply's spec entries index into by position.
 
+Protocol 14 line traces with invalid samples carry `runs` and `source_rows`
+column references. Both are raw little-endian `u32` buffers, never numeric JSON
+arrays. `runs` contains cumulative boundaries including zero and the final
+emitted point count; each adjacent pair defines one connected run. `source_rows`
+maps every finite emitted point to its canonical line row. `tier_update` carries
+the same buffers as `{buf, len, dtype: "u32"}` descriptors. Initial, refined and
+retained-home drawables keep independent maps. Line hover/click requests name the
+canonical mapped row; point-mark requests retain their shipped-index contract.
+Missing topology is emitted only for invalid-sample lines; ordinary finite lines
+retain their existing hot path. Area and error-band gap topology is not included.
+
 - Non-dict `content`, an unknown `type`, a missing required field, or a value
   that fails coercion returns `None`. Client-supplied data never raises;
   exceptions from *user callbacks* do propagate.
@@ -475,9 +486,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 13` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 14` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 13` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 14` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -530,7 +541,9 @@ Two independent version constants:
   `tooltip_rows` — the funnel geometry contract in
   `spec/api/chart-kind-contract.md`). `markOf()` falls back to scatter for
   unknown kinds, so a cached v12 client would silently draw every funnel as a
-  point cloud of trailing cross edges.
+  point cloud of trailing cross edges. v14 adds line run boundaries and canonical
+  source-row maps; a cached v13 client would ignore the fields and bridge missing
+  samples, so the version mismatch must reject it before rendering.
   The optional `legend.auto_loc` field described in §5.1 deliberately does
   **not** increment v13: it accompanies an already concrete `legend.loc`, so a
   cached client that does not recognize the hint renders the same correct

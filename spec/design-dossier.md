@@ -869,6 +869,18 @@ described above.
 - Decimation (Tier 1) treats gap boundaries as hard edges — min/max buckets never
   span a gap, or decimation would invent data across a hole.
 
+Implemented line scope: finite x/y runs (including log-axis rejected values) ship
+binary `u32` cumulative boundaries and canonical source-row IDs under protocol 14.
+M4 operates separately inside each run for initial and refined windows. Smooth and
+step expansion, dashed strokes, SVG and native raster exports also operate per run;
+no NaN reaches a vertex buffer. A retained home view keeps its own topology and
+source-row map for hover/keyboard fallback. Gap-bearing appends rebuild, and
+position interpolation snaps instead of inventing connections. Cartesian ingest
+preserves invalid-x separators and sorts finite runs independently. This does not
+complete Arrow validity bitmaps or area/error-band/stack baseline gap semantics.
+Highly fragmented lines require one draw per nontrivial run and are not a
+performance-equivalent substitute for an unbroken line.
+
 ## 20. Accessibility (a regression Plotly would win otherwise)
 
 SVG charts are imperfect but *inspectable*; a canvas is a black rectangle to assistive

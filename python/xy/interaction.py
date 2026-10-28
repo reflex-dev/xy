@@ -178,9 +178,10 @@ def pick(
     """Exact source-row readout for a hover/pick — values come from the f64
     canonical store, never through the f32 GPU path (design dossier §16/§17).
 
-    `index` is a *shipped* vertex index (what the client's GPU pick sees);
-    it is translated to a canonical row when the shipped copy dropped NaN
-    rows. Returns None if out of range.
+    Point-mark `index` is a shipped vertex index, translated to a canonical
+    row when the shipped copy dropped NaN rows. Lines send canonical indices
+    through their binary source-row map, so retained and refined windows can
+    coexist without changing exact-row identity. Returns None if out of range.
 
     `drill_seq` is the subset version the client picked against. If the drill
     advanced (or exited) since, the index is in a dead coordinate space —
@@ -464,7 +465,17 @@ def decimate_view(
         y_scale = fig._axis_scale(t.y_axis)
         # Bucket in scale coordinates so every bucket covers one screen strip.
         mx, (m_lo, m_hi) = fig._binning_coords(t.x_axis, t.x.values, (lo_x, hi_x))
-        idx = kernels.m4_indices(mx, t.y.values, m_lo, m_hi, max(16, px_width))
+        runs = None
+        if t.kind == "line" and fig._visible_mask_needed(t, prefiltered=False):
+            valid = fig._log_visible_mask(t, t.x.values, t.y.values)
+            if not bool(valid.all()):
+                idx, runs = lod.line_run_indices(
+                    mx, t.y.values, valid, (m_lo, m_hi), max(16, px_width)
+                )
+            else:
+                idx = kernels.m4_indices(mx, t.y.values, m_lo, m_hi, max(16, px_width))
+        else:
+            idx = kernels.m4_indices(mx, t.y.values, m_lo, m_hi, max(16, px_width))
         if len(idx):
             xv, yv = t.x.values[idx], t.y.values[idx]
             bv = t.base.values[idx] if t.kind == "area" and t.base is not None else None
@@ -488,6 +499,17 @@ def decimate_view(
             "x": writer.add_encoded(x_col),
             "y": writer.add_encoded(y_col),
         }
+        if runs is not None:
+            update["runs"] = {
+                "buf": writer.add_raw(runs.astype("<u4").tobytes()),
+                "len": len(runs),
+                "dtype": "u32",
+            }
+            update["source_rows"] = {
+                "buf": writer.add_raw(idx.astype("<u4").tobytes()),
+                "len": len(idx),
+                "dtype": "u32",
+            }
         if bv is not None and t.base is not None:
             b_col = lod.encode_f32_values(
                 bv, lod.geometry_offset(y_scale, t.base.min, t.base.max), t.base.min, t.base.max

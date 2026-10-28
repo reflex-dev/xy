@@ -17,7 +17,7 @@ Object.assign(ChartView.prototype, {
       this._dispatchChartEvent("hover", {
         row,
         trace: hit.trace,
-        index: hit.index,
+        index: this._sourceIndex(hit),
         view: this._eventView("hover"),
         ...this._hoverPayload(row, hit, clientX, clientY),
       });
@@ -29,7 +29,7 @@ Object.assign(ChartView.prototype, {
       // requests made a hover invalidate an in-flight tier_update, freezing
       // the stale tier (found in staff review).
       this._pickSeq = (this._pickSeq || 0) + 1;
-      const req: any = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index };
+      const req: any = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: this._sourceIndex(hit) };
       // Drilled picks name the subset version they hit against; the kernel
       // returns None instead of translating through the wrong subset (§16/§17).
       const hg = hit.g;
@@ -47,7 +47,7 @@ Object.assign(ChartView.prototype, {
     // this with the kernel's exact f64 row (§16).
     const g = hit.g;
     const cpu = g._cpu;
-    const row: any = { trace: g.trace.id, index: hit.index };
+    const row: any = { trace: g.trace.id, index: this._sourceIndex(hit) };
     if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
       const h = g.heatmap;
       const { row: heatRow, col } = hit.heatmap;

@@ -5196,18 +5196,49 @@ export class ChartView {
     g.yMeta = { ...this.spec.columns[t.y] };
     g.n = Math.min(x.length, y.length);
     g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
-    const sm = this._smoothArrays(t, x, y, null, g.n);
-    const src = sm || { x, y, n: g.n };
-    const st = this._stepArrays(t, src.x, src.y, src.n);
-    const drawX = st ? st.x : src.x;
-    const drawY = st ? st.y : src.y;
+    const runs = Number.isInteger(t.runs) ? this._columnView(buffer, this.spec.columns[t.runs]) : null;
+    g._sourceRows = Number.isInteger(t.source_rows)
+      ? this._columnView(buffer, this.spec.columns[t.source_rows]) : null;
+    const expanded = this._lineArrays(t, x, y, g.n, runs);
+    const drawX = expanded.x;
+    const drawY = expanded.y;
     g.xBuf = this._upload(drawX);
     g.yBuf = this._upload(drawY);
-    g.n = st ? st.n : src.n;
+    g.n = expanded.n;
+    g._lineRanges = expanded.ranges;
     // Drawn (offset-encoded) vertices kept for the screen-space dash arc length.
     g._dashX = drawX;
     g._dashY = drawY;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+  }
+
+  _lineArrays(t, x, y, n, runs = null) {
+    const expand = (xx, yy) => {
+      const sm = this._smoothArrays(t, xx, yy, null, xx.length);
+      const src = sm || { x: xx, y: yy, n: xx.length };
+      return this._stepArrays(t, src.x, src.y, src.n) || src;
+    };
+    if (!runs) return { ...expand(x, y), ranges: null };
+    const parts = [];
+    const ranges = [];
+    let count = 0;
+    for (let i = 1; i < runs.length; i++) {
+      const start = Number(runs[i - 1]), end = Math.min(n, Number(runs[i]));
+      const part = expand(x.subarray(start, end), y.subarray(start, end));
+      ranges.push([count, part.n]);
+      count += part.n;
+      parts.push(part);
+    }
+    const xx = new Float32Array(count), yy = new Float32Array(count);
+    let offset = 0;
+    for (const part of parts) {
+      xx.set(part.x, offset); yy.set(part.y, offset); offset += part.n;
+    }
+    return { x: xx, y: yy, n: count, ranges };
+  }
+
+  _sourceIndex(hit) {
+    return hit.g?._sourceRows?.[hit.index] ?? hit.index;
   }
 
   _buildSegmentMark(g, t, buffer) {
@@ -6492,6 +6523,15 @@ export class ChartView {
   }
 
 
+  _decimatedDrawable(g) {
+    if (g.tier !== "decimated" || !g._decimatedRefined || !g._homeDecimated) return g;
+    const range = g._decimatedWindow;
+    const [x0, x1] = this._axisRange(g.xAxis);
+    const lo = Math.min(x0, x1), hi = Math.max(x0, x1);
+    const eps = range ? Math.abs(range[1] - range[0]) * 1e-9 + 1e-300 : 0;
+    return !range || lo < range[0] - eps || hi > range[1] + eps ? g._homeDecimated : g;
+  }
+
   _renderGlFrame() {
     this._healStaleTheme();
     // `_drawPoints` records authored-marker draws here so the Canvas overlay
@@ -6519,24 +6559,7 @@ export class ChartView {
         lodDrawDensityTier(this, g, gx0, gx1, gy0, gy1);
         return;
       }
-      if (g.tier === "decimated" && g._decimatedRefined && g._homeDecimated) {
-        const r = g._decimatedWindow;
-        // _axisRange preserves axis direction (a reversed axis yields
-        // hi-before-lo) while the served window arrives normalized, so the
-        // coverage compare runs on normalized bounds.
-        const [vx0, vx1] = this._axisRange(g.xAxis);
-        const viewLo = Math.min(vx0, vx1);
-        const viewHi = Math.max(vx0, vx1);
-        const eps = r ? Math.abs(r[1] - r[0]) * 1e-9 + 1e-300 : 0;
-        // A prior refined window is not a truthful covering representation
-        // after a pan/zoom leaves it.  Draw the retained overview until the
-        // pending reply installs a buffer covering this view (T1/T8).
-        if (!r || viewLo < r[0] - eps || viewHi > r[1] + eps) {
-          markOf(g.trace.kind).draw(this, g._homeDecimated, x0, x1, y0, y1);
-          return;
-        }
-      }
-      markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
+      markOf(g.trace.kind).draw(this, this._decimatedDrawable(g), x0, x1, y0, y1);
     };
     for (const g of this._transitionOldTraces || []) drawTrace(g);
     for (const g of this.gpuTraces) {
@@ -6995,32 +7018,44 @@ export class ChartView {
     const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
     const dashed = this._lineDash(g);
-    this._bindVao(
-      g,
-      "line",
-      [g.xBuf._fcId, g.yBuf._fcId, dashed ? g._lenBuf._fcId : 0,
-        transitionOn ? g._transitionPrevXBuf._fcId : 0,
-        transitionOn ? g._transitionPrevYBuf._fcId : 0],
-      () => {
-        this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
-        this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
-        this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
-        this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
-        if (dashed) {
-          this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, 0, 1);
-          this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, 4, 1);
+    const ranges = g._lineRanges || [[0, g.n]];
+    const total = ranges.reduce((sum, range) => sum + Math.max(0, range[1] - 1), 0);
+    let remaining = total * reveal;
+    for (const [start, count] of ranges) {
+      const runSegments = Math.max(0, count - 1);
+      const visible = Math.max(0, Math.min(runSegments, remaining));
+      remaining -= runSegments;
+      if (visible <= 0) continue;
+      gl.uniform1f(u("u_revealProgress"), visible / runSegments);
+      gl.uniform1f(u("u_revealSegments"), runSegments);
+      const offset = start * 4;
+      this._bindVao(
+        g,
+        `line:${start}`,
+        [g.xBuf._fcId, g.yBuf._fcId, dashed ? g._lenBuf._fcId : 0,
+          transitionOn ? g._transitionPrevXBuf._fcId : 0,
+          transitionOn ? g._transitionPrevYBuf._fcId : 0],
+        () => {
+          this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, offset, 1);
+          this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, offset + 4, 1);
+          this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, offset, 1);
+          this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, offset + 4, 1);
+          if (dashed) {
+            this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, offset, 1);
+            this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, offset + 4, 1);
+          }
+          if (transitionOn) {
+            this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, offset, 1);
+            this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, offset, 1);
+            this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevXBuf, offset + 4, 1);
+            this._vaoAttr(ATTR_SLOTS.a_prevy1, g._transitionPrevYBuf, offset + 4, 1);
+          }
         }
-        if (transitionOn) {
-          this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 1);
-          this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 1);
-          this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevXBuf, 4, 1);
-          this._vaoAttr(ATTR_SLOTS.a_prevy1, g._transitionPrevYBuf, 4, 1);
-        }
-      }
-    );
-    const segments = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
-    gl.uniform1i(u("u_capSegments"), segments);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
+      );
+      const segments = Math.ceil(visible);
+      gl.uniform1i(u("u_capSegments"), segments);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
+    }
   }
 
   _drawSegments(g, xm, ym) {
@@ -7219,6 +7254,7 @@ export class ChartView {
       polarGeom,
     );
     let acc = 0;
+    let runIndex = 1;
     lens[0] = 0;
     for (let i = 1; i < n; i++) {
       const [nx, ny] = this._projectDataPoint(
@@ -7228,7 +7264,10 @@ export class ChartView {
         this._decodeValue(g._dashY, g.yMeta, i),
         polarGeom,
       );
-      if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
+      if (g._lineRanges && runIndex < g._lineRanges.length && i === g._lineRanges[runIndex][0]) {
+        acc = 0;
+        runIndex++;
+      } else if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
         acc += Math.hypot(nx - px, ny - py) * dpr;
       }
       lens[i] = acc;
@@ -8807,7 +8846,8 @@ export class ChartView {
     const maxPx = 12;
     let best = null;
     const polarGeom = this._polarGeometry();
-    for (const g of this.gpuTraces) {
+    for (const candidate of this.gpuTraces) {
+      const g = candidate.trace.kind === "line" ? this._decimatedDrawable(candidate) : candidate;
       if (g.tier === "density") continue;
       // A legend-hidden series draws nothing, so it must not answer hover
       // either (interaction spec §10) — before this guard every CPU-hover

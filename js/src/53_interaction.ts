@@ -482,7 +482,7 @@ Object.assign(ChartView.prototype, {
     // geometry; ordinary point-series navigation deliberately keeps the full
     // retained CPU rows even when the legend hides their paint, preserving
     // the pre-funnel accessibility path and stable "Point N of total" count.
-    return (this.gpuTraces || []).filter((g) => {
+    return (this.gpuTraces || []).map((g) => g.trace.kind === "line" ? this._decimatedDrawable(g) : g).filter((g) => {
       const mark = markOf(g.trace.kind);
       return (mark.pointPick || mark.stageNav) && g.tier !== "density" &&
         (!mark.stageNav || !g._legendHidden) && g._cpu &&
@@ -527,14 +527,14 @@ Object.assign(ChartView.prototype, {
       const detail = {
         row: this._localRow ? this._localRow(hit) : null,
         trace: hit.trace,
-        index: hit.index,
+        index: this._sourceIndex(hit),
         screen,
         modifiers,
         view: this._eventView("click"),
       };
       this._dispatchChartEvent("click", detail);
       if (this.comm) {
-        const msg: any = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };
+        const msg: any = { type: "click", trace: hit.trace, index: this._sourceIndex(hit), screen, modifiers };
         const g = hit.g;
         if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
           msg.drill_seq = g.drill.seq;
@@ -659,14 +659,14 @@ Object.assign(ChartView.prototype, {
       view: this._eventView("click"),
       row: hit && this._localRow ? this._localRow(hit) : null,
       trace: hit ? hit.trace : null,
-      index: hit ? hit.index : null,
+      index: hit ? this._sourceIndex(hit) : null,
     };
     this._dispatchChartEvent("click", detail);
     if (hit && this.comm) {
       const msg: any = {
         type: "click",
         trace: hit.trace,
-        index: hit.index,
+        index: this._sourceIndex(hit),
         screen: { x: cssX, y: cssY },
         modifiers: {
           shift: e.shiftKey === true,

@@ -1637,12 +1637,16 @@ def line(
         # monotonic screen-x column, which a spiral is not"), so the sorted
         # precondition the sort exists to satisfy never applies here.
         if self.coords != "polar" and not kernels.is_sorted(xc.values):
-            # LOD contract (§28): line x must be sorted; the engine sorts once
-            # at ingest, and says so. The predicate is NaN-safe on purpose:
-            # a NaN fails its pairs, so a NaN-carrying x cannot skip the sort
-            # and violate M4's sorted precondition.
-            # argsort places NaNs last, where the m4 window excludes them.
-            order = np.argsort(xc.values, kind="stable")
+            # M4 requires sorted x within each connected run. Moving a null x
+            # to the end would erase its break, so preserve those separators.
+            if xc.zone.null_count:
+                valid = np.isfinite(xc.values) & np.isfinite(yc.values)
+                edges = np.flatnonzero(np.diff(np.r_[False, valid, False]))
+                order = np.arange(len(xc.values))
+                for start, stop in edges.reshape(-1, 2):
+                    order[start:stop] = start + np.argsort(xc.values[start:stop], kind="stable")
+            else:
+                order = np.argsort(xc.values, kind="stable")
             xc = self.store.ingest(xc.values[order])
             yc = self.store.ingest(yc.values[order])
         style: dict[str, Any] = {"color": color, "width": width, "opacity": opacity}

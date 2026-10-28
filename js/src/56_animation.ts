@@ -343,6 +343,10 @@ Object.assign(ChartView.prototype, {
       return this._prepareFunnelPositionInterpolation(previous, next, match);
     }
     if (!["scatter", "line"].includes(next.trace.kind)) return false;
+    if (previous._lineRanges || next._lineRanges) {
+      match.fallback ||= "snap:line-gaps";
+      return false;
+    }
     if (!previous._cpu || !next._cpu || next.n !== next._cpu.x.length ||
         previous.n !== previous._cpu.x.length) {
       match.fallback ||= "snap:layout-mismatch";

@@ -1,0 +1,26 @@
+{
+  "before": {
+    "svg_data_paths": [
+      "M 62 159 L 169.33 159 L 276.67 159 L 491.33 159 L 598.67 159 L 706 159"
+    ],
+    "native_center_blue_pixels": 128,
+    "native_finite_sample_blue_pixels": 104,
+    "native_shape": [
+      640,
+      1440,
+      4
+    ]
+  },
+  "after": {
+    "svg_data_paths": [
+      "M 62 159 L 169.33 159 L 276.67 159 M 491.33 159 L 598.67 159 L 706 159"
+    ],
+    "native_center_blue_pixels": 0,
+    "native_finite_sample_blue_pixels": 104,
+    "native_shape": [
+      640,
+      1440,
+      4
+    ]
+  }
+}
