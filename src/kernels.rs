@@ -2506,6 +2506,47 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
     )
 }
 
+/// Batch disjoint finite runs while preserving the existing M4 bucket phase.
+pub fn m4_runs_indices(
+    x: &[f64],
+    y: &[f64],
+    bounds: &[u32],
+    x0: f64,
+    x1: f64,
+    n_buckets: usize,
+) -> (Vec<u32>, Vec<u32>) {
+    let mut selected = Vec::new();
+    let mut offsets = Vec::with_capacity(bounds.len() / 2 + 1);
+    offsets.push(0);
+    let max_threads = par_threads_above(x.len(), PAR_THRESHOLD_COMPUTE).min(n_buckets);
+    for run in bounds.chunks_exact(2) {
+        let start = run[0] as usize;
+        let stop = run[1] as usize;
+        let rx = &x[start..stop];
+        let ry = &y[start..stop];
+        let lo = rx.partition_point(|&value| value < x0);
+        let hi = rx.partition_point(|&value| value < x1);
+        if lo >= hi {
+            continue;
+        }
+        let local = m4_indices_impl(
+            rx,
+            ry,
+            x0,
+            x1,
+            n_buckets,
+            lo,
+            hi,
+            par_threads_above_for(hi - lo, PAR_THRESHOLD_COMPUTE, max_threads),
+        );
+        if !local.is_empty() {
+            selected.extend(local.into_iter().map(|row| row + run[0]));
+            offsets.push(selected.len() as u32);
+        }
+    }
+    (selected, offsets)
+}
+
 /// Emit one bucket's {first, min, max, last} rows, sorted and deduplicated.
 /// Shared by the scalar and SIMD (simd.rs) M4 state machines so a bucket
 /// flush is identical by construction.
@@ -6922,6 +6963,32 @@ mod tests {
         assert_eq!(*idx.last().unwrap(), (n - 1) as u32);
         // Sorted and unique.
         assert!(idx.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn m4_batch_runs_match_individual_windows() {
+        let x = [0.0, 1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 6.0, 7.0];
+        let y = [4.0, -2.0, -2.0, 9.0, 1.0, 3.0, -8.0, 0.0, 9.0, 2.0];
+        let bounds = [0, 4, 5, 10];
+        for (lo, hi) in [(-1.0, 8.0), (1.0, 6.0), (20.0, 30.0)] {
+            for width in [1, 3, 720] {
+                let mut expected = Vec::new();
+                let mut offsets = vec![0];
+                for run in bounds.chunks_exact(2) {
+                    let start = run[0] as usize;
+                    let stop = run[1] as usize;
+                    let local = m4_indices(&x[start..stop], &y[start..stop], lo, hi, width);
+                    if !local.is_empty() {
+                        expected.extend(local.into_iter().map(|row| row + run[0]));
+                        offsets.push(expected.len() as u32);
+                    }
+                }
+                assert_eq!(
+                    m4_runs_indices(&x, &y, &bounds, lo, hi, width),
+                    (expected, offsets)
+                );
+            }
+        }
     }
 
     #[test]

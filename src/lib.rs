@@ -83,7 +83,7 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 47;
+pub const ABI_VERSION: u32 = 48;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
@@ -665,6 +665,82 @@ pub unsafe extern "C" fn xy_m4_indices(
     let out = std::slice::from_raw_parts_mut(out, out_len);
     out[..idx.len()].copy_from_slice(&idx);
     idx.len()
+}
+
+/// Batch finite-run M4 without one Python/FFI call per run.
+///
+/// `bounds` contains `n_runs` nonempty, disjoint, ordered [start, stop) pairs.
+/// Each run's x is ascending; y is finite within a run. Bucket coordinates and
+/// tie handling are identical to `xy_m4_indices` called on each run separately.
+/// Returns the selected row count, or `usize::MAX` on invalid arguments.
+///
+/// # Safety
+/// x/y have `len` readable f64s, bounds has `2 * n_runs` readable u32s,
+/// out has `capacity` writable u32s, offsets has `n_runs + 1` writable u32s,
+/// and run_count points to one writable usize. Buffers must not alias.
+#[no_mangle]
+pub unsafe extern "C" fn xy_m4_runs_indices(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    bounds: *const u32,
+    n_runs: usize,
+    x0: f64,
+    x1: f64,
+    n_buckets: usize,
+    out: *mut u32,
+    capacity: usize,
+    offsets: *mut u32,
+    run_count: *mut usize,
+) -> usize {
+    if n_buckets == 0
+        || !finite_gt(x0, x1)
+        || len > u32::MAX as usize
+        || len > (isize::MAX as usize) / std::mem::size_of::<f64>()
+        || n_runs > len
+        || offsets.is_null()
+        || run_count.is_null()
+        || n_buckets.checked_mul(4).is_none()
+    {
+        return usize::MAX;
+    }
+    if n_runs == 0 {
+        *offsets = 0;
+        *run_count = 0;
+        return 0;
+    }
+    if x.is_null() || y.is_null() || bounds.is_null() {
+        return usize::MAX;
+    }
+    let edge_count = match n_runs.checked_mul(2) {
+        Some(count) => count,
+        None => return usize::MAX,
+    };
+    let bounds = std::slice::from_raw_parts(bounds, edge_count);
+    let mut previous = 0;
+    for run in bounds.chunks_exact(2) {
+        if run[0] < previous || run[0] >= run[1] || run[1] as usize > len {
+            return usize::MAX;
+        }
+        previous = run[1];
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let (indices, runs) = match ffi_guard(None, || {
+        Some(kernels::m4_runs_indices(x, y, bounds, x0, x1, n_buckets))
+    }) {
+        Some(result) => result,
+        None => return usize::MAX,
+    };
+    if indices.len() > capacity || (!indices.is_empty() && out.is_null()) {
+        return usize::MAX;
+    }
+    if !indices.is_empty() {
+        std::ptr::copy_nonoverlapping(indices.as_ptr(), out, indices.len());
+    }
+    std::ptr::copy_nonoverlapping(runs.as_ptr(), offsets, runs.len());
+    *run_count = runs.len() - 1;
+    indices.len()
 }
 
 /// Fused M4 decimation for a parallel x/y pair. Unlike `xy_m4_indices`, this
@@ -3249,6 +3325,135 @@ pub unsafe extern "C" fn xy_pyramid_free(handle: u64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn m4_runs_abi_validates_bounds_and_output_capacity() {
+        let x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = [1.0, 8.0, 1.0, 3.0, 9.0, 2.0];
+        let mut out = [99u32; 6];
+        let mut offsets = [99u32; 4];
+        let mut count = 99usize;
+        let good = [0, 2, 3, 6];
+        unsafe {
+            let n = xy_m4_runs_indices(
+                x.as_ptr(),
+                y.as_ptr(),
+                6,
+                good.as_ptr(),
+                2,
+                0.0,
+                6.0,
+                1,
+                out.as_mut_ptr(),
+                6,
+                offsets.as_mut_ptr(),
+                &mut count,
+            );
+            assert_eq!(n, 5);
+            assert_eq!(&out[..n], &[0, 1, 3, 4, 5]);
+            assert_eq!(&offsets[..3], &[0, 2, 5]);
+            assert_eq!(count, 2);
+            for bad in [[0, 3, 2, 6], [0, 2, 4, 7], [0, 2, 4, 4]] {
+                assert_eq!(
+                    xy_m4_runs_indices(
+                        x.as_ptr(),
+                        y.as_ptr(),
+                        6,
+                        bad.as_ptr(),
+                        2,
+                        0.0,
+                        6.0,
+                        1,
+                        out.as_mut_ptr(),
+                        6,
+                        offsets.as_mut_ptr(),
+                        &mut count
+                    ),
+                    usize::MAX
+                );
+            }
+            assert_eq!(
+                xy_m4_runs_indices(
+                    x.as_ptr(),
+                    y.as_ptr(),
+                    6,
+                    good.as_ptr(),
+                    2,
+                    0.0,
+                    6.0,
+                    1,
+                    out.as_mut_ptr(),
+                    0,
+                    offsets.as_mut_ptr(),
+                    &mut count
+                ),
+                usize::MAX
+            );
+            assert_eq!(
+                xy_m4_runs_indices(
+                    std::ptr::null(),
+                    y.as_ptr(),
+                    6,
+                    good.as_ptr(),
+                    2,
+                    0.0,
+                    6.0,
+                    1,
+                    out.as_mut_ptr(),
+                    6,
+                    offsets.as_mut_ptr(),
+                    &mut count
+                ),
+                usize::MAX
+            );
+            assert_eq!(
+                xy_m4_runs_indices(
+                    x.as_ptr(),
+                    y.as_ptr(),
+                    6,
+                    good.as_ptr(),
+                    2,
+                    10.0,
+                    20.0,
+                    1,
+                    std::ptr::null_mut(),
+                    0,
+                    offsets.as_mut_ptr(),
+                    &mut count
+                ),
+                0
+            );
+            assert_eq!(offsets[0], 0);
+            assert_eq!(count, 0);
+            assert_eq!(
+                xy_m4_runs_indices(
+                    x.as_ptr(), y.as_ptr(),
+                    (isize::MAX as usize) / std::mem::size_of::<f64>() + 1,
+                    good.as_ptr(), 2, 0.0, 6.0, 1, out.as_mut_ptr(), 6,
+                    offsets.as_mut_ptr(), &mut count,
+                ),
+                usize::MAX
+            );
+            assert_eq!(
+                xy_m4_runs_indices(
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    0,
+                    0.0,
+                    1.0,
+                    1,
+                    std::ptr::null_mut(),
+                    0,
+                    offsets.as_mut_ptr(),
+                    &mut count
+                ),
+                0
+            );
+        }
+    }
+
 
     #[test]
     #[cfg(panic = "unwind")]

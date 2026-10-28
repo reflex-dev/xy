@@ -45,6 +45,7 @@ factorize_fixed_u8_counts = _impl.factorize_fixed_u8_counts
 factorize_unicode1_u8_counts = _impl.factorize_unicode1_u8_counts
 transition_keys_fixed = _impl.transition_keys_fixed
 m4_indices = _impl.m4_indices
+m4_runs_indices = _impl.m4_runs_indices
 marching_squares = _impl.marching_squares
 marching_triangles = _impl.marching_triangles
 is_sorted = _impl.is_sorted
@@ -120,6 +121,7 @@ __all__ = [
     "is_sorted",
     "local_log_density",
     "m4_indices",
+    "m4_runs_indices",
     "marching_squares",
     "marching_triangles",
     "min_max",

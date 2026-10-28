@@ -342,6 +342,31 @@ Rules, in priority order:
    scalar kernels already autovectorize at full width there (argminmax picks
    NEON itself).
 
+### 3.5 Batched finite-run M4 (ABI 48)
+
+`xy_m4_runs_indices` consumes canonical x/y columns plus nonempty, ordered,
+disjoint `[start, stop)` run pairs and the unchanged global viewport window and
+bucket count. It returns canonical selected rows and cumulative boundaries for
+nonempty output runs. The caller owns both output buffers. The ABI validates
+bounds, row limits, pointer/size requirements and output capacity; invalid input
+returns `usize::MAX` without publishing partial output. Python rejects malformed
+run layouts before converting to u32 and raises a clear error on that sentinel.
+
+The implementation uses the same window searches and `m4_indices_impl` as an
+individual M4 call on each run: global bucket phase, first/min/max/last order,
+first-tie behavior and per-window parallel threshold remain unchanged. It asks
+for available parallelism once per batch instead of once per finite run. No
+row aggregation, renderer topology or wire protocol changes. ABI 48 must be
+paired with the matching Python bindings; renderer protocol remains 14.
+
+The local fragmented million-row payload fixture measured 182.14 ms before
+and 5.93 ms after, with identical 24,380 emitted rows and 332,568 bytes. Raw
+samples, environment and reproduction are in
+`spec/benchmarks/line-gaps-batched-20261028/`. Finite and one-gap measurements
+do not establish an improvement or absence of regressions. The browser still
+draws once per nontrivial finite run; this change makes no frame-rate or peak
+memory claim.
+
 ## 4. What Python keeps forever
 
 Ingest normalization (pandas/arrow/dtype coercion — ecosystem glue),

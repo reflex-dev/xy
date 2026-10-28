@@ -1,0 +1,1 @@
+Reduce Python-to-native dispatch overhead when decimating lines with many missing-data gaps, preserving selected source rows and run boundaries. The native core and Python bindings now use ABI 48 and must be updated together.

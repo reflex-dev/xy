@@ -66,16 +66,15 @@ def line_run_indices(
     edges = np.flatnonzero(np.diff(np.r_[False, valid, False]))
     if len(x) > np.iinfo(np.uint32).max:
         raise ValueError("Gap-preserving lines exceed the uint32 source-row limit")
+    if window is not None:
+        indices, boundaries = kernels.m4_runs_indices(
+            x, y, edges.astype(np.uint32), *window, px_width
+        )
+        return indices.astype(np.intp), boundaries
     selected = []
     boundaries = [0]
     for start, stop in edges.reshape(-1, 2):
-        if window is None:
-            indices = np.arange(start, stop, dtype=np.intp)
-        else:
-            indices = (
-                kernels.m4_indices(x[start:stop], y[start:stop], *window, px_width).astype(np.intp)
-                + start
-            )
+        indices = np.arange(start, stop, dtype=np.intp)
         if len(indices):
             selected.append(indices)
             boundaries.append(boundaries[-1] + len(indices))

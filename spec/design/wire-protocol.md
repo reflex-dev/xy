@@ -486,6 +486,12 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
+The in-process native ABI is separate from these wire versions. Batched line
+decimation adds `xy_m4_runs_indices` at native ABI 48, with matching Python
+bindings required. Its selected rows and boundaries match the prior per-run
+implementation exactly, so renderer protocol 14 and frame version 1 do not
+change.
+
 - **Renderer/spec protocol.** `PROTOCOL_VERSION = 14` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
   `PROTOCOL = 14` (`js/src/00_header.ts`) is checked in the `ChartView`

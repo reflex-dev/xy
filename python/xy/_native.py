@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 47
+ABI_VERSION = 48
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -178,6 +178,21 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_size_t,
+        ctypes.c_void_p,
+    ]
+    lib.xy_m4_runs_indices.restype = ctypes.c_size_t
+    lib.xy_m4_runs_indices.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
         ctypes.c_void_p,
     ]
     lib.xy_svg_poly_path.restype = ctypes.c_size_t
@@ -2007,6 +2022,64 @@ def m4_indices(
     if written == _USIZE_MAX:
         raise ValueError("invalid m4 arguments")
     return out[:written].copy()
+
+
+def m4_runs_indices(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    bounds: npt.NDArray[np.uint32],
+    x0: float,
+    x1: float,
+    n_buckets: int,
+) -> tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32]]:
+    """Batch M4 over disjoint finite runs with unchanged global bucket phase.
+
+    Args:
+        x: Coordinates ascending inside each finite run.
+        y: Finite values inside the declared runs.
+        bounds: Flat nonempty [start, stop) run pairs in source-row order.
+        x0: Inclusive window lower bound.
+        x1: Exclusive window upper bound.
+        n_buckets: Global viewport bucket count.
+
+    Returns:
+        Canonical selected row indices and cumulative nonempty-run offsets.
+
+    Raises:
+        ValueError: Bounds, lengths, window or bucket count are invalid.
+    """
+    n_buckets = _bounded_positive_int(n_buckets, "n_buckets")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    x, y = _as_f64(x, "x"), _as_f64(y, "y")
+    if len(x) != len(y) or len(x) > _U32_MAX:
+        raise ValueError("m4 run columns need equal lengths within the uint32 row limit")
+    raw = np.asarray(bounds)
+    if raw.ndim != 1 or raw.dtype.kind not in "iu" or len(raw) % 2:
+        raise ValueError("m4 run bounds must be a flat integer array of start/stop pairs")
+    if len(raw) and (raw.min() < 0 or raw.max() > _U32_MAX):
+        raise ValueError("m4 run bounds exceed the uint32 row limit")
+    edges = np.ascontiguousarray(raw, dtype=np.uint32)
+    n_runs = len(edges) // 2
+    out = np.empty(len(x), dtype=np.uint32)
+    offsets = np.empty(n_runs + 1, dtype=np.uint32)
+    run_count = ctypes.c_size_t()
+    written = _lib.xy_m4_runs_indices(
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        edges.ctypes.data,
+        n_runs,
+        x0,
+        x1,
+        n_buckets,
+        out.ctypes.data,
+        len(out),
+        offsets.ctypes.data,
+        ctypes.byref(run_count),
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid m4 run arguments")
+    return out[:written].copy(), offsets[: run_count.value + 1].copy()
 
 
 def m4_points(

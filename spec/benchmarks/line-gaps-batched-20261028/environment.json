@@ -1,0 +1,12 @@
+{
+  "source_base": "e74ed8c8",
+  "branch": "cloud/line-gap-batched-m4",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+  "candidate_abi": 47,
+  "candidate_native_sha256": "1f3c7f8e56e0356b068292f8bc96401d559c6b99cc210e95be030287c068eb97",
+  "baseline_abi": 47,
+  "baseline_native_sha256": "a1179ebe8e64269854a31d330c7ad0534d9f03f1f519b8bc2f2307aa34032e1d",
+  "profile": "cargo build --release --offline; LTO=fat, codegen-units=1",
+  "scope": "local payload builds, not frame-rate or peak-memory measurements"
+}
