@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import _native, channels, interaction, kernels, lod
+from . import channels, interaction, kernels, lod
 from ._legend import automatic_legend_visible
 from ._trace import Trace
 from .columns import Column
@@ -586,6 +586,24 @@ class PayloadMixin(_Host):
             style["color"] = self.palette_color(t.id)
         return style
 
+    def _m4_indices(
+        self, t: Trace, xr: tuple, px_width: int, xv: np.ndarray, yv: np.ndarray
+    ) -> np.ndarray:
+        """Select canonical rows in the axis's screen-uniform binning space.
+
+        Args:
+            t: Trace whose x axis defines binning coordinates.
+            xr: Visible raw x range.
+            px_width: Screen bucket count.
+            xv: Canonical x values.
+            yv: Canonical y values used for extrema selection.
+
+        Returns:
+            Canonical source-row indices in emitted order.
+        """
+        mx, (m0, m1) = self._binning_coords(t.x_axis, xv, xr)
+        return kernels.m4_indices(mx, yv, m0, m1 + float(np.finfo(np.float64).eps), px_width)
+
     def _m4_decimate(
         self, t: Trace, xr: tuple, px_width: int, *arrays: np.ndarray
     ) -> tuple[str, tuple[np.ndarray, ...]]:
@@ -606,15 +624,7 @@ class PayloadMixin(_Host):
             return "direct", arrays
         if t.n_points <= DECIMATION_THRESHOLD:
             return "direct", arrays
-        eps = float(np.finfo(np.float64).eps)
-        mx, (m0, m1) = self._binning_coords(t.x_axis, arrays[0], xr)
-        if mx is not arrays[0]:
-            idx = kernels.m4_indices(mx, arrays[1], m0, m1 + eps, px_width)
-            return "decimated", tuple(a[idx] for a in arrays)
-        if len(arrays) == 2:
-            selected = _native.m4_points(arrays[0], arrays[1], xr[0], xr[1] + eps, px_width)
-            return "decimated", selected
-        idx = kernels.m4_indices(arrays[0], arrays[1], xr[0], xr[1] + eps, px_width)
+        idx = self._m4_indices(t, xr, px_width, arrays[0], arrays[1])
         if len(idx):
             return "decimated", tuple(a[idx] for a in arrays)
         return "decimated", tuple(a[:0] for a in arrays)
@@ -646,8 +656,14 @@ class PayloadMixin(_Host):
                 if t.transition_keys is not None:
                     self._transition_entry(entry, t, pw, sel)
                 return entry
-        tier, (xv, yv) = self._m4_decimate(t, xr, px_width, t.x.values, t.y.values)
         sel = None
+        if self.coords != "polar" and t.n_points > DECIMATION_THRESHOLD:
+            if t.n_points > _U32_MAX:
+                raise ValueError("Decimated lines exceed the uint32 source-row limit")
+            sel = self._m4_indices(t, xr, px_width, t.x.values, t.y.values)
+            tier, xv, yv = "decimated", t.x.values[sel], t.y.values[sel]
+        else:
+            tier, xv, yv = "direct", t.x.values, t.y.values
         if tier == "direct":
             sel = self._finite_sel(t, xv, yv)
             if sel is not None:
@@ -663,7 +679,9 @@ class PayloadMixin(_Host):
             # client uses it to skip an at-home re-request that would only
             # recompute the same windows after a streaming append.
             entry["decimation_px"] = int(px_width)
-        # Attach direct keys in the same finite/log-filtered row order.
+        if sel is not None and len(sel):
+            entry["source_rows"] = pw.ship_u32(sel.astype(np.uint32))
+        # Attach keys in the same emitted row order.
         if t.transition_keys is not None:
             self._transition_entry(entry, t, pw, sel)
         return entry

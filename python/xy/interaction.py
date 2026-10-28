@@ -534,6 +534,9 @@ def decimate_view(
                 "len": len(runs),
                 "dtype": "u32",
             }
+        if t.kind == "line" and len(idx):
+            if t.n_points > np.iinfo(np.uint32).max:
+                raise ValueError("Decimated lines exceed the uint32 source-row limit")
             update["source_rows"] = {
                 "buf": writer.add_raw(idx.astype("<u4").tobytes()),
                 "len": len(idx),

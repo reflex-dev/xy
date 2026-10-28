@@ -214,6 +214,11 @@ Kernel-side callbacks (`python/xy/channel.py`), wired through
 
 - `on_hover(row)` / `on_click(row)` — the picked row dict resolved by
   `fig.pick(trace, index, drill_seq)`. Not called when the pick misses.
+  Line indices are canonical source rows, including after M4 decimation,
+  refinement, retained-home fallback and keyboard activation. A sample's ordinal
+  position in its reduced buffer is not its source identity. Same-trace x/y-bound
+  tooltip aliases refresh from the exact reply rather than retaining their
+  provisional f32 readout; this does not transport arbitrary unbound table fields.
 - `on_view_change(view)` — `{"ranges", "source", "axes", "phase",
   "interaction_id"}`, plus `"x0"/"x1"/"y0"/"y1"` aliases when `x`/`y` are
   present. A legacy `{x0, x1, y0, y1}` message with no `ranges` is still
@@ -299,7 +304,7 @@ renderer reads anywhere in `js/src/`.
 | Wheel over an axis band | Cursor-anchored zoom of **that axis only** | `navigation`, `zoom`, `wheel_zoom`, axis in `zoom_axes` |
 | Drag **along** an axis band | Pan that axis only (containment clamps as in §2.2) | `navigation`, and `pan` ∧ in `pan_axes` (or contained) |
 | Drag **across** an axis band | Marks a span along the axis, box-zooms to it on release (the one-axis `select-x`/`select-y` shape) | `navigation`, `zoom`, `box_zoom`, axis in `zoom_axes` |
-| `ArrowRight`/`ArrowDown`, `ArrowLeft`/`ArrowUp`, `Home`, `End` | Keyboard traversal of pickable points in data order | pickable points |
+| `ArrowRight`/`ArrowDown`, `ArrowLeft`/`ArrowUp`, `Home`, `End` | Keyboard traversal of points and resident line samples in data order | retained point/sample data |
 | `Escape` | Dismiss the readout and invalidate the in-flight pick | — |
 
 A box gesture counts as moved past 3 px in either axis; a lasso needs at
@@ -405,6 +410,15 @@ round-trip on hover; keyboard point traversal and the live-region readout;
 lasso vertex editing on an existing lasso; selection overlay rendering;
 modebar presence (subject only to the fit check); and view clamping to axis
 bounds. Everything in the §2 and §2.1 tables is configurable; nothing else is.
+
+Line traversal visits resident direct or M4 samples, not every canonical source
+row at once. Initial, refined and retained-home samples use their own canonical
+maps; `Enter`/`Space` activates the newly focused sample. The line `sampleNav`
+capability does not enable point picking or brush selection for lines. Authored
+line tooltip fields/title templates can resolve bound column names separately
+from core row metadata (for example a column named `x_kind`); event `trace`,
+`index`, coordinate and kind keys retain their engine meanings. `name` remains
+the documented series-name pseudo-field.
 
 ## 9. Legend hover emphasis
 

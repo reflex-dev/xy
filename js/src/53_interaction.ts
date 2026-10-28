@@ -484,7 +484,7 @@ Object.assign(ChartView.prototype, {
     // the pre-funnel accessibility path and stable "Point N of total" count.
     return (this.gpuTraces || []).map((g) => ["line", "area", "error_band"].includes(g.trace.kind) ? this._decimatedDrawable(g) : g).filter((g) => {
       const mark = markOf(g.trace.kind);
-      return (mark.pointPick || mark.stageNav) && g.tier !== "density" &&
+      return (mark.pointPick || mark.stageNav || mark.sampleNav) && g.tier !== "density" &&
         (!mark.stageNav || !g._legendHidden) && g._cpu &&
         g._cpu.x && g._cpu.y && this._a11yGroupCount(g) > 0;
     });

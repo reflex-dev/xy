@@ -1,0 +1,1 @@
+Fix exact hover/click identities for finite M4 lines and enable keyboard traversal over resident line samples. Bound x/y tooltip fields refresh from exact replies without corrupting event metadata when column names collide with reserved row keys.

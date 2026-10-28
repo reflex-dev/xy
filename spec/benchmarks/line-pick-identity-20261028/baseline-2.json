@@ -1,0 +1,137 @@
+{
+  "xy_module": "/workspace/xy-line-identity-baseline/python/xy/__init__.py",
+  "python": "3.12.14",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "numpy": "2.5.1",
+  "scope": "Three local payload builds; no interaction/FPS/memory claim",
+  "records": [
+    {
+      "n": 1000,
+      "pattern": "finite",
+      "build_ms": [
+        0.328373000229476,
+        0.10673999986465788,
+        0.1454680004826514
+      ],
+      "median_ms": 0.1454680004826514,
+      "marks": 1000,
+      "runs": null,
+      "payload_bytes": 8000,
+      "geometry_sha256": "5f286ec2eca40bbee7e8492f45538e0ccd6b7dd6f03d43bca89c876d52bcc8ee"
+    },
+    {
+      "n": 1000,
+      "pattern": "one_gap",
+      "build_ms": [
+        0.3794700005528284,
+        0.1990790005947929,
+        0.26094199984072475
+      ],
+      "median_ms": 0.26094199984072475,
+      "marks": 999,
+      "runs": 2,
+      "payload_bytes": 12000,
+      "geometry_sha256": "e47a9a0b2c1dbc1bf9bb43aca9031bc04a6f2abcd93cfc7ad02c9f5e93e5e20e"
+    },
+    {
+      "n": 1000,
+      "pattern": "fragmented",
+      "build_ms": [
+        0.2679620001799776,
+        0.14435699995374307,
+        0.18332499985262984
+      ],
+      "median_ms": 0.18332499985262984,
+      "marks": 990,
+      "runs": 11,
+      "payload_bytes": 11928,
+      "geometry_sha256": "e99d5ed0faa5e3cdec166199915fb7e1156ea63664703ede275abd1bedd34c26"
+    },
+    {
+      "n": 100000,
+      "pattern": "finite",
+      "build_ms": [
+        0.35109700002067257,
+        0.1729200002955622,
+        0.16360500012524426
+      ],
+      "median_ms": 0.1729200002955622,
+      "marks": 1675,
+      "runs": null,
+      "payload_bytes": 13400,
+      "geometry_sha256": "87ef6ad1de9057fce3369c6fb4683d86b229812afd6eb22c634b39aee8092b06"
+    },
+    {
+      "n": 100000,
+      "pattern": "one_gap",
+      "build_ms": [
+        0.4443180005182512,
+        0.38361600036296295,
+        0.37528299981204327
+      ],
+      "median_ms": 0.38361600036296295,
+      "marks": 1675,
+      "runs": 2,
+      "payload_bytes": 20112,
+      "geometry_sha256": "02dae1574d71063826dfb9219866d8daf95378a4e8cd49f0bcdbb7671740469b"
+    },
+    {
+      "n": 100000,
+      "pattern": "fragmented",
+      "build_ms": [
+        0.5475429998114123,
+        0.5154039999979432,
+        0.4742319997603772
+      ],
+      "median_ms": 0.5154039999979432,
+      "marks": 3626,
+      "runs": 1001,
+      "payload_bytes": 47520,
+      "geometry_sha256": "bb71ef69e9788ec80afac7a414aca1d0dbe913f05b678f19e5f661bd23d145d9"
+    },
+    {
+      "n": 1000000,
+      "pattern": "finite",
+      "build_ms": [
+        4.172508000010566,
+        0.5205820007176953,
+        0.5320700001902878
+      ],
+      "median_ms": 0.5320700001902878,
+      "marks": 2717,
+      "runs": null,
+      "payload_bytes": 21736,
+      "geometry_sha256": "7bdb67f7ba614a26011547e93827acf5bb0d371620d2b0f87d237369d16b2fbf"
+    },
+    {
+      "n": 1000000,
+      "pattern": "one_gap",
+      "build_ms": [
+        2.734697999585478,
+        1.6513509999640519,
+        1.729187999444548
+      ],
+      "median_ms": 1.729187999444548,
+      "marks": 2717,
+      "runs": 2,
+      "payload_bytes": 32616,
+      "geometry_sha256": "1f34c69e31c7194e25601ce7bbbb4e954af2fdb4f055bf0a26cb000d5323f603"
+    },
+    {
+      "n": 1000000,
+      "pattern": "fragmented",
+      "build_ms": [
+        4.231337000419444,
+        3.47011299982114,
+        3.34707799993339
+      ],
+      "median_ms": 3.47011299982114,
+      "marks": 24380,
+      "runs": 10001,
+      "payload_bytes": 332568,
+      "geometry_sha256": "3914a0dc0e8b9a4d3121c5925fa1fc13649b0e6552db8c042434653360fbb10c"
+    }
+  ],
+  "payload_source_sha256": "869481348f9c4aa902e2a187e26b37611df3d7c51bf49d5d9840c35dd098ea96",
+  "native_sha256": "1f3c7f8e56e0356b068292f8bc96401d559c6b99cc210e95be030287c068eb97"
+}

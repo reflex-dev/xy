@@ -95,7 +95,7 @@ def test_keyboard_activation_uses_the_click_contract() -> None:
     required = (
         'const activate = e.key === "Enter" || e.key === " ";',
         'if (!this._interactionFlag("click") || !this._hoverTarget) return;',
-        'const msg: any = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };',
+        'const msg: any = { type: "click", trace: hit.trace, index: this._sourceIndex(hit), screen, modifiers };',
     )
     for label, text in CLIENTS:
         for snippet in required:

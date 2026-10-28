@@ -1,6 +1,9 @@
 import { fmtCategory, fmtNumberSpec, fmtValue } from "./30_ticks";
 import { ChartView } from "./50_chartview";
 
+const LINE_ROW_KEYS = new Set(["trace", "index", "x", "y", "x_kind", "y_kind"]);
+const LINE_TOOLTIP_FIELDS = new WeakMap<object, Map<string, [any, any]>>();
+
 // ChartView tooltip resolution: map a hovered vertex back to its source
 // row, denormalize units, and compose the tooltip lines/DOM. Split out of
 // 50_chartview.js; augments the prototype so `this.*` is unchanged.
@@ -114,7 +117,7 @@ Object.assign(ChartView.prototype, {
         row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);
       }
     }
-    this._applySharedTooltipFields(row);
+    this._applySharedTooltipFields(row, hit);
     return row;
   },
 
@@ -159,26 +162,44 @@ Object.assign(ChartView.prototype, {
     return [undefined, undefined];
   },
 
-  _applySharedTooltipFields(row) {
+  _applySharedTooltipFields(row, hit = null) {
     const sources = this.spec.tooltip && this.spec.tooltip.sources;
     if (!sources || typeof sources !== "object" || row.x === undefined) return;
+    const resolved = new Map<string, [any, any]>();
+    LINE_TOOLTIP_FIELDS.set(row, resolved);
     for (const [field, entries] of Object.entries(sources)) {
-      if (!Array.isArray(entries) || row[field] !== undefined) continue;
+      if (!Array.isArray(entries)) continue;
       const source = entries.find((entry) => entry.trace === row.trace) || entries[0];
       if (!source || !Number.isFinite(Number(source.trace))) continue;
-      const g = this.gpuTraces.find((trace) => trace.trace.id === source.trace);
-      if (!g) continue;
-      let idx = Number.isInteger(row.index) && source.trace === row.trace ? row.index : -1;
-      if (
-        !g._cpuHeatmap &&
-        (idx < 0 || !g._cpu || !g._cpu.x || idx >= g._cpu.x.length)
-      ) {
-        idx = this._nearestCpuIndex(g, row.x);
+      const candidate = source.trace === row.trace && hit?.g
+        ? hit.g
+        : this.gpuTraces.find((trace) => trace.trace.id === source.trace);
+      if (!candidate) continue;
+      const lineSource = candidate.trace.kind === "line";
+      const ownCoordinate = lineSource && source.trace === row.trace &&
+        (source.channel === "x" || source.channel === "y");
+      if (!ownCoordinate && row[field] !== undefined && !(lineSource && LINE_ROW_KEYS.has(field))) continue;
+      const g = candidate.trace.kind === "line" ? this._decimatedDrawable(candidate) : candidate;
+      let value, kind;
+      if (ownCoordinate) {
+        value = row[source.channel]; kind = row[`${source.channel}_kind`];
+      } else {
+        let idx = hit?.g === g ? hit.index
+          : !g._sourceRows && Number.isInteger(row.index) && source.trace === row.trace ? row.index : -1;
+        if (
+          !g._cpuHeatmap &&
+          (idx < 0 || !g._cpu || !g._cpu.x || idx >= g._cpu.x.length)
+        ) {
+          idx = this._nearestCpuIndex(g, row.x);
+        }
+        [value, kind] = this._sourceValue(g, source, idx);
       }
-      const [value, kind] = this._sourceValue(g, source, idx);
       if (value === undefined) continue;
+      if (lineSource) resolved.set(field, [value, kind]);
+      if (lineSource && LINE_ROW_KEYS.has(field)) continue;
       row[field] = value;
-      if (kind !== undefined) row[`${field}_kind`] = kind;
+      if (kind === undefined) delete row[`${field}_kind`];
+      else row[`${field}_kind`] = kind;
     }
   },
 
@@ -434,6 +455,8 @@ Object.assign(ChartView.prototype, {
       const name = this._tooltipSeriesName(row);
       return name === null ? [undefined, undefined] : [name, undefined];
     }
+    const source = LINE_TOOLTIP_FIELDS.get(row)?.get(field);
+    if (source) return source;
     const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
     const key = row[field] !== undefined ? field : aliases[field];
     if (!key || row[key] === undefined) return [undefined, undefined];

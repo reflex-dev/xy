@@ -1,0 +1,164 @@
+[
+  {
+    "n": 1000,
+    "pattern": "finite",
+    "marks": 1000,
+    "geometry_sha256": "5f286ec2eca40bbee7e8492f45538e0ccd6b7dd6f03d43bca89c876d52bcc8ee",
+    "baseline_payload_bytes": 8000,
+    "candidate_payload_bytes": 8000,
+    "baseline_process_medians_ms": [
+      0.10500799999135779,
+      0.1454680004826514,
+      0.11542399988684338
+    ],
+    "candidate_process_medians_ms": [
+      0.1058489997376455,
+      0.11078600073233247,
+      0.16230399978667265
+    ]
+  },
+  {
+    "n": 1000,
+    "pattern": "one_gap",
+    "marks": 999,
+    "geometry_sha256": "e47a9a0b2c1dbc1bf9bb43aca9031bc04a6f2abcd93cfc7ad02c9f5e93e5e20e",
+    "baseline_payload_bytes": 12000,
+    "candidate_payload_bytes": 12000,
+    "baseline_process_medians_ms": [
+      0.16605899963906268,
+      0.26094199984072475,
+      0.19050599985348526
+    ],
+    "candidate_process_medians_ms": [
+      0.14877299963700352,
+      0.2651290005815099,
+      0.196816000425315
+    ]
+  },
+  {
+    "n": 1000,
+    "pattern": "fragmented",
+    "marks": 990,
+    "geometry_sha256": "e99d5ed0faa5e3cdec166199915fb7e1156ea63664703ede275abd1bedd34c26",
+    "baseline_payload_bytes": 11928,
+    "candidate_payload_bytes": 11928,
+    "baseline_process_medians_ms": [
+      0.14395599919225788,
+      0.18332499985262984,
+      0.14265500067267567
+    ],
+    "candidate_process_medians_ms": [
+      0.14721099978487473,
+      0.14313500014395686,
+      0.203384999622358
+    ]
+  },
+  {
+    "n": 100000,
+    "pattern": "finite",
+    "marks": 1675,
+    "geometry_sha256": "87ef6ad1de9057fce3369c6fb4683d86b229812afd6eb22c634b39aee8092b06",
+    "baseline_payload_bytes": 13400,
+    "candidate_payload_bytes": 20100,
+    "baseline_process_medians_ms": [
+      0.18066099983116146,
+      0.1729200002955622,
+      0.20122200021432946
+    ],
+    "candidate_process_medians_ms": [
+      0.1846470004238654,
+      0.23895899994386127,
+      0.3924200000255951
+    ]
+  },
+  {
+    "n": 100000,
+    "pattern": "one_gap",
+    "marks": 1675,
+    "geometry_sha256": "02dae1574d71063826dfb9219866d8daf95378a4e8cd49f0bcdbb7671740469b",
+    "baseline_payload_bytes": 20112,
+    "candidate_payload_bytes": 20112,
+    "baseline_process_medians_ms": [
+      0.33640499987086514,
+      0.38361600036296295,
+      0.3798810002990649
+    ],
+    "candidate_process_medians_ms": [
+      0.3866910001306678,
+      0.28221399952599313,
+      0.4044679999424261
+    ]
+  },
+  {
+    "n": 100000,
+    "pattern": "fragmented",
+    "marks": 3626,
+    "geometry_sha256": "bb71ef69e9788ec80afac7a414aca1d0dbe913f05b678f19e5f661bd23d145d9",
+    "baseline_payload_bytes": 47520,
+    "candidate_payload_bytes": 47520,
+    "baseline_process_medians_ms": [
+      0.590487000408757,
+      0.5154039999979432,
+      0.4973169998265803
+    ],
+    "candidate_process_medians_ms": [
+      0.5151040004420793,
+      0.5982789998597582,
+      0.648504000309913
+    ]
+  },
+  {
+    "n": 1000000,
+    "pattern": "finite",
+    "marks": 2717,
+    "geometry_sha256": "7bdb67f7ba614a26011547e93827acf5bb0d371620d2b0f87d237369d16b2fbf",
+    "baseline_payload_bytes": 21736,
+    "candidate_payload_bytes": 32604,
+    "baseline_process_medians_ms": [
+      0.6340729996736627,
+      0.5320700001902878,
+      0.7282839997060364
+    ],
+    "candidate_process_medians_ms": [
+      0.5500260003827862,
+      0.471989000288886,
+      0.4485629997361684
+    ]
+  },
+  {
+    "n": 1000000,
+    "pattern": "one_gap",
+    "marks": 2717,
+    "geometry_sha256": "1f34c69e31c7194e25601ce7bbbb4e954af2fdb4f055bf0a26cb000d5323f603",
+    "baseline_payload_bytes": 32616,
+    "candidate_payload_bytes": 32616,
+    "baseline_process_medians_ms": [
+      1.7791729997043149,
+      1.729187999444548,
+      1.5089269991221954
+    ],
+    "candidate_process_medians_ms": [
+      2.011560999562789,
+      2.4952980002126424,
+      1.4994519997344469
+    ]
+  },
+  {
+    "n": 1000000,
+    "pattern": "fragmented",
+    "marks": 24380,
+    "geometry_sha256": "3914a0dc0e8b9a4d3121c5925fa1fc13649b0e6552db8c042434653360fbb10c",
+    "baseline_payload_bytes": 332568,
+    "candidate_payload_bytes": 332568,
+    "baseline_process_medians_ms": [
+      3.9159130001280573,
+      3.47011299982114,
+      3.556702999958361
+    ],
+    "candidate_process_medians_ms": [
+      3.824305000307504,
+      4.460060999917914,
+      3.12542499978008
+    ]
+  }
+]

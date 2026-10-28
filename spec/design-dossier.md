@@ -704,6 +704,14 @@ detail inside a decade of millisecond timestamps).
 
 ## 17. Interaction & latency model
 
+Every nonempty decimated line carries a binary canonical source-row map, including finite
+lines without gaps. Hover/click and keyboard activation translate a resident M4
+sample through that map before requesting an exact pick. Initial, refined and
+retained-home drawables keep their own maps. Same-trace tooltip fields bound to
+the line's x/y channels use the hit's resident sample locally and refresh from
+the exact channels after a kernel reply; a canonical row ID never indexes a
+compacted CPU geometry buffer. Direct finite lines retain implicit identity.
+
 Part I said "60fps" without defining what has to happen inside a frame. The budgets:
 
 | Interaction | Budget | Mechanism |
@@ -907,6 +915,8 @@ tech. Ship from Phase 1, not as a retrofit:
   `aria-live` region for hover readouts.
 - **Keyboard navigation**: arrow keys walk points (direct tiers) or bins (aggregated
   tiers), reusing the exact hover pipeline of §17 — one code path, two input devices.
+  Lines traverse retained direct/M4 samples through `sampleNav`; their source-row
+  map supplies exact identities. This does not enable line brush selection.
 - **"View as table"** escape hatch: the column store already has the data; render the
   visible window as an HTML table on demand.
 - High-contrast + `prefers-reduced-motion` respected in the theme system; colormaps

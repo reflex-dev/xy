@@ -30,6 +30,7 @@ import { chartBackdrop, parseColor } from "./20_theme";
 //                  step instead (see spec/api/chart-kind-contract.md).
 //   retainCpu    — standalone export keeps CPU f32 copies of x/y so hover can
 //                  read approximate values with no kernel attached (§37).
+//   sampleNav    — keyboard traversal of resident samples without GPU point picking.
 //   refreshColor — re-resolve CSS-expressed constant colors on theme change
 //                  (§36 live re-resolution); each kind knows where its
 //                  constant color lives in the spec.
@@ -263,6 +264,7 @@ export const MARK_KINDS = {
     },
   },
   line: {
+    sampleNav: true,
     build: (view, g, t, buffer) => view._buildLineMark(g, t, buffer),
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);

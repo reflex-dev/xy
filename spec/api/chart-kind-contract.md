@@ -386,7 +386,9 @@ Beyond `build`/`draw`, `MARK_KINDS` entries carry capability flags/hooks so no
 per-kind knowledge lives in ChartView branches (the smoke's `reg` probe pins
 this contract): `pointPick` (participates in the point-geometry GPU pick pass),
 `retainCpu` (standalone export keeps CPU x/y copies for kernel-less hover,
-§37), `refreshColor(view, g)` (theme-change re-resolution of CSS constant
+§37), `sampleNav` (line keyboard traversal over resident direct/M4 samples without
+enabling the GPU point-pick pass or line brush selection),
+`refreshColor(view, g)` (theme-change re-resolution of CSS constant
 colors, §36). The registry and `markOf()` are exported (`xy.MARK_KINDS`)
 — it is the public extension surface.
 

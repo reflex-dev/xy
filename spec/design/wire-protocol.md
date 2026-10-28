@@ -20,15 +20,21 @@ returns either `None` or `(message, buffers)`, where `buffers` is a list of
 binary attachments the reply's spec entries index into by position.
 
 Protocol 14 line traces with invalid samples carry `runs` and `source_rows`
-column references. Both are raw little-endian `u32` buffers, never numeric JSON
+column references; ordinary finite M4 lines also carry `source_rows`. Both are raw little-endian `u32` buffers, never numeric JSON
 arrays. `runs` contains cumulative boundaries including zero and the final
 emitted point count; each adjacent pair defines one connected run. `source_rows`
 maps every finite emitted point to its canonical line row. `tier_update` carries
 the same buffers as `{buf, len, dtype: "u32"}` descriptors. Initial, refined and
 retained-home drawables keep independent maps. Line hover/click requests name the
 canonical mapped row; point-mark requests retain their shipped-index contract.
-Missing topology is emitted only for invalid-sample lines; ordinary finite lines
-retain their existing hot path. Area and error-band gap topology is not included.
+Missing topology is emitted only for invalid-sample lines. Ordinary finite direct
+lines keep their implicit identity map; finite M4 lines select canonical indices
+once and gather geometry in that same order. The extra map costs four bytes per
+emitted point, not per canonical row. Lines exceeding the uint32 source-row limit
+are rejected instead of wrapping identities. Area and error-band gap topology is
+not included.
+An empty finite M4 window has no source identities and omits the map, retaining
+the existing two empty x/y buffers in its refinement reply.
 
 Protocol 15 extends these same binary fields to `area` and `error_band`.
 Each emitted run closes its own fill between upper and explicit baseline; no

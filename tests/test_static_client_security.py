@@ -415,7 +415,7 @@ def test_client_exposes_first_class_interaction_events() -> None:
         'this._dispatchChartEvent("brush",',
         'this._dispatchChartEvent("select",',
         'this.comm.send({ type: "view_change", ...detail });',
-        'const msg: any = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };',
+        'const msg: any = { type: "click", trace: hit.trace, index: this._sourceIndex(hit), screen, modifiers };',
         "new BroadcastChannel(`xy:${group}`)",
     )
 
@@ -432,7 +432,7 @@ def test_client_interaction_event_payload_contract_is_stable() -> None:
         'this._dispatchChartEvent("hover", {',
         "row,",
         "trace: hit.trace,",
-        "index: hit.index,",
+        "index: this._sourceIndex(hit),",
         'view: this._eventView("hover"),',
         'this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });',
         'this._dispatchChartEvent("click", detail);',
@@ -442,7 +442,7 @@ def test_client_interaction_event_payload_contract_is_stable() -> None:
         'view: this._eventView("click"),',
         "row: hit && this._localRow ? this._localRow(hit) : null,",
         "trace: hit ? hit.trace : null,",
-        "index: hit ? hit.index : null,",
+        "index: hit ? this._sourceIndex(hit) : null,",
         'this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });',
         'this._dispatchChartEvent("select", {',
         "range: { x0, x1, y0, y1 },",

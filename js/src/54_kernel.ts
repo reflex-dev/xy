@@ -875,10 +875,8 @@ Object.assign(ChartView.prototype, {
       // The kernel returns exact values for the picked trace only. Rehydrate
       // tooltip fields sourced from sibling traces before replacing the local
       // approximate row, otherwise a rich layered tooltip visibly collapses.
-      // _localRow already resolved those fields for this same hover; reuse
-      // them (fields the kernel row lacks are exactly the sibling-sourced
-      // ones) so _applySharedTooltipFields finds nothing missing and skips
-      // its O(n) sibling scans. It stays as the mismatch fallback.
+      // Reuse sibling fields from the same hover; same-trace bound line aliases
+      // are refreshed from the exact coordinates by _applySharedTooltipFields.
       // The kernel row carries raw axis coordinates; a category axis's code
       // must become its label here, exactly as _localRow did for the instant
       // readout — otherwise the exact reply visibly swaps "B" for "1" (and
