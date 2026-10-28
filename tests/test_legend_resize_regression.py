@@ -891,3 +891,65 @@ def test_browser_named_axis_category_state_and_tick_chrome_are_independent(
         payload = _probe_axis_categories(chromium, document, Path(td) / "axis_categories.html")
 
     assert payload == expected
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["Scatter · extrema \N{MINUS SIGN}4 and 9", "Line · spike + missing sample (known bridge bug)"],
+)
+def test_responsive_title_wrap_matches_its_reserved_band(title: str, tmp_path: Path) -> None:
+    """A centered title must wrap at the measured width, not the remaining right half."""
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the responsive title probe")
+    chart = xy.line_chart(xy.line([0, 1], [0, 1]), title=title, width=720, height=300)
+    probe = r"""
+<script>
+(() => {
+  try {
+    const view = window.__fcProbeView;
+    const results = [];
+    view.fluid = true;
+    view.fluidH = true;
+    for (const width of [720, 380, 720]) {
+      view.root.style.width = width + "px";
+      view._resize(width, 300);
+      if (view._raf) cancelAnimationFrame(view._raf);
+      view._raf = null;
+      view._drawNow();
+      const title = view._titleElements[0].element;
+      const style = getComputedStyle(title);
+      const root = view.root.getBoundingClientRect();
+      const box = title.getBoundingClientRect();
+      const measured = view._estimateTickLabel(
+        title.textContent, Number.parseFloat(style.fontSize), view._titleWrapWidth,
+      );
+      results.push({
+        width, top: box.top - root.top, bottom: box.bottom - root.top,
+        height: box.height, actualWidth: box.width, wrapWidth: view._titleWrapWidth,
+        lineHeight: Number.parseFloat(style.lineHeight),
+        measuredLines: measured.lines.length,
+        plotTop: view.plot.y - view._topAxisRoom,
+      });
+    }
+    document.body.setAttribute("data-xy-title-wrap", JSON.stringify({ results }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-title-wrap-error", String(err.stack || err));
+  }
+})();
+</script>
+"""
+    payload = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "title_wrap.html",
+        "data-xy-title-wrap",
+        label="responsive title wrap",
+    )
+    for result in payload["results"]:
+        assert result["top"] >= -1, result
+        assert result["bottom"] <= result["plotTop"] - 7, result
+        assert result["actualWidth"] <= result["wrapWidth"] + 1, result
+        assert result["height"] == pytest.approx(
+            result["measuredLines"] * result["lineHeight"], abs=1
+        ), result

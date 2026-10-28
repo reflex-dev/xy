@@ -2607,7 +2607,7 @@ export class ChartView {
       const t = document.createElement("div");
       t.textContent = entry.text;
       t.style.cssText =
-        "position:absolute;white-space:pre-line;line-height:1.2;";
+        "position:absolute;width:max-content;white-space:pre-line;line-height:1.2;";
       this._applySlot(t, "title");
       for (const [property, value] of Object.entries(entry.style || {})) {
         if (["color", "font-family", "font-size", "font-style", "font-weight"].includes(property)) {

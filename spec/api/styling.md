@@ -338,6 +338,12 @@ supplying padding does not have to anticipate it:
 | Vertical colorbar and its label | to the right of the plot |
 | Horizontal colorbar and its label | below the plot |
 
+The browser title's natural width is capped at the same wrap width used to
+measure its reserved band. Centering the title does not reduce that width to
+the space remaining to the right of its anchor. This keeps automatic wrapping
+and title-band measurement consistent on narrow charts and after resizing;
+explicit title-slot width styling retains its normal author precedence.
+
 `xy._svg.layout()` is the single resolver for this in the Python exporters, and
 the browser client's `ChartView._layout()` mirrors it exactly — the two must
 stay in step, because a caller that pins a plot rectangle (as `xy.pyplot` does
