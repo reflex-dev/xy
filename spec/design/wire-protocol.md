@@ -253,10 +253,20 @@ current kernel path emits either field.
 of range or `drill_seq` was stale; the reply ships regardless so the client
 clears its hover state. A point row is
 `{trace, index, x, y, x_kind, y_kind}` plus `color_value` or `color_category`
-and `size_value` when those channels exist. A heatmap row is
+and `size_value` when those channels exist. Area/error-band point rows also
+include optional `base` and `base_kind`, the canonical f64 lower geometry and
+its column kind. This is additive protocol-15 geometry metadata; other families
+retain their existing row schema. A heatmap row is
 `{trace, index, row, col}` plus `color_value` when the cell is finite. Picks
 use their own client-side sequence (`_pickSeq`), not the view `seq` — sharing
 one counter let a hover invalidate an in-flight `tier_update`.
+
+For connected filled traces, authored tooltip sources may name `base` alongside
+`x` and `y`. Error-band upper columns map to `y`, lower columns to `base`; area
+explicit baseline columns map to `base`. The client decodes resident baseline
+buffers immediately and upgrades same-trace aliases from exact replies without
+overwriting core row metadata, even when authored column names collide. No
+arbitrary unbound table-column values are added to the transport.
 
 `x`/`y` are raw axis coordinates from the conventional center/value columns
 (orientation-aware for bars: band center on the position axis, value end on

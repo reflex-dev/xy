@@ -875,7 +875,7 @@ Object.assign(ChartView.prototype, {
       // The kernel returns exact values for the picked trace only. Rehydrate
       // tooltip fields sourced from sibling traces before replacing the local
       // approximate row, otherwise a rich layered tooltip visibly collapses.
-      // Reuse sibling fields from the same hover; same-trace bound line aliases
+      // Reuse sibling fields from the same hover; same-trace bound geometry aliases
       // are refreshed from the exact coordinates by _applySharedTooltipFields.
       // The kernel row carries raw axis coordinates; a category axis's code
       // must become its label here, exactly as _localRow did for the instant
@@ -886,7 +886,7 @@ Object.assign(ChartView.prototype, {
       // mark that no longer exists — a miss.
       const rowG = this.gpuTraces.find((t) => t.trace.id === msg.row.trace);
       if (!rowG) { this._hideTooltip(); return; }
-      for (const channel of ["x", "y"]) {
+      for (const channel of ["x", "y", "base"]) {
         if (typeof msg.row[channel] !== "number") continue;
         const [value, kind] = this._sourceDisplayValue(
           rowG, channel, msg.row[channel], msg.row[`${channel}_kind`],

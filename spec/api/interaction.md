@@ -216,9 +216,13 @@ Kernel-side callbacks (`python/xy/channel.py`), wired through
   `fig.pick(trace, index, drill_seq)`. Not called when the pick misses.
   Line indices are canonical source rows, including after M4 decimation,
   refinement, retained-home fallback and keyboard activation. A sample's ordinal
-  position in its reduced buffer is not its source identity. Same-trace x/y-bound
+  position in its reduced buffer is not its source identity. Same-trace connected-line/filled-area x/y-bound
   tooltip aliases refresh from the exact reply rather than retaining their
   provisional f32 readout; this does not transport arbitrary unbound table fields.
+  Area and error-band rows additionally include `base` and `base_kind` for the
+  canonical lower geometry. Authored area `base` columns and error-band lower
+  columns bind to `base`; error-band upper columns bind to `y`. Their tooltip
+  fields and title templates refresh both boundaries from exact replies.
 - `on_view_change(view)` — `{"ranges", "source", "axes", "phase",
   "interaction_id"}`, plus `"x0"/"x1"/"y0"/"y1"` aliases when `x`/`y` are
   present. A legacy `{x0, x1, y0, y1}` message with no `ranges` is still
@@ -415,9 +419,9 @@ Line traversal visits resident direct or M4 samples, not every canonical source
 row at once. Initial, refined and retained-home samples use their own canonical
 maps; `Enter`/`Space` activates the newly focused sample. The line `sampleNav`
 capability does not enable point picking or brush selection for lines. Authored
-line tooltip fields/title templates can resolve bound column names separately
+connected-line/filled-area tooltip fields/title templates can resolve bound column names separately
 from core row metadata (for example a column named `x_kind`); event `trace`,
-`index`, coordinate and kind keys retain their engine meanings. `name` remains
+`index`, coordinate and kind keys (including filled `base`/`base_kind`) retain their engine meanings. `name` remains
 the documented series-name pseudo-field.
 
 ## 9. Legend hover emphasis

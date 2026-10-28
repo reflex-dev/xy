@@ -1,8 +1,8 @@
 import { fmtCategory, fmtNumberSpec, fmtValue } from "./30_ticks";
 import { ChartView } from "./50_chartview";
 
-const LINE_ROW_KEYS = new Set(["trace", "index", "x", "y", "x_kind", "y_kind"]);
-const LINE_TOOLTIP_FIELDS = new WeakMap<object, Map<string, [any, any]>>();
+const CONNECTED_ROW_KEYS = new Set(["trace", "index", "x", "y", "x_kind", "y_kind"]);
+const CONNECTED_TOOLTIP_FIELDS = new WeakMap<object, Map<string, [any, any]>>();
 
 // ChartView tooltip resolution: map a hovered vertex back to its source
 // row, denormalize units, and compose the tooltip lines/DOM. Split out of
@@ -101,6 +101,14 @@ Object.assign(ChartView.prototype, {
       row.y = y;
       if (xKind !== undefined) row.x_kind = xKind;
       if (yKind !== undefined) row.y_kind = yKind;
+      if ((g.trace.kind === "area" || g.trace.kind === "error_band") && cpu.base) {
+        const baseMeta = cpu.baseMeta || g.baseMeta;
+        const [base, baseKind] = this._sourceDisplayValue(
+          g, "base", this._decodeValue(cpu.base, baseMeta, hit.index), baseMeta?.kind,
+        );
+        row.base = base;
+        if (baseKind !== undefined) row.base_kind = baseKind;
+      }
       const color = g.trace.color;
       if (cpu.color && color) {
         if (color.mode === "categorical" && Array.isArray(color.categories)) {
@@ -135,10 +143,11 @@ Object.assign(ChartView.prototype, {
   _sourceValue(g, source, index) {
     if (!g || index < 0) return [undefined, undefined];
     const channel = source.channel;
-    if (channel === "x" || channel === "y") {
+    if (channel === "x" || channel === "y" || channel === "base") {
       const cpu = g._cpu;
       if (!cpu || !cpu[channel]) return [undefined, undefined];
-      const meta = channel === "x" ? (cpu.xMeta || g.xMeta) : (cpu.yMeta || g.yMeta);
+      const meta = channel === "x" ? (cpu.xMeta || g.xMeta)
+        : channel === "base" ? (cpu.baseMeta || g.baseMeta) : (cpu.yMeta || g.yMeta);
       const value = this._decodeValue(cpu[channel], meta, index);
       if (!Number.isFinite(value)) return [undefined, undefined];
       return this._sourceDisplayValue(g, channel, value, meta && meta.kind);
@@ -166,7 +175,7 @@ Object.assign(ChartView.prototype, {
     const sources = this.spec.tooltip && this.spec.tooltip.sources;
     if (!sources || typeof sources !== "object" || row.x === undefined) return;
     const resolved = new Map<string, [any, any]>();
-    LINE_TOOLTIP_FIELDS.set(row, resolved);
+    CONNECTED_TOOLTIP_FIELDS.set(row, resolved);
     for (const [field, entries] of Object.entries(sources)) {
       if (!Array.isArray(entries)) continue;
       const source = entries.find((entry) => entry.trace === row.trace) || entries[0];
@@ -175,11 +184,14 @@ Object.assign(ChartView.prototype, {
         ? hit.g
         : this.gpuTraces.find((trace) => trace.trace.id === source.trace);
       if (!candidate) continue;
-      const lineSource = candidate.trace.kind === "line";
-      const ownCoordinate = lineSource && source.trace === row.trace &&
-        (source.channel === "x" || source.channel === "y");
-      if (!ownCoordinate && row[field] !== undefined && !(lineSource && LINE_ROW_KEYS.has(field))) continue;
-      const g = candidate.trace.kind === "line" ? this._decimatedDrawable(candidate) : candidate;
+      const filledSource = candidate.trace.kind === "area" || candidate.trace.kind === "error_band";
+      const connectedSource = candidate.trace.kind === "line" || filledSource;
+      const protectedField = CONNECTED_ROW_KEYS.has(field) ||
+        (filledSource && (field === "base" || field === "base_kind"));
+      const ownCoordinate = connectedSource && source.trace === row.trace &&
+        (source.channel === "x" || source.channel === "y" || (filledSource && source.channel === "base"));
+      if (!ownCoordinate && row[field] !== undefined && !(connectedSource && protectedField)) continue;
+      const g = connectedSource ? this._decimatedDrawable(candidate) : candidate;
       let value, kind;
       if (ownCoordinate) {
         value = row[source.channel]; kind = row[`${source.channel}_kind`];
@@ -195,8 +207,8 @@ Object.assign(ChartView.prototype, {
         [value, kind] = this._sourceValue(g, source, idx);
       }
       if (value === undefined) continue;
-      if (lineSource) resolved.set(field, [value, kind]);
-      if (lineSource && LINE_ROW_KEYS.has(field)) continue;
+      if (connectedSource) resolved.set(field, [value, kind]);
+      if (connectedSource && protectedField) continue;
       row[field] = value;
       if (kind === undefined) delete row[`${field}_kind`];
       else row[`${field}_kind`] = kind;
@@ -455,7 +467,7 @@ Object.assign(ChartView.prototype, {
       const name = this._tooltipSeriesName(row);
       return name === null ? [undefined, undefined] : [name, undefined];
     }
-    const source = LINE_TOOLTIP_FIELDS.get(row)?.get(field);
+    const source = CONNECTED_TOOLTIP_FIELDS.get(row)?.get(field);
     if (source) return source;
     const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
     const key = row[field] !== undefined ? field : aliases[field];

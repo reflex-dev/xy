@@ -5263,21 +5263,33 @@ def _add_tooltip_source(
         seen.add(key)
 
 
-def _mark_xy_channels(mark: Mark) -> tuple[str, str]:
-    """Tooltip channels for Mark.x/Mark.y. The stairs factory stores values in
-    Mark.x and edges in Mark.y, but the rendered channels are swapped (edges
-    become x positions, values become y heights)."""
-    return ("y", "x") if mark.kind == "stairs" else ("x", "y")
+def _mark_tooltip_geometry(mark: Mark) -> tuple[tuple[str, str], ...]:
+    """Resolve authored geometry columns to their rendered channels.
+
+    Args:
+        mark: Public mark whose factory may reorder geometry inputs.
+
+    Returns:
+        Bound column names paired with x, y or baseline channels.
+    """
+    if mark.kind == "stairs":
+        values = ((mark.x, "y"), (mark.y, "x"))
+    elif mark.kind == "error_band":
+        values = ((mark.x, "x"), (mark.y, "base"), (mark.props.get("upper"), "y"))
+    elif mark.kind == "area":
+        values = ((mark.x, "x"), (mark.y, "y"), (mark.props.get("base"), "base"))
+    else:
+        values = ((mark.x, "x"), (mark.y, "y"))
+    return tuple(
+        (column_name, channel) for column_name, channel in values if isinstance(column_name, str)
+    )
 
 
 def _merge_tooltip_sources(
     sources: dict[str, list[dict[str, Any]]], mark: Mark, traces: list[Any]
 ) -> None:
-    x_channel, y_channel = _mark_xy_channels(mark)
-    if isinstance(mark.x, str):
-        _add_tooltip_source(sources, mark.x, traces, x_channel)
-    if isinstance(mark.y, str):
-        _add_tooltip_source(sources, mark.y, traces, y_channel)
+    for column_name, channel in _mark_tooltip_geometry(mark):
+        _add_tooltip_source(sources, column_name, traces, channel)
     if mark.kind == "heatmap" and isinstance(mark.props.get("z"), str):
         _add_tooltip_source(sources, mark.props["z"], traces, "color_value")
     color = mark.props.get("color")
@@ -5298,11 +5310,8 @@ def _merge_tooltip_sources(
 
 
 def _merge_tooltip_aliases(aliases: dict[str, str], mark: Mark, traces: list[Any]) -> None:
-    x_channel, y_channel = _mark_xy_channels(mark)
-    if isinstance(mark.x, str):
-        aliases.setdefault(mark.x, x_channel)
-    if isinstance(mark.y, str):
-        aliases.setdefault(mark.y, y_channel)
+    for column_name, channel in _mark_tooltip_geometry(mark):
+        aliases.setdefault(column_name, channel)
     color = mark.props.get("color")
     if isinstance(color, str) and not _looks_like_css(color):
         channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)

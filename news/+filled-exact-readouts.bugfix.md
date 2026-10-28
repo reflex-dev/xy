@@ -1,0 +1,1 @@
+Correct area and error-band tooltip column bindings and preserve exact upper and lower values after picking, including authored field names that collide with row metadata. Filled-trace callbacks now include the canonical `base` and `base_kind`.

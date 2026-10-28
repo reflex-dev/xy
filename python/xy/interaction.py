@@ -261,6 +261,9 @@ def row_dict(fig: "Figure", t: "Trace", idx: int) -> dict[str, Any]:
         "x_kind": t.x.kind,
         "y_kind": t.y.kind,
     }
+    if t.kind in {"area", "error_band"} and t.base is not None:
+        out["base"] = _json_scalar(float(t.base.values[idx]))
+        out["base_kind"] = t.base.kind
     cc = t.color_ch
     if cc and cc.mode == "continuous" and cc.values is not None:
         out["color_value"] = _json_scalar(float(cc.values[idx]))
