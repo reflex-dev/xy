@@ -35,6 +35,7 @@ export const ATTR_SLOTS = {
   a_pos: 0, a_v1: 1, a_v0: 2,
   a_corner: 0,
   a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
+  a_runCaps: 6,
   a_len0: 10, a_len1: 11,
   a_dash0: 10, a_dashDir: 11,
   // Transition "previous-frame" positions and per-item style channels are
@@ -745,10 +746,12 @@ void main() {
 // (src/raster.rs), so all three renderers agree.
 export const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
+in float a_runCaps;
 in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
 uniform int u_cap; uniform int u_capSegments;
+uniform int u_batchedRuns;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 uniform float u_revealProgress; uniform float u_revealSegments;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
@@ -783,8 +786,9 @@ void main() {
   // hides the seam between consecutive quads; the polyline's two outer ends
   // instead grow by half_w when the cap reaches past them (round semicircle,
   // square extension), giving LINE_FS room to shape it.
-  bool first = gl_InstanceID == 0;
-  bool last = gl_InstanceID == u_capSegments - 1;
+  int runCaps = int(a_runCaps);
+  bool first = u_batchedRuns == 1 ? (runCaps & 1) != 0 : gl_InstanceID == 0;
+  bool last = gl_InstanceID == u_capSegments - 1 || (u_batchedRuns == 1 && (runCaps & 2) != 0);
   float capExt = u_cap == 0 ? 0.5 : half_w;
   float t = mix(first ? -capExt : -0.5, len + (last ? capExt : 0.5), c.x);
   vec2 pos = pix0 + dir * t + n * c.y * half_w;

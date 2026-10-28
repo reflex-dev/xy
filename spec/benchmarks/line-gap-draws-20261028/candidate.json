@@ -1,0 +1,1147 @@
+{
+  "label": "candidate",
+  "backend": "Chromium headless + ANGLE SwiftShader; DPR1; one chart per page",
+  "browserVersion": "151.0.7922.173",
+  "notes": [
+    "CPU draw includes chrome/presentation; finish adds synchronous GL completion",
+    "rAF intervals from controlled redraw loop after warmup",
+    "hover wall includes Playwright/CDP roundtrip during redraw pump; handler time is browser-only",
+    "No hardware FPS or peak memory claim"
+  ],
+  "records": [
+    {
+      "pattern": "finite",
+      "width": 720,
+      "startupMs": 814.2139019999998,
+      "samples": [
+        {
+          "cpuDrawMs": 0.7999999998137355,
+          "finishedMs": 0.7999999998137355,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 0.7000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.39999999944120646,
+          "finishedMs": 0.39999999944120646,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.6000000005587935,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.39999999944120646,
+          "finishedMs": 0.39999999944120646,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        }
+      ],
+      "intervals": [
+        166.70000000000005,
+        66.69999999999982,
+        99.90000000000009,
+        100.09999999999991,
+        150,
+        16.700000000000273,
+        83.19999999999982,
+        50.09999999999991,
+        83.30000000000018,
+        83.29999999999973,
+        83.30000000000018,
+        83.30000000000018,
+        166.69999999999982,
+        16.699999999999818,
+        16.700000000000273,
+        49.90000000000009,
+        66.69999999999982,
+        50,
+        66.69999999999982,
+        83.30000000000018
+      ],
+      "targets": [
+        {
+          "x": 171.12224561281164,
+          "y": 61.416667375521484,
+          "source": 407
+        },
+        {
+          "x": 262.40872935212553,
+          "y": 17.584905659760526,
+          "source": 814
+        },
+        {
+          "x": 353.64296398258665,
+          "y": 17.58504128844279,
+          "source": 1222
+        },
+        {
+          "x": 475.23393085657244,
+          "y": 269.1066241630325,
+          "source": 1765
+        },
+        {
+          "x": 566.4663428437013,
+          "y": 269.6129109640673,
+          "source": 2172
+        }
+      ],
+      "indexSpace": "emitted (finite decimated line lacks source mapping on baseline)",
+      "shape": {
+        "width": 720,
+        "height": 320,
+        "canvasWidth": 644,
+        "canvasHeight": 268,
+        "dpr": 1,
+        "visible": true
+      },
+      "marks": 2717,
+      "runs": 1,
+      "modebar": false,
+      "legend": false,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "vendor": "Google Inc. (Google)",
+      "glVersion": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "glError": 0,
+      "hover": [
+        {
+          "wallWithCdpMs": 87.44409899999937,
+          "handlerMs": 4.400000000372529,
+          "expectedSource": 407,
+          "row": {
+            "trace": 0,
+            "index": 407,
+            "x": 149611,
+            "y": 0.6532711386719638,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 213.2031989999996,
+          "handlerMs": 1.5,
+          "expectedSource": 814,
+          "row": {
+            "trace": 0,
+            "index": 814,
+            "x": 299865,
+            "y": 1.0000000000039035,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 66.30870400000003,
+          "handlerMs": 1,
+          "expectedSource": 1222,
+          "row": {
+            "trace": 0,
+            "index": 1222,
+            "x": 450033,
+            "y": 0.9999989271202976,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 74.59809899999982,
+          "handlerMs": 1.2999999998137355,
+          "expectedSource": 1765,
+          "row": {
+            "trace": 0,
+            "index": 1765,
+            "x": 650167,
+            "y": -0.9896494150122708,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 152.71667800000068,
+          "handlerMs": 1.599999999627471,
+          "expectedSource": 2172,
+          "row": {
+            "trace": 0,
+            "index": 2172,
+            "x": 800332,
+            "y": -0.9936543703040188,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "pattern": "finite",
+      "width": 380,
+      "startupMs": 163.69559000000027,
+      "samples": [
+        {
+          "cpuDrawMs": 1.2000000001862645,
+          "finishedMs": 1.2000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 0.6999999992549419,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 1,
+          "finishedMs": 1,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.6000000005587935,
+          "finishedMs": 0.7000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.6000000005587935,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.6999999992549419,
+          "finishedMs": 0.6999999992549419,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.6000000005587935,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.7000000001862645,
+          "finishedMs": 0.7999999998137355,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        }
+      ],
+      "intervals": [
+        66.59999999999991,
+        83.30000000000018,
+        66.79999999999995,
+        83.20000000000005,
+        66.69999999999982,
+        83.30000000000018,
+        66.69999999999982,
+        83.30000000000018,
+        66.69999999999982,
+        100,
+        83.30000000000018,
+        83.40000000000009,
+        83.19999999999982,
+        83.40000000000009,
+        50,
+        66.69999999999982,
+        66.59999999999991,
+        66.70000000000027,
+        66.69999999999982,
+        83.30000000000018
+      ],
+      "targets": [
+        {
+          "x": 101.23890072946676,
+          "y": 59.335199740279734,
+          "source": 407
+        },
+        {
+          "x": 147.4491393925356,
+          "y": 13.86792452766204,
+          "source": 814
+        },
+        {
+          "x": 193.6329289725516,
+          "y": 13.868065217116026,
+          "source": 1222
+        },
+        {
+          "x": 255.18363580627732,
+          "y": 274.7747817810561,
+          "source": 1765
+        },
+        {
+          "x": 301.36650274386125,
+          "y": 275.29995988063695,
+          "source": 2172
+        }
+      ],
+      "indexSpace": "emitted (finite decimated line lacks source mapping on baseline)",
+      "shape": {
+        "width": 380,
+        "height": 320,
+        "canvasWidth": 326,
+        "canvasHeight": 278,
+        "dpr": 1,
+        "visible": true
+      },
+      "marks": 2717,
+      "runs": 1,
+      "modebar": false,
+      "legend": false,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "vendor": "Google Inc. (Google)",
+      "glVersion": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "glError": 0,
+      "hover": [
+        {
+          "wallWithCdpMs": 14.039045999999871,
+          "handlerMs": 5.599999999627471,
+          "expectedSource": 407,
+          "row": {
+            "trace": 0,
+            "index": 407,
+            "x": 149611,
+            "y": 0.6532711386719638,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 133.51245999999992,
+          "handlerMs": 6.5,
+          "expectedSource": 814,
+          "row": {
+            "trace": 0,
+            "index": 814,
+            "x": 299865,
+            "y": 1.0000000000039035,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 154.25572999999895,
+          "handlerMs": 1.599999999627471,
+          "expectedSource": 1222,
+          "row": {
+            "trace": 0,
+            "index": 1222,
+            "x": 450033,
+            "y": 0.9999989271202976,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 86.12616099999832,
+          "handlerMs": 0.900000000372529,
+          "expectedSource": 1765,
+          "row": {
+            "trace": 0,
+            "index": 1765,
+            "x": 650167,
+            "y": -0.9896494150122708,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 138.17367399999966,
+          "handlerMs": 1.099999999627471,
+          "expectedSource": 2172,
+          "row": {
+            "trace": 0,
+            "index": 2172,
+            "x": 800332,
+            "y": -0.9936543703040188,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "pattern": "one_gap",
+      "width": 720,
+      "startupMs": 134.05748700000004,
+      "samples": [
+        {
+          "cpuDrawMs": 0.900000000372529,
+          "finishedMs": 1,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.40000000037252903,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.6000000005587935,
+          "finishedMs": 0.6000000005587935,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.8999999994412065,
+          "finishedMs": 0.8999999994412065,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.7000000001862645,
+          "finishedMs": 0.7000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.6000000005587935,
+          "finishedMs": 0.6000000005587935,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 0.599999999627471,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 1.2000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        }
+      ],
+      "intervals": [
+        133.29999999999995,
+        100.09999999999991,
+        49.90000000000009,
+        83.40000000000009,
+        83.29999999999995,
+        83.29999999999995,
+        66.70000000000005,
+        83.39999999999986,
+        83.20000000000005,
+        100.10000000000014,
+        83.29999999999973,
+        83.30000000000018,
+        66.69999999999982,
+        83.30000000000018,
+        150,
+        66.69999999999982,
+        83.30000000000018,
+        83.30000000000018,
+        100,
+        66.69999999999982
+      ],
+      "targets": [
+        {
+          "x": 171.12224561281164,
+          "y": 61.416667375521484,
+          "source": 149611
+        },
+        {
+          "x": 262.40872935212553,
+          "y": 17.584905659760526,
+          "source": 299865
+        },
+        {
+          "x": 353.64296398258665,
+          "y": 17.58504128844279,
+          "source": 450033
+        },
+        {
+          "x": 475.23393085657244,
+          "y": 269.1066241630325,
+          "source": 650167
+        },
+        {
+          "x": 566.4663428437013,
+          "y": 269.6129109640673,
+          "source": 800332
+        }
+      ],
+      "indexSpace": "canonical",
+      "shape": {
+        "width": 720,
+        "height": 320,
+        "canvasWidth": 644,
+        "canvasHeight": 268,
+        "dpr": 1,
+        "visible": true
+      },
+      "marks": 2717,
+      "runs": 2,
+      "modebar": false,
+      "legend": false,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "vendor": "Google Inc. (Google)",
+      "glVersion": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "glError": 0,
+      "hover": [
+        {
+          "wallWithCdpMs": 27.152045000000726,
+          "handlerMs": 3.800000000745058,
+          "expectedSource": 149611,
+          "row": {
+            "trace": 0,
+            "index": 149611,
+            "x": 149611,
+            "y": 0.6532711386719638,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 60.44515700000011,
+          "handlerMs": 1.7999999998137355,
+          "expectedSource": 299865,
+          "row": {
+            "trace": 0,
+            "index": 299865,
+            "x": 299865,
+            "y": 1.0000000000039035,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 65.51310199999898,
+          "handlerMs": 1.099999999627471,
+          "expectedSource": 450033,
+          "row": {
+            "trace": 0,
+            "index": 450033,
+            "x": 450033,
+            "y": 0.9999989271202976,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 159.04662500000086,
+          "handlerMs": 1.2000000001862645,
+          "expectedSource": 650167,
+          "row": {
+            "trace": 0,
+            "index": 650167,
+            "x": 650167,
+            "y": -0.9896494150122708,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 163.99545899999976,
+          "handlerMs": 1.599999999627471,
+          "expectedSource": 800332,
+          "row": {
+            "trace": 0,
+            "index": 800332,
+            "x": 800332,
+            "y": -0.9936543703040188,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "pattern": "one_gap",
+      "width": 380,
+      "startupMs": 164.78537200000028,
+      "samples": [
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 0.6999999992549419,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 1.2000000001862645,
+          "finishedMs": 1.2000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.7000000001862645,
+          "finishedMs": 0.7000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        }
+      ],
+      "intervals": [
+        83.29999999999995,
+        50,
+        283.4000000000001,
+        66.59999999999991,
+        83.40000000000009,
+        49.899999999999864,
+        66.70000000000005,
+        50,
+        66.69999999999982,
+        83.30000000000018,
+        50,
+        66.69999999999982,
+        66.60000000000036,
+        50,
+        83.39999999999964,
+        66.5,
+        66.80000000000018,
+        66.59999999999991,
+        66.70000000000027,
+        50
+      ],
+      "targets": [
+        {
+          "x": 101.23890072946676,
+          "y": 59.335199740279734,
+          "source": 149611
+        },
+        {
+          "x": 147.4491393925356,
+          "y": 13.86792452766204,
+          "source": 299865
+        },
+        {
+          "x": 193.6329289725516,
+          "y": 13.868065217116026,
+          "source": 450033
+        },
+        {
+          "x": 255.18363580627732,
+          "y": 274.7747817810561,
+          "source": 650167
+        },
+        {
+          "x": 301.36650274386125,
+          "y": 275.29995988063695,
+          "source": 800332
+        }
+      ],
+      "indexSpace": "canonical",
+      "shape": {
+        "width": 380,
+        "height": 320,
+        "canvasWidth": 326,
+        "canvasHeight": 278,
+        "dpr": 1,
+        "visible": true
+      },
+      "marks": 2717,
+      "runs": 2,
+      "modebar": false,
+      "legend": false,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "vendor": "Google Inc. (Google)",
+      "glVersion": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "glError": 0,
+      "hover": [
+        {
+          "wallWithCdpMs": 24.812278000001243,
+          "handlerMs": 3.2000000001862645,
+          "expectedSource": 149611,
+          "row": {
+            "trace": 0,
+            "index": 149611,
+            "x": 149611,
+            "y": 0.6532711386719638,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 68.22849399999905,
+          "handlerMs": 1.2999999998137355,
+          "expectedSource": 299865,
+          "row": {
+            "trace": 0,
+            "index": 299865,
+            "x": 299865,
+            "y": 1.0000000000039035,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 79.00917199999822,
+          "handlerMs": 1.1000000005587935,
+          "expectedSource": 450033,
+          "row": {
+            "trace": 0,
+            "index": 450033,
+            "x": 450033,
+            "y": 0.9999989271202976,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 120.54047799999898,
+          "handlerMs": 1.099999999627471,
+          "expectedSource": 650167,
+          "row": {
+            "trace": 0,
+            "index": 650167,
+            "x": 650167,
+            "y": -0.9896494150122708,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 120.01216399999976,
+          "handlerMs": 1.7000000001862645,
+          "expectedSource": 800332,
+          "row": {
+            "trace": 0,
+            "index": 800332,
+            "x": 800332,
+            "y": -0.9936543703040188,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "pattern": "fragmented",
+      "width": 720,
+      "startupMs": 157.39527200000157,
+      "samples": [
+        {
+          "cpuDrawMs": 0.39999999944120646,
+          "finishedMs": 0.39999999944120646,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 1,
+          "finishedMs": 1,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.8000000007450581,
+          "finishedMs": 0.8000000007450581,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 0.599999999627471,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 0.599999999627471,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.6000000005587935,
+          "finishedMs": 0.7000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        }
+      ],
+      "intervals": [
+        16.700000000000273,
+        233.29999999999973,
+        200,
+        233.30000000000018,
+        333.4000000000001,
+        199.89999999999964,
+        233.40000000000055,
+        166.59999999999945,
+        183.30000000000018,
+        150,
+        216.69999999999982,
+        250,
+        200,
+        149.90000000000055,
+        366.6999999999998,
+        16.699999999999818,
+        166.60000000000036,
+        650.0999999999995,
+        16.5,
+        250
+      ],
+      "targets": [
+        {
+          "x": 171.32881185711375,
+          "y": 248.29974513284725,
+          "source": 149951
+        },
+        {
+          "x": 262.4597633654237,
+          "y": 59.60493943785028,
+          "source": 299949
+        },
+        {
+          "x": 353.64296398258665,
+          "y": 17.58504128844279,
+          "source": 450033
+        },
+        {
+          "x": 475.1622402188441,
+          "y": 208.42981778482172,
+          "source": 650049
+        },
+        {
+          "x": 566.2944068227088,
+          "y": 28.79489504110154,
+          "source": 800049
+        }
+      ],
+      "indexSpace": "canonical",
+      "shape": {
+        "width": 720,
+        "height": 320,
+        "canvasWidth": 644,
+        "canvasHeight": 268,
+        "dpr": 1,
+        "visible": true
+      },
+      "marks": 24380,
+      "runs": 10001,
+      "modebar": false,
+      "legend": false,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "vendor": "Google Inc. (Google)",
+      "glVersion": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "glError": 0,
+      "hover": [
+        {
+          "wallWithCdpMs": 12.417616999999154,
+          "handlerMs": 4.1000000005587935,
+          "expectedSource": 149951,
+          "row": {
+            "trace": 0,
+            "index": 149951,
+            "x": 149951,
+            "y": -0.8250576853713101,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 256.8649860000005,
+          "handlerMs": 3.7999999998137355,
+          "expectedSource": 299949,
+          "row": {
+            "trace": 0,
+            "index": 299949,
+            "x": 299949,
+            "y": 0.6676027178803379,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 539.2367980000017,
+          "handlerMs": 1.5,
+          "expectedSource": 450033,
+          "row": {
+            "trace": 0,
+            "index": 450033,
+            "x": 450033,
+            "y": 0.9999989271202976,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 478.730690999997,
+          "handlerMs": 1.2999999998137355,
+          "expectedSource": 650049,
+          "row": {
+            "trace": 0,
+            "index": 650049,
+            "x": 650049,
+            "y": -0.5096687078436917,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 297.6013499999972,
+          "handlerMs": 1.199999999254942,
+          "expectedSource": 800049,
+          "row": {
+            "trace": 0,
+            "index": 800049,
+            "x": 800049,
+            "y": 0.9113239645996982,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "pattern": "fragmented",
+      "width": 380,
+      "startupMs": 232.7880609999993,
+      "samples": [
+        {
+          "cpuDrawMs": 0.7000000001862645,
+          "finishedMs": 0.7000000001862645,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.6999999992549419,
+          "finishedMs": 0.6999999992549419,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 1.400000000372529,
+          "finishedMs": 1.400000000372529,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.599999999627471,
+          "finishedMs": 0.599999999627471,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.8000000007450581,
+          "finishedMs": 0.8000000007450581,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.5,
+          "finishedMs": 0.5,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.39999999944120646,
+          "finishedMs": 0.39999999944120646,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        },
+        {
+          "cpuDrawMs": 0.6000000005587935,
+          "finishedMs": 0.6000000005587935,
+          "instancedCalls": 1,
+          "plainCalls": 0
+        }
+      ],
+      "intervals": [
+        200,
+        183.29999999999927,
+        183.30000000000018,
+        183.40000000000055,
+        200,
+        249.89999999999964,
+        266.60000000000036,
+        233.39999999999964,
+        183.30000000000018,
+        150,
+        166.69999999999982,
+        200,
+        183.30000000000018,
+        233.39999999999964,
+        166.60000000000036,
+        183.30000000000018,
+        183.39999999999964,
+        216.60000000000036,
+        166.69999999999982,
+        166.59999999999945
+      ],
+      "targets": [
+        {
+          "x": 101.34346687176878,
+          "y": 253.191526667655,
+          "source": 149951
+        },
+        {
+          "x": 147.47497338063374,
+          "y": 57.45587001388946,
+          "source": 299949
+        },
+        {
+          "x": 193.6329289725516,
+          "y": 13.868065217116026,
+          "source": 450033
+        },
+        {
+          "x": 255.147345203949,
+          "y": 211.83391546335986,
+          "source": 650049
+        },
+        {
+          "x": 301.2794668077687,
+          "y": 25.49619709487399,
+          "source": 800049
+        }
+      ],
+      "indexSpace": "canonical",
+      "shape": {
+        "width": 380,
+        "height": 320,
+        "canvasWidth": 326,
+        "canvasHeight": 278,
+        "dpr": 1,
+        "visible": true
+      },
+      "marks": 24380,
+      "runs": 10001,
+      "modebar": false,
+      "legend": false,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "vendor": "Google Inc. (Google)",
+      "glVersion": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "glError": 0,
+      "hover": [
+        {
+          "wallWithCdpMs": 36.946711999997206,
+          "handlerMs": 3.900000000372529,
+          "expectedSource": 149951,
+          "row": {
+            "trace": 0,
+            "index": 149951,
+            "x": 149951,
+            "y": -0.8250576853713101,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 168.03805100000318,
+          "handlerMs": 1.900000000372529,
+          "expectedSource": 299949,
+          "row": {
+            "trace": 0,
+            "index": 299949,
+            "x": 299949,
+            "y": 0.6676027178803379,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 353.1059530000057,
+          "handlerMs": 1.599999999627471,
+          "expectedSource": 450033,
+          "row": {
+            "trace": 0,
+            "index": 450033,
+            "x": 450033,
+            "y": 0.9999989271202976,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 203.471673,
+          "handlerMs": 1.900000000372529,
+          "expectedSource": 650049,
+          "row": {
+            "trace": 0,
+            "index": 650049,
+            "x": 650049,
+            "y": -0.5096687078436917,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        },
+        {
+          "wallWithCdpMs": 483.3411120000019,
+          "handlerMs": 1.5,
+          "expectedSource": 800049,
+          "row": {
+            "trace": 0,
+            "index": 800049,
+            "x": 800049,
+            "y": 0.9113239645996982,
+            "x_kind": "float",
+            "y_kind": "float"
+          }
+        }
+      ],
+      "errors": []
+    }
+  ]
+}

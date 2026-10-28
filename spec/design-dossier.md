@@ -870,7 +870,7 @@ described above.
   span a gap, or decimation would invent data across a hole.
 
 Implemented line scope: finite x/y runs (including log-axis rejected values) ship
-binary `u32` cumulative boundaries and canonical source-row IDs under protocol 14.
+binary `u32` cumulative boundaries and canonical source-row IDs introduced in protocol 14.
 M4 operates separately inside each run for initial and refined windows. Smooth and
 step expansion, dashed strokes, SVG and native raster exports also operate per run;
 no NaN reaches a vertex buffer. A retained home view keeps its own topology and
@@ -885,8 +885,17 @@ Composed stacks preserve their explicitly supplied top/base arrays without
 imputation or a new stacking API. Smooth fills, SVG/native raster, refined/home
 geometry and canonical hover keep those boundaries. Direct finite filled traces
 remain unchanged. Filled-trace append and polar error bands remain unsupported.
-Highly fragmented lines require one draw per nontrivial run and are not a
-performance-equivalent substitute for an unbroken line.
+Fully revealed lines without position interpolation pack adjacent finite edges
+into one instanced draw. Four endpoint planes and run-end cap flags are derived
+once from the expanded finite runs; source x/y and source-row maps stay intact
+for hover. Dash lengths still reset at every run. Partial reveal, position
+interpolation and more than 2^24 edges retain per-run drawing. Packed and
+retained-home buffers have independent ownership and are included in teardown.
+Fragmented lines still carry extra geometry; this does not establish parity
+with unbroken-line frame rate or memory use. Software-backend measurements and
+pixel/lifecycle evidence are in `spec/benchmarks/line-gap-draws-20261028/`.
+Filled traces retain per-run fill and outline drawing; their extra geometry and
+draw costs remain separate from the LINE-only batching result.
 
 ## 20. Accessibility (a regression Plotly would win otherwise)
 

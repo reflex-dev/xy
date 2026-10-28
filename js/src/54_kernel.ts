@@ -1,4 +1,4 @@
-import { payloadBuffers } from "./00_header";
+import { LINE_RUN_GPU_BUFFERS, payloadBuffers } from "./00_header";
 import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
 import {
@@ -771,6 +771,12 @@ Object.assign(ChartView.prototype, {
           g.xBuf = gl.createBuffer();
           g.yBuf = gl.createBuffer();
           if (bArr && g.baseBuf) g.baseBuf = gl.createBuffer();
+          if (line) {
+            for (const name of LINE_RUN_GPU_BUFFERS) {
+              if (g[name] && g[name] !== g._homeDecimated?.[name]) gl.deleteBuffer(g[name]);
+              g[name] = null;
+            }
+          }
           g._decimatedRefined = true;
         }
         gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
@@ -797,6 +803,7 @@ Object.assign(ChartView.prototype, {
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
         }
         g.n = st ? st.n : src.n;
+        if (line) this._buildLineEdges(g, src.x, src.y);
         if (Array.isArray(upd.x_range) && upd.x_range.length === 2) {
           g._decimatedWindow = [Number(upd.x_range[0]), Number(upd.x_range[1])];
         }

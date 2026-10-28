@@ -179,7 +179,8 @@ def test_browser_draws_separate_finite_runs_and_keeps_source_hover(tmp_path, mod
         label="finite line runs",
         extra_args=(f"--force-device-scale-factor={dpr}",),
     )
-    assert len(result["ranges"]) == len(result["counts"]) == 2
+    assert len(result["ranges"]) == 2
+    assert result["counts"] == [sum(max(0, run[1] - 1) for run in result["ranges"])]
     assert result["finite"]
     assert result["glError"] == 0
     assert result["source"] == [0, 1, 2, 4, 5, 6]

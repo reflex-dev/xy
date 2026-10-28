@@ -66,4 +66,7 @@ def test_every_teardown_path_reads_the_shared_buffer_list() -> None:
 
     # The retained M4 overview owns only its geometry; its channel buffers are
     # aliases of the live trace's and are deleted exactly once, above.
-    assert 'this._deleteBuffers(g._homeDecimated, ["xBuf", "yBuf", "baseBuf"]);' in chartview
+    assert (
+        'this._deleteBuffers(g._homeDecimated, ["xBuf", "yBuf", "baseBuf", "_lenBuf", ...LINE_RUN_GPU_BUFFERS]);'
+        in chartview
+    )

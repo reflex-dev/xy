@@ -1,0 +1,1 @@
+Reduce draw submission overhead for fully revealed lines with many missing-data gaps by batching finite edges. Preserve cap, dash and hover behavior; partial reveal and position interpolation retain the existing per-run draw path.

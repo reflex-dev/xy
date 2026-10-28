@@ -89,7 +89,9 @@ chart = xy.line_chart(
 
 `curve="smooth"` remains an explicit visual interpolation choice; it does not
 estimate a statistical trend or replace the canonical observations. A line with
-many tiny finite runs requires many drawing operations. Area/error-band and
+many tiny finite runs still carries additional geometry. Fully revealed lines
+batch their finite-run edges into one draw; partial reveal and position
+interpolation retain per-run drawing. Area/error-band and
 stacked-baseline gap semantics, and line brush selection, are outside this line
 fix's supported scope.
 

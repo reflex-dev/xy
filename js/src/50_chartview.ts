@@ -1,4 +1,4 @@
-import { FUNNEL_SLOTS, PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
+import { FUNNEL_SLOTS, LINE_RUN_GPU_BUFFERS, PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
@@ -5206,6 +5206,7 @@ export class ChartView {
     g.yBuf = this._upload(drawY);
     g.n = expanded.n;
     g._lineRanges = expanded.ranges;
+    this._buildLineEdges(g, drawX, drawY);
     // Drawn (offset-encoded) vertices kept for the screen-space dash arc length.
     g._dashX = drawX;
     g._dashY = drawY;
@@ -5235,6 +5236,32 @@ export class ChartView {
       xx.set(part.x, offset); yy.set(part.y, offset); offset += part.n;
     }
     return { x: xx, y: yy, n: count, ranges };
+  }
+
+  _buildLineEdges(g, x, y) {
+    this._deleteBuffers(g, LINE_RUN_GPU_BUFFERS);
+    g._lineEdgeStarts = null;
+    if (g.trace.kind !== "line" || !g._lineRanges || g._lineRanges.length < 2) return;
+    const n = g._lineRanges.reduce((sum, run) => sum + Math.max(0, run[1] - 1), 0);
+    // The reveal shader addresses instances as exact float32 integers.
+    if (!n || n > 2 ** 24) return;
+    const x0 = new Float32Array(n), x1 = new Float32Array(n);
+    const y0 = new Float32Array(n), y1 = new Float32Array(n);
+    const caps = new Uint8Array(n), starts = new Uint32Array(n);
+    let edge = 0;
+    for (const [start, count] of g._lineRanges) {
+      for (let i = 0; i < count - 1; i++, edge++) {
+        const row = start + i;
+        starts[edge] = row;
+        x0[edge] = x[row]; x1[edge] = x[row + 1];
+        y0[edge] = y[row]; y1[edge] = y[row + 1];
+        caps[edge] = (i === 0 ? 1 : 0) | (i === count - 2 ? 2 : 0);
+      }
+    }
+    g._lineEdgeStarts = starts;
+    g._lineX0Buf = this._upload(x0); g._lineX1Buf = this._upload(x1);
+    g._lineY0Buf = this._upload(y0); g._lineY1Buf = this._upload(y1);
+    g._lineCapsBuf = this._upload(caps);
   }
 
   _sourceIndex(hit) {
@@ -7044,6 +7071,32 @@ export class ChartView {
     const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
     const dashed = this._lineDash(g);
+    const packed = g._lineEdgeStarts && this._batchLineRuns !== false && !transitionOn && reveal === 1;
+    gl.uniform1i(u("u_batchedRuns"), packed ? 1 : 0);
+    if (packed) {
+      const total = g._lineEdgeStarts.length;
+      const count = Math.max(0, Math.min(total, Math.ceil(total * reveal)));
+      if (!count) return;
+      gl.uniform1f(u("u_revealProgress"), reveal);
+      gl.uniform1f(u("u_revealSegments"), total);
+      gl.uniform1i(u("u_capSegments"), count);
+      this._bindVao(g, "line-packed", [
+        g._lineX0Buf._fcId, g._lineX1Buf._fcId, g._lineY0Buf._fcId, g._lineY1Buf._fcId,
+        g._lineCapsBuf._fcId, dashed ? g._lineLen0Buf._fcId : 0, dashed ? g._lineLen1Buf._fcId : 0,
+      ], () => {
+        this._vaoAttr(ATTR_SLOTS.ax0, g._lineX0Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ax1, g._lineX1Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ay0, g._lineY0Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ay1, g._lineY1Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.a_runCaps, g._lineCapsBuf, 0, 1);
+        if (dashed) {
+          this._vaoAttr(ATTR_SLOTS.a_len0, g._lineLen0Buf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_len1, g._lineLen1Buf, 0, 1);
+        }
+      });
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+      return;
+    }
     const ranges = g._lineRanges || [[0, g.n]];
     const total = ranges.reduce((sum, range) => sum + Math.max(0, range[1] - 1), 0);
     let remaining = total * reveal;
@@ -7304,6 +7357,24 @@ export class ChartView {
     else {
       gl.bindBuffer(gl.ARRAY_BUFFER, g._lenBuf);
       gl.bufferData(gl.ARRAY_BUFFER, lens, gl.DYNAMIC_DRAW);
+    }
+    if (g._lineEdgeStarts) {
+      const starts = g._lineEdgeStarts;
+      if (!g._lineLen0 || g._lineLen0.length !== starts.length) {
+        g._lineLen0 = new Float32Array(starts.length);
+        g._lineLen1 = new Float32Array(starts.length);
+      }
+      for (let i = 0; i < starts.length; i++) {
+        g._lineLen0[i] = lens[starts[i]];
+        g._lineLen1[i] = lens[starts[i] + 1];
+      }
+      for (const [field, values] of [["_lineLen0Buf", g._lineLen0], ["_lineLen1Buf", g._lineLen1]]) {
+        if (!g[field]) g[field] = this._upload(values);
+        else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, g[field]);
+          gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
+        }
+      }
     }
     const arr = new Float32Array(8);
     let period = 0;
@@ -9311,7 +9382,7 @@ export class ChartView {
     // style/channel buffers are shared with the live trace and were deleted
     // above exactly once.
     if (g._decimatedRefined) {
-      this._deleteBuffers(g._homeDecimated, ["xBuf", "yBuf", "baseBuf"]);
+      this._deleteBuffers(g._homeDecimated, ["xBuf", "yBuf", "baseBuf", "_lenBuf", ...LINE_RUN_GPU_BUFFERS]);
     }
     this._deleteBuffers(g.drill, TRACE_GPU_BUFFERS);
     const textures = [];

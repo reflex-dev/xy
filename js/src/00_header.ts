@@ -85,7 +85,11 @@ export const TRACE_GPU_BUFFERS = [
   "_lenBuf", "_segmentDashOffsetBuf", "_segmentDashDirBuf",
   "_transitionPrevXBuf", "_transitionPrevYBuf",
   "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
+  "_lineX0Buf", "_lineX1Buf", "_lineY0Buf", "_lineY1Buf", "_lineCapsBuf",
+  "_lineLen0Buf", "_lineLen1Buf",
 ];
+// Packed-run stores own this prefix; hover/source stores remain separate.
+export const LINE_RUN_GPU_BUFFERS = TRACE_GPU_BUFFERS.filter((name) => name.startsWith("_line"));
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

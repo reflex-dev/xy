@@ -1,0 +1,32 @@
+{
+  "base": "4dffbc763e2416dd8aaab82be6cf264f3229670e",
+  "candidate_source_patch_sha256": "3b04973306cd8e4857f613d33d73dd69d8f033cab332b029349baa7d3aef9e2e",
+  "candidate_standalone_sha256": "f729e1f165295a788e30ad401dce09146bf8edf3b798148db89337b5e9f6af78",
+  "baseline_standalone_sha256": "5816e94b2db3543400e449575a46218d18602b452ce880d068b7904c46379f31",
+  "native_abi": 48,
+  "native_sha256": "1f3c7f8e56e0356b068292f8bc96401d559c6b99cc210e95be030287c068eb97",
+  "node": "v24.19.0",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "quiet_window_start": "2026-10-28T05:40:47Z",
+  "quiet_window_end": "2026-10-28T05:42:15Z",
+  "conditions": "Other task workers paused; sequential baseline then candidate; shared cloud host; software ANGLE SwiftShader",
+  "viewport": [
+    900,
+    600
+  ],
+  "device_scale_factor": 1,
+  "chart_size": [
+    720,
+    320
+  ],
+  "runtime_widths": [
+    720,
+    380
+  ],
+  "rows": 1000000,
+  "fixture": "x=arange(n); y=sin(x*.01); one_gap at n//2 or fragmented y[50::100]=NaN",
+  "samples": "3 CPU warmups +8 CPU/GL-finish samples;25rAF callbacks dropping initial4intervals;5 actual pointer targets under redraw pump",
+  "scope": "No hardware-FPS, peak-memory or server roundtrip claim; rAF remains a measured gate",
+  "final_standalone_sha256": "9cfa992dc1bbd966ce864d4b5ab0f504fcd5d1117ffd770f94cfe71e9644a054",
+  "audit_addendum": "Final bundle adds only a LINE-kind builder eligibility guard; two targeted DPR1/2 line parity cases pass. Shader/hot draw method unchanged."
+}
