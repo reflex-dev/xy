@@ -1,0 +1,17 @@
+{
+  "python": "3.12.14",
+  "numpy": "2.5.1",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "chromium": "Chromium 151.0.7922.173 built on Debian GNU/Linux 13 (trixie)",
+  "baseline": "fbc2e92f",
+  "device_scale_factors": [
+    1,
+    2
+  ],
+  "browser_sizes_css": [
+    720,
+    380
+  ],
+  "native_abi": 48,
+  "protocol": 15
+}

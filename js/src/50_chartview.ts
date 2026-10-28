@@ -6166,7 +6166,19 @@ export class ChartView {
   _setAxisUniforms(prog, prefix, meta, axisId) {
     const gl = this.gl;
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
+    const encodedLinear = this.spec?.coords !== "polar";
+    gl.uniform1i(u("u_encodedLinear"), encodedLinear ? 1 : 0);
+    if (encodedLinear && this._axisMode(axisId) === 0) {
+      // Compose in f64 before uniform upload: decoding an absolute 1e12 value
+      // in f32 destroys a small visible span before the view can subtract it.
+      // Each column gets its own affine (segment endpoints/baselines can have
+      // independent encoding metadata even when they share the same axis).
+      const [lo, hi] = this._axisRange(axisId);
+      const [mul, add] = this._map(meta || {offset: 0, scale: 1}, lo, hi);
+      gl.uniform2f(u(`${prefix}meta`), add, mul);
+    } else {
+      gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
+    }
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
     gl.uniform1f(u(`${prefix}constant`), this._axisConstant(axisId));
   }

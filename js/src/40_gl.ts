@@ -119,6 +119,9 @@ export function uniformOf(gl, prog, name) {
 // is a 256×1 texture (colormap or cycled palette). Size mode maps a_sval into a
 // px range. SDF-antialiased in the fragment stage.
 const AXIS_GLSL = `
+// Cartesian linear metadata carries the CPU-composed encoded-to-clip affine.
+// Polar and nonlinear axes retain the original decode metadata.
+uniform int u_encodedLinear;
 float xyDecode(float encoded, vec2 meta) {
   return encoded / max(abs(meta.y), 1e-30) + meta.x;
 }
@@ -130,6 +133,7 @@ float xyAxisCoord(float encoded, vec2 meta, int mode, float constant) {
   return value;
 }
 float xyMap(float encoded, vec2 map, vec2 meta, int mode, float constant) {
+  if (u_encodedLinear == 1 && mode == 0) return encoded * meta.y + meta.x;
   return xyAxisCoord(encoded, meta, mode, constant) * map.x + map.y;
 }
 float xyViewCoord(float value, int mode, float constant) {

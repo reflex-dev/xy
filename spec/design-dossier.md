@@ -674,7 +674,14 @@ detail inside a decade of millisecond timestamps).
   (`_map`, `js/src/50_chartview.ts`). Decoding to absolute coordinates in-shader
   first would discard the low bits whenever a deeply zoomed window is far smaller
   than the offset — after which zooming back out could never recover the point
-  spread. Only log-family axes (log, symlog) decode before mapping, because their
+  spread. The shared shader uniform `u_encodedLinear` selects this Cartesian
+  path: each column's `*meta` uniform carries its CPU-composed `(add, mul)`
+  encoded-to-clip affine, rather than the wire `(offset, scale)`. This per-column
+  composition also handles independently encoded endpoints and filled baselines;
+  the shared axis `*map` is used only by nonlinear/polar decoding. Wire metadata
+  and canonical CPU data are unchanged. Polar placement retains its original
+  decoded-coordinate path and is outside this Cartesian precision guarantee.
+  Only log-family axes (log, symlog) decode before mapping, because their
   transforms are not affine. *Augments §4.*
 - **Log-family axes pin the encode offset to 0.0** (`lod.geometry_offset`) instead
   of re-centering on a midpoint. A midpoint offset makes f32 error *absolute*

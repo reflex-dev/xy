@@ -1,0 +1,15 @@
+{
+  "baseline_commit": "fbc2e92f",
+  "protocol": 15,
+  "native_abi": 48,
+  "baseline_failures": [
+    {"kind": "line", "offset": 1000000000.0, "dpr": 1, "width": 720, "cpu_css_xy": [384, 29.25], "framebuffer_rgba": [0, 0, 0, 0]},
+    {"kind": "line", "offset": 1000000000000.0, "dpr": 1, "width": 720, "cpu_css_xy": [384, 29.25], "framebuffer_rgba": [0, 0, 0, 0]}
+  ],
+  "precision_cases_passed": 30,
+  "related_cases_passed": 75,
+  "baseline_candidate_native_png_sha256": "d4ddaa58700b55d0464fa2e5870fa64a129082b7e078c4ed1af04a2f2dda88ac",
+  "candidate_standalone_sha256": "2285f8136dd5fdccd950956bee4029b584bf32b47efc037d44bd1a4307b11876",
+  "backend": "Chromium151 ANGLE SwiftShader software",
+  "performance_claim": false
+}
