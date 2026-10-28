@@ -107,6 +107,8 @@ from .typing import AxesResult, FigureResult
 
 rcParams: Any = _native_rc_params
 
+_MINOR_TICK_KEY = "minor"
+
 __all__ = [
     "AutoLocator",
     "AutoMinorLocator",
@@ -1815,7 +1817,7 @@ def table(
     )
 
 
-def legend(*args: Any, **kwargs: Any) -> None:
+def legend(*args: Any, **kwargs: Any) -> Legend:
     """Show the legend of the current axes.
 
     Call forms: ``legend()`` (labeled artists), ``legend(labels)``, or
@@ -2777,18 +2779,52 @@ def ylabel(label: str, **kwargs: Any) -> None:
     _native_gca().set_ylabel(label, **kwargs)
 
 
-def xlim(*args: Any) -> None:
-    """Set the x limits of the current axes.
+def xlim(
+    left: float | LimitsLike | None = None,
+    right: float | None = None,
+    *,
+    xmin: float | None = None,
+    xmax: float | None = None,
+) -> tuple[float, float]:
+    """Get or set the x limits of the current axes.
 
     Call as ``xlim(left, right)``, ``xlim((left, right))``, or with
-    ``left=``/``right=``; a descending pair inverts the axis.
+    ``left=``/``right=`` (aliases: ``xmin=``/``xmax=``). With no arguments,
+    return the current limits without changing the automatic view. A
+    descending pair inverts the axis.
     """
-    _native_gca().set_xlim(*args)
+    if xmin is not None:
+        if left is not None:
+            raise TypeError("Cannot pass both 'left' and 'xmin'")
+        left = xmin
+    if isinstance(left, (tuple, list)) and (right is not None or xmax is not None):
+        raise TypeError("Cannot combine a limit pair with 'right' or 'xmax'")
+    if xmax is not None:
+        if right is not None:
+            raise TypeError("Cannot pass both 'right' and 'xmax'")
+        right = xmax
+    return gca().set_xlim(left, right)
 
 
-def ylim(*args: Any) -> None:
-    """Set the y limits of the current axes (forms as in `xlim`)."""
-    _native_gca().set_ylim(*args)
+def ylim(
+    bottom: float | LimitsLike | None = None,
+    top: float | None = None,
+    *,
+    ymin: float | None = None,
+    ymax: float | None = None,
+) -> tuple[float, float]:
+    """Get or set y limits, with `ymin`/`ymax` aliases for `bottom`/`top`."""
+    if ymin is not None:
+        if bottom is not None:
+            raise TypeError("Cannot pass both 'bottom' and 'ymin'")
+        bottom = ymin
+    if isinstance(bottom, (tuple, list)) and (top is not None or ymax is not None):
+        raise TypeError("Cannot combine a limit pair with 'top' or 'ymax'")
+    if ymax is not None:
+        if top is not None:
+            raise TypeError("Cannot pass both 'top' and 'ymax'")
+        top = ymax
+    return gca().set_ylim(bottom, top)
 
 
 def xscale(scale: str) -> None:
@@ -2807,12 +2843,26 @@ def xticks(
     *,
     rotation: float | None = None,
     **kwargs: Any,
-) -> None:
-    """Place the x ticks at the given positions, optionally relabeled.
+) -> tuple[np.ndarray, list[Any]]:
+    """Get or set x ticks, optionally relabeled.
 
+    With no tick arguments, return the current locations and label handles.
     ``rotation`` (degrees) and supported text keywords style the labels.
+    ``minor=True`` reads minor ticks; setting minor ticks remains a no-op.
     """
-    _native_gca().set_xticks(ticks, labels, rotation=rotation, **kwargs)
+    axes = gca()
+    minor = bool(kwargs.get(_MINOR_TICK_KEY, False))
+    if (
+        ticks is None
+        and labels is None
+        and rotation is None
+        and not (set(kwargs) - {_MINOR_TICK_KEY})
+    ):
+        handles = axes.xaxis.get_minorticklabels() if minor else axes.get_xticklabels()
+        return axes.get_xticks(minor=minor), handles
+    axes.set_xticks(ticks, labels, rotation=rotation, **kwargs)
+    handles = axes.xaxis.get_minorticklabels() if minor else axes.get_xticklabels()
+    return axes.get_xticks(minor=minor), handles
 
 
 def yticks(
@@ -2821,9 +2871,21 @@ def yticks(
     *,
     rotation: float | None = None,
     **kwargs: Any,
-) -> None:
-    """Place the y ticks at the given positions (see `xticks`)."""
-    _native_gca().set_yticks(ticks, labels, rotation=rotation, **kwargs)
+) -> tuple[np.ndarray, list[Any]]:
+    """Get or set y ticks (see `xticks`)."""
+    axes = gca()
+    minor = bool(kwargs.get(_MINOR_TICK_KEY, False))
+    if (
+        ticks is None
+        and labels is None
+        and rotation is None
+        and not (set(kwargs) - {_MINOR_TICK_KEY})
+    ):
+        handles = axes.yaxis.get_minorticklabels() if minor else axes.get_yticklabels()
+        return axes.get_yticks(minor=minor), handles
+    axes.set_yticks(ticks, labels, rotation=rotation, **kwargs)
+    handles = axes.yaxis.get_minorticklabels() if minor else axes.get_yticklabels()
+    return axes.get_yticks(minor=minor), handles
 
 
 def tight_layout(**kwargs: Any) -> None:

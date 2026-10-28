@@ -1344,6 +1344,8 @@ class Figure:
         if h is None:
             w, h = w[0], w[1]  # tuple form
         self._figsize = (float(w), float(h))
+        for ax in self._axes:
+            ax._chart = None
         self._invalidate()
 
     def get_size_inches(self) -> np.ndarray:
