@@ -1,0 +1,1 @@
+Keep default chart controls above the plot when free header space permits. A compact Chart controls entry preserves access to the full toolbar on narrow charts without covering data while closed; keyboard navigation and manually dragged positions remain available.

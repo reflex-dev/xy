@@ -794,6 +794,25 @@ the more specific inner slots let a utility style their contents independently.
 Leave toolbar/menu placement, fit visibility, opacity, and pointer events to
 the interaction controller.
 
+Unmoved modebars first try free header space above the plot and top-axis band.
+Actual title, tick-label, legend, annotation-label, and colorbar DOM boxes are
+obstacles. If the full toolbar does not fit but a button does, a visible
+**Chart controls** entry (using the existing `modebar_button` and `modebar_icon`
+slots) opens the original toolbar explicitly. Its `aria-expanded` state and
+`aria-controls` target describe that relationship. Arrow Down/Up enters the
+controls; existing menu navigation remains, and Escape closes the compact
+toolbar and restores entry focus. No backdrop is created. Open controls may
+cover data until closed, while the fitted closed entry stays above the plot.
+
+Header fitting runs after the initial label layout and after responsive
+resizing or selection-capability changes; hover-only frames do not repeat it.
+The main toolbar exposes `data-xy-modebar-placement="header"`, `"compact"`, or
+`"floating"` for inspection. Explicitly dragged positions retain their normal
+clamping. A chart with no free header space, including tight authored padding,
+retains the existing floating placement/fit behavior; there is no universal
+non-overlap guarantee for that fallback. Header fitting does not reserve a new
+layout band or change plot coordinates, raw buffers, or native exports.
+
 Conditional inline state is also deliberate. Legend hover/toggle writes row
 `opacity` and `filter` while exposing `data-xy-legend-off`; tooltip,
 selection, and crosshair visibility/geometry are live; modebar state exposes

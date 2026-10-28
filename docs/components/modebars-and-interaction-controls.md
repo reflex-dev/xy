@@ -10,8 +10,15 @@ components:
 
 Interactive charts include a compact modebar by default. It exposes pan, zoom
 in/out, box zoom, reset, selection modes when selection is enabled, and local
-PNG, SVG, and CSV export. The modebar appears at the plot's top-left on chart
-hover or keyboard focus. Drag its background, padding, gaps, or separators to
+PNG, SVG, and CSV export. Unmoved controls use free header space when they fit
+without covering the title or labels. If only a compact entry fits there,
+the **Chart controls** button opens the full toolbar on click or Arrow Down;
+Escape closes it and restores focus. The same pan, zoom, selection, and export
+commands remain available. Opening controls may temporarily cover the plot;
+the closed entry stays outside it. If neither form fits, the existing floating
+placement and fit behavior remain. No chart padding or data geometry changes.
+
+The full toolbar appears on chart hover or keyboard focus. Drag its background, padding, gaps, or separators to
 move it within the chart; buttons and menus remain dedicated click targets. A
 small drag affordance appears just outside the toolbar on hover or focus and
 flips sides when the preferred edge would clip.

@@ -1170,8 +1170,8 @@ Object.assign(ChartView.prototype, {
   _buildModebar(root) {
     if (this.spec.show_modebar === false) return;
     const bar = document.createElement("div");
-    // The modebar is chart chrome: reveal it on hover or keyboard focus while
-    // retaining its top-left placement and draggable position.
+    // Header fitting keeps default controls clear of the plot when room is
+    // available; explicitly dragged positions retain their authored location.
     bar.style.cssText =
       `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
       "display:flex;opacity:0;pointer-events:none;transition:opacity .15s;";
@@ -1186,7 +1186,8 @@ Object.assign(ChartView.prototype, {
     let setExportMenuOpen: any = () => {};
 
     const setVisible = (visible) => {
-      const show = visible || this._modebarDragging || bar.contains(document.activeElement);
+      const show = visible || this._modebarDragging || this._modebarCompactOpen ||
+        bar.contains(document.activeElement);
       bar.style.opacity = show ? "1" : "0";
       bar.style.pointerEvents = show ? "auto" : "none";
     };
@@ -1196,10 +1197,14 @@ Object.assign(ChartView.prototype, {
       setZoomMenuOpen(false);
       setSelectMenuOpen(false);
       setExportMenuOpen(false);
+      if (!bar.contains(document.activeElement)) this._setModebarCompactOpen?.(false);
     });
     this._listen(bar, "focusin", () => setVisible(true));
     this._listen(bar, "focusout", (e) => {
       if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
+      if (!bar.contains(e.relatedTarget) && e.relatedTarget !== this._modebarHeaderButton) {
+        this._setModebarCompactOpen?.(false);
+      }
     });
 
     // The toolbar surface itself is the drag target. Interactive descendants
@@ -1250,6 +1255,11 @@ Object.assign(ChartView.prototype, {
         modebarDrag.moved = true;
         this._modebarDragging = true;
         this._modebarMoved = true;
+        this._modebarCompact = false;
+        this._modebarCompactOpen = false;
+        this._modebarHeaderButton.style.display = "none";
+        this._modebarHeaderButton.setAttribute("aria-expanded", "false");
+        bar.dataset.xyModebarPlacement = "floating";
         bar.classList.add("xy-dragging");
         bar.style.transition = "none";
         setZoomMenuOpen(false);
@@ -1760,13 +1770,18 @@ Object.assign(ChartView.prototype, {
         setSelectMenuOpen(false);
         if (this.dragMode.startsWith("select")) this._setDragMode("pan");
       }
-      selectTrigger.style.display = on ? "flex" : "none";
+      const display = on ? "flex" : "none";
+      if (selectTrigger.style.display !== display) this._modebarFitDirty = true;
+      selectTrigger.style.display = display;
     };
     this._syncModebarSelect();
     this._listen(document, "pointerdown", (e) => {
       if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
       if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
       if (this._exportMenuOpen && !bar.contains(e.target)) setExportMenuOpen(false);
+      if (!bar.contains(e.target) && !this._modebarHeaderButton?.contains(e.target)) {
+        this._setModebarCompactOpen?.(false);
+      }
     });
     if (zoomTrigger) {
       this._listen(zoomTrigger, "keydown", (e) => {
@@ -1850,6 +1865,56 @@ Object.assign(ChartView.prototype, {
       }
       exportMenuItems[next].focus();
     });
+    const headerButton = document.createElement("button");
+    headerButton.type = "button";
+    headerButton.title = "Chart controls";
+    headerButton.setAttribute("aria-label", "Chart controls");
+    headerButton.setAttribute("aria-expanded", "false");
+    bar.id = `${this.a11ySummary.id}-controls`;
+    headerButton.setAttribute("aria-controls", bar.id);
+    headerButton.dataset.xyModebarCompactTrigger = "";
+    headerButton.style.cssText = "position:absolute;display:none;z-index:6;pointer-events:auto;";
+    this._applySlot(headerButton, "modebar_button");
+    const headerIcon = document.createElement("span");
+    headerIcon.innerHTML = this._icon("controls");
+    this._applySlot(headerIcon, "modebar_icon");
+    headerButton.appendChild(headerIcon);
+    this._modebarHeaderButton = headerButton;
+    const topLevelButtons = () => [...bar.querySelectorAll<HTMLButtonElement>("button")].filter(
+      (button) => !button.disabled && button.offsetParent &&
+        !button.closest("[data-xy-modebar-menu]"),
+    );
+    this._listen(headerButton, "pointerdown", (e) => e.stopPropagation());
+    this._listen(headerButton, "click", (e) => {
+      e.stopPropagation();
+      this._setModebarCompactOpen(!this._modebarCompactOpen);
+    });
+    this._listen(headerButton, "keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      e.stopPropagation();
+      this._setModebarCompactOpen(true);
+      const buttons = topLevelButtons();
+      buttons[e.key === "ArrowDown" ? 0 : buttons.length - 1]?.focus();
+    });
+    this._listen(bar, "keydown", (e) => {
+      if (!this._modebarCompact) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this._setModebarCompactOpen(false, true);
+        return;
+      }
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key) ||
+          e.target.closest("[data-xy-modebar-menu]")) return;
+      e.preventDefault();
+      const buttons = topLevelButtons();
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 :
+        (current + (e.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    });
+    root.appendChild(headerButton);
     root.appendChild(bar);
     this._fitModebar();
     updateDragPeekSide();
@@ -1859,19 +1924,89 @@ Object.assign(ChartView.prototype, {
     this._setDragMode(this.dragMode, { userInitiated: false });
   },
 
-  // The modebar is unusable chrome once the plot box can't contain it — in a
-  // dense subplot grid the overflowing buttons alone grew scrollbars on every
-  // panel. Hidden is a fit state, not removal: a fluid resize re-checks and
-  // can bring the bar back. Wheel/drag zoom and pan keep working without it.
-  _fitModebar() {
-    const bar = this._modebar;
-    if (!bar) return;
+  _modebarHeaderPosition(width, height) {
+    const root = this.root.getBoundingClientRect();
+    const bottom = this.plot.y - (this._topAxisRoom || 0);
+    const obstacles = [...this.root.querySelectorAll(
+      '[data-xy-slot="title"], [data-xy-label-kind], [data-xy-slot="legend"], ' +
+      '[data-xy-slot="annotation_label"], [data-xy-slot="colorbar"]',
+    )].map((element) => element.getBoundingClientRect()).filter((box) => box.width && box.height);
+    for (const top of [3, bottom - height - 1]) {
+      for (const left of [4, this.size.w - width - 4]) {
+        if (left < 0 || top < 3 || left + width > this.size.w || top + height > bottom - 1) continue;
+        if (obstacles.some((box) =>
+          left < box.right - root.left + 4 && left + width > box.left - root.left - 4 &&
+          top < box.bottom - root.top + 4 && top + height > box.top - root.top - 4)) continue;
+        return { left, top };
+      }
+    }
+    return null;
+  },
+
+  _setModebarCompactOpen(open, restoreFocus = false) {
+    if (!this._modebarCompact) return;
+    const show = Boolean(open);
+    this._modebarCompactOpen = show;
+    this._modebarHeaderButton.setAttribute("aria-expanded", String(show));
+    this._modebar.style.display = show ? "flex" : "none";
+    if (show) {
+      this._modebar.style.opacity = "1";
+      this._modebar.style.pointerEvents = "auto";
+    } else {
+      this._closeModebarMenu?.();
+      if (restoreFocus) this._modebarHeaderButton.focus();
+    }
+  },
+
+  _fitModebar(settled = false) {
+    const bar = this._modebar as HTMLElement;
+    if (!bar?.isConnected) return;
+    const focused = document.activeElement as HTMLElement;
+    const restoreFocus = bar.contains(focused) || focused === this._modebarHeaderButton;
+    const focusControls = () => {
+      if (!restoreFocus) return;
+      if (focused.offsetParent && bar.contains(focused)) focused.focus();
+      else [...bar.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => !button.disabled && button.offsetParent,
+      )?.focus();
+    };
+    this._modebarFitDirty = !settled;
     this._closeModebarMenu?.();
+    this._setModebarCompactOpen(false);
+    this._modebarCompact = false;
+    this._modebarHeaderButton.style.display = "none";
+    this._modebarHeaderButton.setAttribute("aria-expanded", "false");
+    bar.style.display = "flex";
     if (!this._modebarMoved) {
+      const header = this._modebarHeaderPosition(bar.offsetWidth, bar.offsetHeight);
+      if (header) {
+        bar.style.top = `${header.top}px`;
+        bar.style.left = `${header.left}px`;
+        bar.dataset.xyModebarPlacement = "header";
+        this._positionModebarDragPeek?.();
+        focusControls();
+        return;
+      }
+      const button = this._modebarHeaderButton;
+      button.style.display = "inline-flex";
+      const compact = this._modebarHeaderPosition(button.offsetWidth, button.offsetHeight);
+      if (compact && bar.offsetWidth <= this.size.w && bar.offsetHeight <= this.size.h) {
+        button.style.left = `${compact.left}px`;
+        button.style.top = `${compact.top}px`;
+        bar.style.left = `${compact.left}px`;
+        bar.style.top = `${compact.top + button.offsetHeight + 6}px`;
+        this._clampModebar();
+        this._modebarCompact = true;
+        bar.dataset.xyModebarPlacement = "compact";
+        this._setModebarCompactOpen(false);
+        if (restoreFocus) button.focus();
+        return;
+      }
+      button.style.display = "none";
       bar.style.top = `${this.plot.y + 4}px`;
       bar.style.left = `${this.plot.x + 4}px`;
     }
-    bar.style.display = "flex"; // measurable before the verdict
+    bar.dataset.xyModebarPlacement = "floating";
     const fits =
       bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
     if (!fits) {
@@ -1879,6 +2014,7 @@ Object.assign(ChartView.prototype, {
       return;
     }
     this._clampModebar();
+    focusControls();
   },
 
 
@@ -2672,6 +2808,7 @@ Object.assign(ChartView.prototype, {
       chevrondown: "chevron", jpeg: "export", webp: "export",
     };
     const paths = {
+      controls: ["M4 6h16M4 12h16M4 18h16"],
       drag: [
         "M16 6C16 6.552 15.552 7 15 7S14 6.552 14 6s.448-1 1-1 1 .448 1 1Z",
         "M10 6C10 6.552 9.552 7 9 7S8 6.552 8 6s.448-1 1-1 1 .448 1 1Z",

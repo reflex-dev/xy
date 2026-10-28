@@ -6592,6 +6592,7 @@ export class ChartView {
     this._rafKeepPick = false;
     this._drawChrome();
     this._maybePositionBestLegends();
+    if (this._modebarFitDirty) this._fitModebar(true);
     this._renderLassoSelection?.();
     this._renderBoxSelection?.();
     return rendered;
