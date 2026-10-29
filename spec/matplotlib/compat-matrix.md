@@ -8,8 +8,8 @@ Corpus links are executable examples and are checked for every supported method.
 
 | Family | Level | Methods | Executable corpus |
 |---|---|---:|---:|
-| Basic | equivalent semantics | 22 | 48 |
-| Spans | exact geometry | 5 | 4 |
+| Basic | equivalent semantics | 22 | 51 |
+| Spans | exact geometry | 5 | 5 |
 | Spectral | equivalent semantics | 9 | 2 |
 | Statistics | equivalent semantics | 5 | 2 |
 | Binned | exact geometry | 4 | 7 |
@@ -32,7 +32,7 @@ Approximation level: **equivalent semantics**.
 - `loglog` — [`51_basic_2d_aliases.py`](../../tests/pyplot/corpus/51_basic_2d_aliases.py)
 - `semilogx` — [`54_plotting_method_coverage.py`](../../tests/pyplot/corpus/54_plotting_method_coverage.py)
 - `semilogy` — [`54_plotting_method_coverage.py`](../../tests/pyplot/corpus/54_plotting_method_coverage.py)
-- `fill_between` — [`20_fill_between_band.py`](../../tests/pyplot/corpus/20_fill_between_band.py)
+- `fill_between` — [`20_fill_between_band.py`](../../tests/pyplot/corpus/20_fill_between_band.py), [`56_fill_between_datetime.py`](../../tests/pyplot/corpus/56_fill_between_datetime.py), [`57_fill_between_shared_dates.py`](../../tests/pyplot/corpus/57_fill_between_shared_dates.py), [`58_fill_between_remove_dates.py`](../../tests/pyplot/corpus/58_fill_between_remove_dates.py)
 - `fill_betweenx` — [`51_basic_2d_aliases.py`](../../tests/pyplot/corpus/51_basic_2d_aliases.py)
 - `bar` — [`14_bar_categories.py`](../../tests/pyplot/corpus/14_bar_categories.py), [`15_bar_stacked_bottom.py`](../../tests/pyplot/corpus/15_bar_stacked_bottom.py), [`27_subplots_2x2_mixed.py`](../../tests/pyplot/corpus/27_subplots_2x2_mixed.py), [`32_xticks_rotation.py`](../../tests/pyplot/corpus/32_xticks_rotation.py), [`42_tick_params_rotation.py`](../../tests/pyplot/corpus/42_tick_params_rotation.py), [`55_polar_projection.py`](../../tests/pyplot/corpus/55_polar_projection.py)
 - `barh` — [`16_barh.py`](../../tests/pyplot/corpus/16_barh.py)
@@ -52,7 +52,7 @@ Approximation level: **equivalent semantics**.
 
 Approximation level: **exact geometry**.
 
-- `axhline` — [`23_axhline_axvline.py`](../../tests/pyplot/corpus/23_axhline_axvline.py), [`34_gray_string_color.py`](../../tests/pyplot/corpus/34_gray_string_color.py)
+- `axhline` — [`23_axhline_axvline.py`](../../tests/pyplot/corpus/23_axhline_axvline.py), [`34_gray_string_color.py`](../../tests/pyplot/corpus/34_gray_string_color.py), [`57_fill_between_shared_dates.py`](../../tests/pyplot/corpus/57_fill_between_shared_dates.py)
 - `axhspan` — [`24_axvspan_band.py`](../../tests/pyplot/corpus/24_axvspan_band.py)
 - `axvline` — [`23_axhline_axvline.py`](../../tests/pyplot/corpus/23_axhline_axvline.py)
 - `axvspan` — [`24_axvspan_band.py`](../../tests/pyplot/corpus/24_axvspan_band.py)
