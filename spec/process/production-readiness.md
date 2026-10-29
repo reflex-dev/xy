@@ -104,7 +104,7 @@ The runtime selection runs four independent blocking jobs:
 Runtime job and step mappings reject `continue-on-error` structurally, including
 quoted and escaped key spellings.
 Step conditions are structurally forbidden except the exact pyplot-selection
-condition on its focused gate and `always()` on regression-report upload.
+condition on its focused gate and `always()` on regression-report and browser-evidence uploads.
 These jobs never depend on one another. Python, browser and regression jobs each
 restore the same native/client artifacts and run in parallel once the wheel is
 ready. Python tests retain their real-browser coverage rather than deferring it
@@ -1024,3 +1024,8 @@ Keep pushing these in low-conflict increments:
   behavior when the native core is unavailable.
 - Move advisory type checking to a hard gate once the checker and codebase agree
   on the dynamic `ctypes` and callback surfaces.
+
+The Reflex channel browser test uses the pinned Python Playwright bindings
+and installs their Chromium revision separately from the Node browser cache.
+The Python lane exports `XY_BROWSER_EVIDENCE` and always uploads its screenshot
+evidence; regression reports remain in the independent regression lane.

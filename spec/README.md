@@ -52,8 +52,8 @@ Internal architecture: how the engine is built and why.
   flat per-axis viewport-navigation contract: capability/action/axis/source
   switches, `zoom_limits`, reset, and the semantic `ranges` view events.
 - [`reflex-integration.md`](design/reflex-integration.md) — the bundled
-  `xy[reflex]` integration design: figures as first-class Reflex components over a second
-  socket.io namespace.
+  `xy[reflex]` integration design: figures as first-class Reflex components
+  over a dedicated channel on the app's own websocket.
 - [`reflex-shaped-api.md`](design/reflex-shaped-api.md) — how the core package
   feels Reflex-shaped while keeping no Reflex dependency.
 - [`renderer-architecture.md`](design/renderer-architecture.md) — audit of the

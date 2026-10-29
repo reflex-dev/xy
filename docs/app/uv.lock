@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -49,18 +49,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a5/ae/136395dfbfe00dfc94da3f3e136d0b13f394cba8f4841120e34226265780/async_timeout-5.0.1.tar.gz", hash = "sha256:d9321a7a3d5a6a5e187e824d2fa0793ce379a202935782d555d6e9d2735677d3", size = 9274, upload-time = "2024-11-06T16:41:39.6Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/ba/e2081de779ca30d473f21f5b30e0e737c438205440784c7dfc81efc2b029/async_timeout-5.0.1-py3-none-any.whl", hash = "sha256:39e3809566ff85354557ec2398b55e096c8364bacac9405a7a1fa429e77fe76c", size = 6233, upload-time = "2024-11-06T16:41:37.9Z" },
-]
-
-[[package]]
-name = "bidict"
-version = "0.24.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/f2/8d2dd8276ca05e1f5157b6a0d34efb2f585f47a0fbed61e8aad04b221f0b/bidict-0.24.1.tar.gz", hash = "sha256:4dca6c17f0b01700e9f24359daa5ebabf7be022d99f4cb2a257b6af2a5076c88", size = 30818, upload-time = "2026-08-25T23:45:52.214Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/53/2a3c7d562271ec6b6e38e7216b3104899f8aa4180c0713cb8aaf69e29cd5/bidict-0.24.1-py3-none-any.whl", hash = "sha256:fd3eaa737917d8a14f4baa391670c433c4e3f6f5fd2cd99d4bf436437f432364", size = 36175, upload-time = "2026-08-25T23:45:51.096Z" },
 ]
 
 [[package]]
@@ -1005,37 +993,12 @@ wheels = [
 ]
 
 [[package]]
-name = "python-engineio"
-version = "4.14.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "simple-websocket" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/65/f8bae11b228647e2e2f45b63dec7448efaddb7cb51f529de1fdba69e63b5/python_engineio-4.14.0.tar.gz", hash = "sha256:eaa1e386baf9c2c7959eef7f9d9165c5ea910c5b392f5316e78d29ed073cb43d", size = 80863, upload-time = "2026-08-30T19:52:01.32Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/de/07cfd386974c2a26a7bde41f2111be29bbfc92b9ea0bb76694415a4a1a78/python_engineio-4.14.0-py3-none-any.whl", hash = "sha256:9f0fe275fb7d67bfc1a632421adf22949fd4843bd9c458c004b0a89cede302a2", size = 60291, upload-time = "2026-08-30T19:51:59.776Z" },
-]
-
-[[package]]
 name = "python-multipart"
 version = "0.0.32"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5b/42/55c32bb9b12693c092ad250a0e82edb5b31ddeda6eb772de5f308b3804ad/python_multipart-0.0.32.tar.gz", hash = "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e", size = 46881, upload-time = "2026-06-04T16:18:58.647Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl", hash = "sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23", size = 30042, upload-time = "2026-06-04T16:18:57.319Z" },
-]
-
-[[package]]
-name = "python-socketio"
-version = "5.17.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "bidict" },
-    { name = "python-engineio" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/04/8647675c93b5e74a3daa41a2a03930bac0cbdcfcf307900f0441ae6550ba/python_socketio-5.17.0.tar.gz", hash = "sha256:c3bbfc4937dcfea7c4d1b182afa94d4a30335d153987e8f2078b344beacf95a0", size = 134574, upload-time = "2026-09-14T22:51:02.968Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/be/44b558c944bc16618483967ecd3424c578705aa33ceee7df8c1e4ab43ea0/python_socketio-5.17.0-py3-none-any.whl", hash = "sha256:b5826fd2f8aa02e11347816349b74ac6b53e8a4f4e4b1cf1388e1aff19b7f3f4", size = 82548, upload-time = "2026-09-14T22:51:01.405Z" },
 ]
 
 [[package]]
@@ -1107,8 +1070,8 @@ wheels = [
 
 [[package]]
 name = "reflex"
-version = "0.10.1.dev45+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "click" },
     { name = "granian", extra = ["reload"] },
@@ -1116,7 +1079,6 @@ dependencies = [
     { name = "packaging" },
     { name = "psutil", marker = "sys_platform == 'win32'" },
     { name = "python-multipart" },
-    { name = "python-socketio" },
     { name = "redis" },
     { name = "reflex-base" },
     { name = "reflex-components-code" },
@@ -1140,8 +1102,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-base"
-version = "0.10.1.dev52+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-base&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-base&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "packaging" },
     { name = "platformdirs" },
@@ -1151,8 +1113,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-build-sdk"
-version = "0.1.1.dev52+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-build-sdk&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-build-sdk&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 
 [package.optional-dependencies]
 httpx = [
@@ -1161,8 +1123,8 @@ httpx = [
 
 [[package]]
 name = "reflex-components-code"
-version = "0.10.1.dev47+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-code&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-code&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-core" },
@@ -1172,8 +1134,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-core"
-version = "0.10.1.dev49+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-core&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-core&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "python-multipart" },
     { name = "reflex-base" },
@@ -1185,8 +1147,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-dataeditor"
-version = "0.10.1.dev48+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-dataeditor&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-dataeditor&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-core" },
@@ -1194,32 +1156,32 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-gridjs"
-version = "0.10.1.dev51+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-gridjs&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-gridjs&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
 ]
 
 [[package]]
 name = "reflex-components-internal"
-version = "0.0.34.dev11+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-internal&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-internal&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex" },
 ]
 
 [[package]]
 name = "reflex-components-lucide"
-version = "1.1.1.dev51+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-lucide&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-lucide&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
 ]
 
 [[package]]
 name = "reflex-components-markdown"
-version = "0.10.1.dev46+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-markdown&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-markdown&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-code" },
@@ -1229,16 +1191,16 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-moment"
-version = "0.10.1.dev51+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-moment&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-moment&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
 ]
 
 [[package]]
 name = "reflex-components-plotly"
-version = "0.10.1.dev48+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-plotly&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-plotly&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-core" },
@@ -1246,8 +1208,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-radix"
-version = "0.10.1.dev48+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-radix&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-radix&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-core" },
@@ -1256,8 +1218,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-react-player"
-version = "0.10.1.dev48+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-react-player&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-react-player&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-core" },
@@ -1265,8 +1227,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-recharts"
-version = "0.10.1.dev48+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-recharts&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-recharts&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-core" },
@@ -1274,8 +1236,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-components-sonner"
-version = "0.10.1.dev50+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-sonner&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-sonner&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "reflex-base" },
     { name = "reflex-components-lucide" },
@@ -1283,8 +1245,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-docgen"
-version = "0.10.1.dev44+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-docgen&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-docgen&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "griffelib" },
     { name = "mistletoe" },
@@ -1295,8 +1257,8 @@ dependencies = [
 
 [[package]]
 name = "reflex-hosting-cli"
-version = "0.2.1.dev51+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-hosting-cli&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-hosting-cli&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "click" },
     { name = "httpx" },
@@ -1308,13 +1270,13 @@ dependencies = [
 
 [[package]]
 name = "reflex-integrations-docs"
-version = "0.0.1.dev3732+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Fintegrations-docs&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.1.dev3817+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Fintegrations-docs&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 
 [[package]]
 name = "reflex-site-shared"
-version = "0.0.49.dev107+7ccaa4e2"
-source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-site-shared&rev=main#7ccaa4e213fa1f67374002cb28709272866c3d53" }
+version = "0.0.4.dev570+7ff41648"
+source = { git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-site-shared&rev=7ff416484825edd118ef4182ffcd29583f8e2103#7ff416484825edd118ef4182ffcd29583f8e2103" }
 dependencies = [
     { name = "email-validator" },
     { name = "httpx" },
@@ -1400,18 +1362,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ed/419a4094a7328b1b9b9862ed00a993d2c78f1ea73b13910e4779f5c3c069/ruff_format-0.5.4-cp38-abi3-win32.whl", hash = "sha256:84b4508ca1956103f236f492a23c26e160b3c721544a39837d98ee45801d703b", size = 1935975, upload-time = "2026-08-10T18:06:47.222Z" },
     { url = "https://files.pythonhosted.org/packages/8e/6c/aea5b47e40591309e1502c67b31f6a3a45b2a6a053b96fdc883d6c7c0d96/ruff_format-0.5.4-cp38-abi3-win_amd64.whl", hash = "sha256:cd48e46823976b67fe0d3ffc278a01a0c7123ca876e563f0839f47ed77f27d0e", size = 2060092, upload-time = "2026-08-10T18:06:49.821Z" },
     { url = "https://files.pythonhosted.org/packages/d6/92/477780b98169e0dc3d37fac015f3f9ef3ced1dfcd2ec3a44686c8e07f8d8/ruff_format-0.5.4-cp38-abi3-win_arm64.whl", hash = "sha256:b0dfb4ef7c7f0da7b17c018dc48103907375f06c7b9e3dac3bc396722a725a65", size = 1988587, upload-time = "2026-08-10T18:06:51.397Z" },
-]
-
-[[package]]
-name = "simple-websocket"
-version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "wsproto" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b0/d4/bfa032f961103eba93de583b161f0e6a5b63cebb8f2c7d0c6e6efe1e3d2e/simple_websocket-1.1.0.tar.gz", hash = "sha256:7939234e7aa067c534abdab3a9ed933ec9ce4691b0713c78acb195560aa52ae4", size = 17300, upload-time = "2024-10-10T22:39:31.412Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/59/0782e51887ac6b07ffd1570e0364cf901ebc36345fea669969d2084baebb/simple_websocket-1.1.0-py3-none-any.whl", hash = "sha256:4af6069630a38ed6c561010f0e11a5bc0d4ca569b36306eb257cd9a192497c8c", size = 13842, upload-time = "2024-10-10T22:39:29.645Z" },
 ]
 
 [[package]]
@@ -1623,18 +1573,6 @@ wheels = [
 ]
 
 [[package]]
-name = "wsproto"
-version = "1.3.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "h11" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/79/12135bdf8b9c9367b8701c2c19a14c913c120b882d50b014ca0d38083c2c/wsproto-1.3.2.tar.gz", hash = "sha256:b86885dcf294e15204919950f666e06ffc6c7c114ca900b060d6e16293528294", size = 50116, upload-time = "2025-11-20T18:18:01.871Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/f5/10b68b7b1544245097b2a1b8238f66f2fc6dcaeb24ba5d917f52bd2eed4f/wsproto-1.3.2-py3-none-any.whl", hash = "sha256:61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584", size = 24405, upload-time = "2025-11-20T18:18:00.454Z" },
-]
-
-[[package]]
 name = "xy"
 source = { editable = "../../" }
 dependencies = [
@@ -1650,11 +1588,12 @@ reflex = [
 
 [package.metadata]
 requires-dist = [
+    { name = "matplotlib", marker = "extra == 'matplotlib'", specifier = ">=3.11,<3.12" },
     { name = "anywidget", specifier = ">=0.9" },
     { name = "numpy", specifier = ">=1.24" },
-    { name = "reflex", marker = "extra == 'reflex'", specifier = ">=0.9.6" },
+    { name = "reflex", marker = "extra == 'reflex'", git = "https://github.com/benedikt-bartscher/reflex.git?rev=7ff416484825edd118ef4182ffcd29583f8e2103" },
 ]
-provides-extras = ["reflex"]
+provides-extras = ["matplotlib", "reflex"]
 
 [package.metadata.requires-dev]
 codspeed = [{ name = "pytest-codspeed", specifier = ">=5,<6" }]
@@ -1662,6 +1601,7 @@ dev = [
     { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "pillow", specifier = ">=13.0.0" },
+    { name = "playwright", specifier = "==1.61.0" },
     { name = "pyarrow", specifier = ">=15" },
     { name = "pytest", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6" },
@@ -1669,6 +1609,7 @@ dev = [
     { name = "starlette", specifier = ">=0.36" },
     { name = "ty" },
     { name = "uvicorn", specifier = ">=0.23" },
+    { name = "websockets", specifier = ">=12" },
 ]
 
 [[package]]
@@ -1699,10 +1640,10 @@ dev = [
 requires-dist = [
     { name = "numpy" },
     { name = "pillow", specifier = ">=13.0.0" },
-    { name = "reflex", git = "https://github.com/reflex-dev/reflex?rev=main" },
-    { name = "reflex-components-internal", git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-internal&rev=main" },
-    { name = "reflex-docgen", git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-docgen&rev=main" },
-    { name = "reflex-site-shared", git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-site-shared&rev=main" },
+    { name = "reflex", git = "https://github.com/benedikt-bartscher/reflex.git?rev=7ff416484825edd118ef4182ffcd29583f8e2103" },
+    { name = "reflex-components-internal", git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-components-internal&rev=7ff416484825edd118ef4182ffcd29583f8e2103" },
+    { name = "reflex-docgen", git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-docgen&rev=7ff416484825edd118ef4182ffcd29583f8e2103" },
+    { name = "reflex-site-shared", git = "https://github.com/benedikt-bartscher/reflex.git?subdirectory=packages%2Freflex-site-shared&rev=7ff416484825edd118ef4182ffcd29583f8e2103" },
     { name = "xy", extras = ["reflex"], editable = "../../" },
 ]
 

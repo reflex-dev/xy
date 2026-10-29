@@ -202,13 +202,13 @@ Composite figure identity, minimal wire change:
 - The wrapper subscribes with `fig = "xyp1|<digest>|<xyd1-token>"`,
   assembled client-side once `data.token` is non-empty. Rooms, `mid`
   addressing, versioning, and the attachment-cap logic in
-  `namespace.py` are reused unchanged — one new token prefix to parse.
+  `data_plane.py` are reused unchanged — one new token prefix to parse.
 - **`registry.py`**: column entries (token → columns + version) beside
   figure entries; figure cache keyed by the composite token, plus an index
   `data_token → {digests}` so a data republish rebuilds and broadcasts
   every dependent figure. Figure entries stay derived caches: TTL-sweepable,
   rebuildable from (plan map, data rebuild).
-- **`namespace.py`**: `sub`/`msg` on `xyp1|…` → plan lookup; data resolve
+- **`data_plane.py`**: `sub`/`msg` on `xyp1|…` → plan lookup; data resolve
   (registry hit, else rebuild); bind → publish → serve. Affinity check uses
   the client token embedded in the `xyd1` half.
 - **`state_bridge.py`**: `rebuild_data(app, parsed)` mirroring
@@ -228,7 +228,7 @@ Composite figure identity, minimal wire change:
 - `test_factories.py` — partition + collision table, did-you-mean,
   TypedDict column errors (including through a foreach item var), untyped
   fallback, static-tier routing.
-- Extend `test_socket_data_plane.py` — composite `sub`, payload, pick;
+- Extend `test_data_plane.py` — composite `sub`, payload, pick;
   data republish fans out to all dependent plans; rebuild-on-miss for both
   halves; affinity refusal; plan-miss `err {resync}`.
 - Demo app: add one data-bound chart to `examples/reflex/` beside the
