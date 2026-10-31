@@ -34,6 +34,54 @@ def _load_verify_local_module():
     return module
 
 
+def _load_verify_docs_local_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "verify_docs_local.py"
+    spec = importlib.util.spec_from_file_location("verify_docs_local", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("node_version", "supported"),
+    [
+        ("v20.19.0\n", True),
+        ("v20.18.1\n", False),
+        ("v21.7.3\n", False),
+        ("v22.11.0\n", False),
+        ("v22.12.0\n", True),
+        ("v24.14.0\n", True),
+    ],
+)
+def test_docs_gate_checks_the_locked_vite_node_range(
+    monkeypatch: pytest.MonkeyPatch,
+    node_version: str,
+    supported: bool,
+) -> None:
+    module = _load_verify_docs_local_module()
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "node.exe")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, node_version, ""),
+    )
+
+    assert module.check_node_version() is supported
+
+
+def test_docs_ci_runs_the_local_quality_gate() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/docs.yml").read_text(encoding="utf-8")
+
+    assert (
+        "shell: bash\n        run: uv run --no-project python scripts/verify_docs_local.py"
+        in workflow
+    )
+    assert workflow.count('"scripts/verify_docs_local.py"') == 2
+    assert workflow.count('"scripts/check_public_api.py"') == 2
+
+
 verify_local = _load_verify_local_module()
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -199,7 +247,7 @@ def test_ty_executable_falls_back_to_path(tmp_path: Path, monkeypatch) -> None:
     python.touch()
     monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
 
-    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty")
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty").absolute()
 
 
 def test_ty_executable_skips_non_executable_sibling(tmp_path: Path, monkeypatch) -> None:
@@ -210,7 +258,7 @@ def test_ty_executable_skips_non_executable_sibling(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(verify_local.os, "access", lambda _path, _mode: False)
     monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
 
-    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty")
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty").absolute()
 
 
 @pytest.mark.parametrize(("os_name", "expected"), [("posix", "ty"), ("nt", "ty.exe")])
@@ -418,11 +466,14 @@ def test_missing_common_python_modules_name_specific_setup_commands(
     assert any("numpy anywidget" in reason for reason in reasons)
 
 
-def test_chromium_path_must_be_existing_executable_file(tmp_path: Path) -> None:
+def test_chromium_path_must_be_existing_executable_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     directory = tmp_path / "Chrome.app"
     directory.mkdir()
     not_executable = tmp_path / "chrome"
     not_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(verify_local.os, "access", lambda _path, _mode: False)
 
     for path, match in ((directory, "not a file"), (not_executable, "not executable")):
         check = verify_local.Check(
@@ -654,10 +705,9 @@ def test_makefile_exposes_example_verification_shortcut() -> None:
 def test_makefile_exposes_docs_verification_shortcut() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
-    assert "check-docs:" in makefile
-    assert "scripts/verify_local.py --only examples" in makefile
+    assert "check-docs:\n\t$(PYTHON) scripts/verify_local.py --only docs" in makefile
     assert "make check-docs" in makefile
-    assert "run documentation examples" in makefile
+    assert "docs tests, quickstart, and quality hooks" in makefile
 
 
 def test_makefile_exposes_security_verification_shortcut() -> None:

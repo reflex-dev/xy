@@ -8,6 +8,7 @@ components:
   - xy.bar
   - xy.column
   - xy.histogram
+  - xy.hist
   - xy.box
   - xy.violin
   - xy.ecdf
@@ -22,6 +23,7 @@ components:
   - xy.segments
   - xy.ribbon
   - xy.sankey
+  - xy.mark
   - xy.funnel
   - xy.triangle_mesh
 ---

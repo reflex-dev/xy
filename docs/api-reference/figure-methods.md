@@ -15,12 +15,14 @@ code should build charts through components and call the public methods below.
 | Method | Contract |
 | --- | --- |
 | `chart.widget()` | Build or return the cached live AnyWidget. |
-| `chart.show()` | Return the same widget; it does not open a desktop browser. |
+| `chart.show()` | Return the live widget in widget mode or an `HtmlView` in HTML mode; it does not open a desktop browser. |
 | `chart.figure()` | Build or return the cached internal engine figure. |
 
 In a compatible notebook, leaving a chart as the final cell expression invokes
-its display hook automatically. Python callbacks require the live widget or a
-framework adapter.
+its display hook automatically. In `display="auto"` mode, controlled by
+`XY_NOTEBOOK_DISPLAY`, supported notebooks use the live widget and HTML mode
+uses `chart._repr_html_()` as the standalone-HTML path. Python callbacks require the
+live widget or a framework adapter.
 
 ## HTML and Static Export
 
@@ -106,6 +108,29 @@ selection: xy.Selection = chart.select_range(x0, x1, y0, y1, trace_id=None)
 Streaming has additional channel and monotonic-line constraints documented in
 [Real-time and streaming data](/docs/xy/guides/real-time-and-streaming-data/).
 
+## View and Selection State
+
+~~~python
+chart.set_view(ranges, animate=True, history=True)
+chart.reset_view(axes=None)
+chart.select(range=(x0, x1, y0, y1), history=True)
+chart.clear_selection()
+state: dict = chart.view_state()
+~~~
+
+- `set_view()` applies explicit axis ranges to the live chart state.
+- `reset_view()` navigates axes to their home ranges; `axes=None` uses the
+  configured `reset_axes`.
+- `select()` accepts one of `range=`, `polygon=`, or `rows=`. Geometric forms
+  follow the browser gesture state path; rows resolve kernel-side and are
+  non-durable.
+- `clear_selection()` clears the current selection, including range, polygon,
+  and row selections.
+- `chart.view_state()` returns the last client-confirmed viewport and selection
+  state; reads after writes are eventually consistent. For `chart.select(rows=...)`,
+  the state contains an opaque `{"rows": true}` marker rather than the selected
+  row indices.
+
 ## Framework Chrome
 
 ~~~python
@@ -119,11 +144,14 @@ objects. `reflex_components()` is an alias retained for adapter code.
 
 ## FacetChart Methods
 
-`FacetChart` provides `figure()`, `widget()`, `show()`, `to_html()`/`html()`,
-`to_svg()`, `to_png()`, `to_image()`, `write_image()`, and `memory_report()`.
-Its widget methods return one
-widget per panel, and its figure escape hatch returns an internal facet grid.
-Grid dimensions come from `facet_chart()`, so the facet SVG/PNG methods do not
+Assign the value returned by `xy.facet_chart(...)` to `facet_chart` to use its
+instance methods: `facet_chart.figure()`, `facet_chart.widget()`,
+`facet_chart.show()`, `facet_chart.to_html()`/`facet_chart.html()`,
+`facet_chart._repr_html_()`, `facet_chart.to_svg()`, `facet_chart.to_png()`,
+`facet_chart.to_image()`, `facet_chart.write_image()`, and
+`facet_chart.memory_report()`. Its widget methods return one widget per panel,
+and its figure escape hatch returns an internal facet grid. Grid dimensions come
+from `facet_chart()`, so the facet SVG/PNG methods do not
 accept per-call width or height. Facets do not expose append, pick, or
 Python-side range selection methods.
 

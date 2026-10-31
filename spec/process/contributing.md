@@ -59,7 +59,7 @@ toolchain with `cargo`, `rustc`, and clippy for native-core checks. If clippy is
 missing, run `rustup component add clippy`. If you are only touching docs or
 pure Python shell code, `make check` is the fast non-JS/non-Rust gate.
 
-When canonical API prose or examples change, run the focused docs gate:
+When canonical API prose changes, run the docs gate:
 
 ```bash
 make check-docs
@@ -127,8 +127,7 @@ regression comparison scripts, or report-schema validation, run:
 make check-benchmark-harness
 ```
 
-When you edit `spec/api/api-examples.md` or the Reflex example dashboard
-registry/assets, run:
+When you edit the Reflex example dashboard registry/assets, run:
 
 ```bash
 make check-examples
