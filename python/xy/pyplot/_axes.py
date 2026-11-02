@@ -6996,6 +6996,26 @@ class Axes(PlotTypeMixin):
             # build, so a locator's cached hint can be stale after resizing.
             count_key = "y" if key == "y2" else key
             nbins_hint = base._auto_tick_counts(base._axis["x"], width, height)[count_key]
+            if (
+                key in {"x", "y"}
+                and rcParams["axes.autolimit_mode"] == "round_numbers"
+                and not (base._aspect_equal and base._aspect_bounds is not None)
+                and not base._tight
+            ):
+                # Drawing applies the locator's view_limits to automatic data
+                # domains before resolving ticks. Mirror that snapshot here so
+                # minor getters include the same edge ticks without rendering.
+                x_props = {
+                    name: value for name, value in base._axis["x"].items() if value is not None
+                }
+                y_props = {
+                    name: value for name, value in base._axis["y"].items() if value is not None
+                }
+                base._inherit_shared_axis_state("x", x_props)
+                base._inherit_shared_axis_state("y", y_props)
+                counts = base._auto_tick_counts(x_props, width, height)
+                base._apply_round_number_domains(x_props, y_props, counts)
+                minor_props.update(x_props if key == "x" else y_props)
             base._apply_tickers(key, minor_props, nbins_hint)
             return np.asarray(
                 _scale_values(

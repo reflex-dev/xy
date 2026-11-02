@@ -78,6 +78,20 @@ def test_minor_tick_getters_match_rendered_locations_at_figure_size(
         np.testing.assert_array_equal(y_minor, spec["y_axis"]["minor_tick_values"])
 
 
+def test_minor_tick_getters_match_rounded_render_limits() -> None:
+    with xyplt.rc_context({"axes.autolimit_mode": "round_numbers"}):
+        fig, ax = xyplt.subplots()
+        ax.plot([0.3, 1.2], [0.3, 1.2])
+        ax.minorticks_on()
+
+        x_minor = ax.get_xticks(minor=True)
+        y_minor = ax.get_yticks(minor=True)
+        spec = fig._charts()[0].figure().build_payload_split()[0]
+
+        np.testing.assert_array_equal(x_minor, spec["x_axis"]["minor_tick_values"])
+        np.testing.assert_array_equal(y_minor, spec["y_axis"]["minor_tick_values"])
+
+
 def test_minor_tick_getters_support_inset_freeform_and_twin_axes() -> None:
     fig, ax = xyplt.subplots(figsize=(3.0, 2.0))
     inset = ax.inset_axes((0.1, 0.1, 0.4, 0.4))

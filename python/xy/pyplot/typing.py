@@ -14,7 +14,7 @@ installs can inspect and type-check this module without installing the optional
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from ._axes import Axes as _NativeAxes
 from ._mplfig import Figure as _NativeFigure
@@ -83,13 +83,21 @@ class CompatAxesProtocol(AxesProtocol, Protocol):
 
     def get_yticks(self, minor: bool = False) -> Any: ...
 
-    def get_xticklabels(self, minor: bool = False, **kwargs: Any) -> Any: ...
+    def get_xticklabels(
+        self,
+        minor: bool = False,
+        which: Literal["major", "minor", "both"] | None = None,
+    ) -> Any: ...
 
-    def get_yticklabels(self, minor: bool = False, **kwargs: Any) -> Any: ...
+    def get_yticklabels(
+        self,
+        minor: bool = False,
+        which: Literal["major", "minor", "both"] | None = None,
+    ) -> Any: ...
 
-    def set_xticks(self, ticks: Any = None, labels: Any = None, **kwargs: Any) -> Any: ...
+    def set_xticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> Any: ...
 
-    def set_yticks(self, ticks: Any = None, labels: Any = None, **kwargs: Any) -> Any: ...
+    def set_yticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> Any: ...
 
     def get_subplotspec(self) -> Any: ...
 
