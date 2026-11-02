@@ -407,7 +407,7 @@ These must pass before publishing.
 | Area | Gate | Command or evidence |
 |---|---|---|
 | Python floor | `pyproject.toml`, Ruff, docs, syntax, and annotations stay on the Python 3.11+ floor | `python scripts/check_python_floor.py` |
-| Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
+| Public API | Component exports, public types, lifecycle classifications, and `Chart`, `FacetChart`, and `Selection` methods match `PUBLIC_API_MANIFEST` and their docs; `__all__`/lazy exports, `__version__`, `py.typed`, type-surface tests, and import-time budget stay covered | `make check-api` and `make check-docs` |
 | Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | CI/CodSpeed workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, and no-Rust clear-error jobs stay wired. The release workflows are `reflex-release`'s and are not re-checked here | `make check-ci` |
 | GitHub Actions token scope | CI, release, and manual benchmark workflows declare an explicit least-privilege `GITHUB_TOKEN` default; privileged jobs use narrow job-level overrides | GitHub code scanning (`actions/missing-workflow-permissions`) |
@@ -478,8 +478,8 @@ production-facing push:
 
 | Changed surface | Focused gate |
 |---|---|
-| API prose, examples, public benchmark wording | `make check-docs` |
-| `spec/api/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
+| API prose, public benchmark wording | `make check-docs` |
+| Example apps and Reflex chart registry/assets | `make check-examples` |
 | Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching | `make check-errors` |
 | Public exports, lazy import mappings, component factories, public annotations | `make check-api` |
 | Import-time budget, `xy.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
@@ -501,7 +501,7 @@ Use this before pushing production-facing changes:
 make check-full
 ```
 
-Use this after editing API docs, example snippets, or public benchmark wording:
+Use this after editing API docs or public benchmark wording:
 
 ```bash
 make check-docs

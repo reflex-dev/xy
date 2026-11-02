@@ -18,6 +18,7 @@ from reflex_site_shared.components.docs_api import (
 
 import reflex_xy
 import xy
+from xy._public_api_manifest import PUBLIC_API_MANIFEST
 from xy.components import _POLAR_INERT_AXIS_KEYWORDS
 
 COMPONENT_API_METADATA_KEY = "components"
@@ -29,53 +30,9 @@ _COMPONENT_API_NAMESPACES = {
 _COMPONENT_API_COLUMN_WIDTHS = ("w-[20%]", "w-[25%]", "w-[55%]")
 _NON_ID_CHARACTER = re.compile(r"[^a-z0-9]+")
 
-CHART_FACTORY_GROUPS = (
-    (
-        "Line and Area",
-        (xy.line_chart, xy.area_chart, xy.step_chart, xy.stairs_chart),
-    ),
-    ("Scatter", (xy.scatter_chart,)),
-    # The polar compositions are public factories like any other, so they belong
-    # in the generated inventory. `pie_chart` is listed with them: without an
-    # entry here the API reference implied the only way to draw a pie was to
-    # hand-roll wedge bars — the exact thing the factory exists to replace.
-    (
-        "Polar",
-        (
-            xy.polar_chart,
-            xy.radar_chart,
-            xy.polar_bar_chart,
-            xy.pie_chart,
-            xy.wind_rose,
-        ),
-    ),
-    ("Bar and Column", (xy.bar_chart, xy.column_chart)),
-    (
-        "Distributions",
-        (
-            xy.histogram_chart,
-            xy.ecdf_chart,
-            xy.box_chart,
-            xy.violin_chart,
-        ),
-    ),
-    (
-        "Density and Grids",
-        (xy.hexbin_chart, xy.heatmap_chart, xy.contour_chart),
-    ),
-    ("Uncertainty", (xy.error_band_chart, xy.errorbar_chart)),
-    (
-        "Specialized",
-        (
-            xy.stem_chart,
-            xy.segments_chart,
-            xy.sankey_chart,
-            xy.funnel_chart,
-            xy.triangle_mesh_chart,
-        ),
-    ),
-    ("Annotations and Layers", (xy.chart,)),
-    ("Facets", (xy.facet_chart,)),
+CHART_FACTORY_GROUPS = tuple(
+    (group_name, tuple(getattr(xy, name) for name in factory_names))
+    for group_name, factory_names in PUBLIC_API_MANIFEST.chart_factory_groups
 )
 _CHART_FACTORY_COMPONENTS = frozenset(
     factory for _group_name, factories in CHART_FACTORY_GROUPS for factory in factories
@@ -94,59 +51,25 @@ _REFUSED_POLAR_AXIS_PARAMETERS = {
     xy.r_axis: frozenset(_POLAR_INERT_AXIS_KEYWORDS),
 }
 
-MARKS = (
-    xy.line,
-    xy.scatter,
-    xy.area,
-    xy.bar,
-    xy.column,
-    xy.histogram,
-    xy.box,
-    xy.violin,
-    xy.ecdf,
-    xy.heatmap,
-    xy.hexbin,
-    xy.contour,
-    xy.errorbar,
-    xy.error_band,
-    xy.step,
-    xy.stairs,
-    xy.stem,
-    xy.segments,
-    xy.ribbon,
-    xy.sankey,
-    xy.funnel,
-    xy.triangle_mesh,
+MARKS = tuple(getattr(xy, name) for name in PUBLIC_API_MANIFEST.mark_factories)
+
+AXES_AND_ANNOTATIONS = tuple(
+    getattr(xy, name)
+    for name in (*PUBLIC_API_MANIFEST.axis_factories, *PUBLIC_API_MANIFEST.annotation_factories)
 )
 
-AXES_AND_ANNOTATIONS = (
-    xy.x_axis,
-    xy.y_axis,
-    xy.theta_axis,
-    xy.r_axis,
-    xy.vline,
-    xy.hline,
-    xy.x_band,
-    xy.y_band,
-    xy.threshold,
-    xy.threshold_zone,
-    xy.text,
-    xy.label,
-    xy.marker,
-    xy.arrow,
-    xy.callout,
+CHROME_AND_BEHAVIOR = tuple(
+    getattr(xy, name)
+    for name in (
+        *PUBLIC_API_MANIFEST.chrome_factories,
+        *(
+            name
+            for name in PUBLIC_API_MANIFEST.support_factories
+            if name in {"animation", "spring"}
+        ),
+    )
 )
-
-CHROME_AND_BEHAVIOR = (
-    xy.legend,
-    xy.tooltip,
-    xy.colorbar,
-    xy.modebar,
-    xy.theme,
-    xy.interaction_config,
-    xy.animation,
-    xy.spring,
-)
+FACTORY_DOCSTRING_ALIASES = {xy.hist: xy.histogram}
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,7 +283,8 @@ def _component_api_references(
             msg = f"Unknown documentation component: {component_path!r}"
             raise ValueError(msg)
 
-        docstring = inspect.getdoc(component) or ""
+        documentation_source = FACTORY_DOCSTRING_ALIASES.get(component, component)
+        docstring = inspect.getdoc(documentation_source) or ""
         descriptions = _parameter_descriptions(docstring)
         parameters: list[ComponentApiParameter] = []
         for parameter, parameter_descriptions in _documented_parameters(

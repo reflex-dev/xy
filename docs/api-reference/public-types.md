@@ -26,6 +26,7 @@ construct lowercase factory results and only name these types in annotations.
 | `Spring` | Serializable spring easing policy used by `animation()` |
 | `Chart` | Public composed chart with display, export, and readout methods |
 | `FacetChart` | Public small-multiple wrapper |
+| `ExportConfig` | Validated defaults for HTML and static image export |
 
 Directly constructing node dataclasses is supported for inspection and typing,
 but the lowercase factories perform the intended validation and normalization.
