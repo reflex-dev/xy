@@ -96,7 +96,11 @@ xy.chart(xy.line(x="ts", y="value", data=df), xy.y_axis(label="watts"))
 
 (`xy.chart` is the kind-neutral container; the existing `scatter_chart`/
 `line_chart`/… wrappers remain as readable aliases — they already just tag
-`Chart(kind_str, children)`.)
+`Chart(kind_str, children)`. Every `*_chart` accepts its own mark as the
+first positional, `sankey_chart` included: `xy.sankey_chart(links)` and
+`xy.sankey_chart(xy.sankey(links))` build the same figure, and sankey
+keywords beside an explicit `xy.sankey(...)` child are refused rather than
+appended as a second diagram — the `funnel_chart` rule.)
 
 ## 4. The 5 complex overlays (the composition stress tests)
 
@@ -147,7 +151,13 @@ panes is layout the Figure grid owns.
   (planned), `chart` ★ (sugar: figure with one panel).
 - Marks ★: `scatter, line, area, histogram, bar/column, heatmap, errorbar,
   error_band, box, violin, ecdf, hexbin, contour, step, stairs, stem` (+ every
-  future kind — one `Mark` node each, registry-dispatched).
+  future kind — one `Mark` node each, registry-dispatched). `Mark` is a
+  public dataclass, so a hand-built `xy.Mark(kind=..., x=..., y=...)` with a
+  partial `props` is legal: at chart build the missing keys are completed
+  from the kind's factory called with no arguments (`_with_factory_defaults`,
+  `_MARK_FACTORIES`), so rule G0 keeps one set of defaults and a bare mark
+  either builds exactly like its factory or raises `ValueError` naming the
+  prop — never `KeyError`.
 - Annotations ★ (tiny data): rules `hline`/`vline`/`threshold`, bands
   `x_band`/`y_band`/`threshold_zone`, and `label`/`text`/`marker`/`arrow`/
   `callout`. These are not literally Mark nodes: they compile to an
@@ -256,7 +266,13 @@ link_select=False, gap=12)` (`python/xy/components.py:4480`, class at
 integer, and `gap` a non-negative one.
 
 - **Panel derivation and order.** `by` resolves to a column of the
-  chart-level data or to a per-row array (`python/xy/facets.py:79`). Rows
+  chart-level data or to a per-row array (`python/xy/facets.py:79`); a name
+  the data does not hold raises `ValueError("facet column 'zz' not found in
+  data")`, the same type every other column resolution in the API raises. A
+  bare pyarrow string/dictionary/chunked array is a valid `by` (and a valid
+  categorical axis column): label work goes through
+  `columns.label_ndarray`, which takes pyarrow's copying conversion instead
+  of leaking `ArrowInvalid`. Rows
   group by their `category_label` display string — matching categorical
   channels — and panels appear in **first-seen row order**, not sorted order;
   the `np.unique` fast path explicitly restores first-seen order

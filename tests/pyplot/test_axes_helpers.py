@@ -4,7 +4,7 @@ import pytest
 import xy.pyplot as plt
 from xy.pyplot._artists import Legend
 from xy.pyplot._rc import rcParams
-from xy.pyplot._ticker import AutoMinorLocator, NullLocator
+from xy.pyplot._ticker import AutoMinorLocator, NullLocator, ScalarFormatter
 
 
 def teardown_function():
@@ -45,7 +45,10 @@ def test_ticklabel_minor_label_axis_and_legend_helpers():
     assert ax.get_title() == "title"
     assert ax.get_xaxis() is ax.xaxis
     assert ax.get_yaxis() is ax.yaxis
-    assert ax._axis_props("x")["tick_label_format"]["style"] == "sci"
+    # ticklabel_format configures the axis ScalarFormatter, as matplotlib does.
+    x_formatter = ax.xaxis.get_major_formatter()
+    assert isinstance(x_formatter, ScalarFormatter) and x_formatter.get_useOffset() is False
+    assert x_formatter._powerlimits == (-2, 3) and x_formatter._scientific is True
     assert isinstance(ax.xaxis.get_minor_locator(), AutoMinorLocator)
     assert isinstance(legend, Legend)
     assert ax.get_legend() is legend

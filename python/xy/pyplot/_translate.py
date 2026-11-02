@@ -133,6 +133,146 @@ def marker_size_to_scatter_size(
     return out
 
 
+# Matplotlib ``Artist``-level keywords every plotting call accepts but that
+# have no engine equivalent: draw-order overrides, clipping/rasterization
+# policy, hit-testing metadata, and renderer filters. They are accepted and
+# ignored (documented compat-noops in spec/matplotlib/compat.md) instead of
+# raising ``TypeError`` on scripts that carry them for the real renderer.
+# ``visible=False`` is *not* in this set: the entry point hides the artist.
+ARTIST_NOOP_KWARGS = frozenset(
+    {
+        "zorder",
+        "clip_on",
+        "clip_box",
+        "rasterized",
+        "antialiased",
+        "aa",
+        "snap",
+        "gid",
+        "url",
+        "picker",
+        "pickradius",
+        "in_layout",
+        "agg_filter",
+        "sketch_params",
+        "path_effects",
+        "mouseover",
+        "animated",
+    }
+)
+
+# Axes entry points that take the Artist-level keywords above. Every method in
+# the Matplotlib 3.11 Plotting inventory plus the chrome setters scripts pass
+# ``zorder=``/``clip_on=`` to. ``annotate`` and ``clabel`` honor ``zorder``
+# themselves and keep it (see the ``keep`` table below).
+ARTIST_KWARG_METHODS = (
+    "acorr",
+    "angle_spectrum",
+    "annotate",
+    "arrow",
+    "axhline",
+    "axhspan",
+    "axline",
+    "axvline",
+    "axvspan",
+    "bar",
+    "bar_label",
+    "barbs",
+    "barh",
+    "boxplot",
+    "broken_barh",
+    "bxp",
+    "clabel",
+    "cohere",
+    "contour",
+    "contourf",
+    "csd",
+    "ecdf",
+    "errorbar",
+    "eventplot",
+    "fill",
+    "fill_between",
+    "fill_betweenx",
+    "grouped_bar",
+    "hexbin",
+    "hist",
+    "hist2d",
+    "hlines",
+    "imshow",
+    "loglog",
+    "magnitude_spectrum",
+    "matshow",
+    "pcolor",
+    "pcolorfast",
+    "pcolormesh",
+    "phase_spectrum",
+    "pie",
+    "pie_label",
+    "plot",
+    "psd",
+    "quiver",
+    "quiverkey",
+    "scatter",
+    "semilogx",
+    "semilogy",
+    "specgram",
+    "spy",
+    "stackplot",
+    "stairs",
+    "stem",
+    "step",
+    "streamplot",
+    "table",
+    "text",
+    "tricontour",
+    "tricontourf",
+    "tripcolor",
+    "triplot",
+    "violin",
+    "violinplot",
+    "vlines",
+    "xcorr",
+    "set_title",
+    "set_xlabel",
+    "set_ylabel",
+)
+
+# Methods that implement one of the no-op names themselves and must see it:
+# annotate/clabel order their text by ``zorder``, the mesh family records
+# ``rasterized`` on its handle (``get_rasterized()``), and imshow honors
+# ``clip_on`` for images.
+ARTIST_KWARG_KEEP: dict[str, frozenset[str]] = {
+    "annotate": frozenset({"zorder"}),
+    "clabel": frozenset({"zorder"}),
+    "pcolormesh": frozenset({"rasterized"}),
+    "pcolor": frozenset({"rasterized"}),
+    "pcolorfast": frozenset({"rasterized"}),
+    "imshow": frozenset({"clip_on"}),
+    "matshow": frozenset({"clip_on"}),
+    # Chrome setters return no artist to hide, so they apply ``visible``
+    # to the stored title/label state themselves.
+    "set_title": frozenset({"visible"}),
+    "set_xlabel": frozenset({"visible"}),
+    "set_ylabel": frozenset({"visible"}),
+}
+
+
+def strip_artist_noops(kwargs: dict[str, Any], keep: frozenset[str] = frozenset()) -> bool:
+    """Drop the accepted-and-ignored Artist keywords; return the ``visible`` flag.
+
+    Mutates ``kwargs``. ``visible`` is popped too because the entry points
+    apply it to the artists they return (``set_visible(False)``) rather than
+    ignoring it; ``visible=True`` is Matplotlib's default and a no-op.
+    """
+    for name in ARTIST_NOOP_KWARGS:
+        if name in kwargs and name not in keep:
+            kwargs.pop(name)  # compat-noop: no engine equivalent (see ARTIST_NOOP_KWARGS)
+    if "visible" in keep:
+        return True  # the method applies ``visible`` to its own state
+    visible = kwargs.pop("visible", True)
+    return True if visible is None else bool(visible)
+
+
 def check_unsupported(kwargs: dict[str, Any], where: str) -> None:
     """Anything left in kwargs is unsupported: fail loudly, never silently."""
     if kwargs:
