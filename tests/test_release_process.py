@@ -219,8 +219,14 @@ def test_every_native_wheel_target_runs_the_install_smoke() -> None:
         "win32",
         "win_arm64",
     }
-    smoke_modes = set(re.findall(r"\bsmoke: ([A-Za-z0-9-]+)", "\n".join(wheel_entries)))
-    assert smoke_modes == {"host", "manylinux-armv7", "alpine", "alpine-armv7"}
+    allowed_smoke_modes = {"host", "manylinux-armv7", "alpine", "alpine-armv7"}
+    per_entry_smoke_modes = [re.search(r"\bsmoke: ([A-Za-z0-9-]+)", line) for line in wheel_entries]
+    assert all(
+        match is not None and match.group(1) in allowed_smoke_modes
+        for match in per_entry_smoke_modes
+    ), wheel_entries
+    smoke_modes = {match.group(1) for match in per_entry_smoke_modes if match is not None}
+    assert smoke_modes == allowed_smoke_modes
     assert "if: matrix.smoke == 'host'" in build
     assert "if: matrix.smoke == 'manylinux-armv7'" in build
     assert "if: matrix.smoke == 'alpine'" in build

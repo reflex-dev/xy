@@ -172,6 +172,39 @@ def test_native_binary_accepts_exported_elf_abi_symbol() -> None:
     verify_wheel._require_exported_symbols("native", bytes(data), {"xy_abi_version"})
 
 
+def test_native_binary_accepts_exported_macho_abi_symbol() -> None:
+    data = bytearray(128)
+    data[:4] = b"\xcf\xfa\xed\xfe"
+    struct.pack_into("<I", data, 4, 0x0100000C)
+    struct.pack_into("<I", data, 16, 1)
+    struct.pack_into("<I", data, 20, 24)
+    struct.pack_into("<IIIIII", data, 32, 2, 24, 80, 1, 96, 17)
+    struct.pack_into("<IBBHQ", data, 80, 1, 0x0F, 1, 0, 0x1000)
+    data[96:112] = b"\0_xy_abi_version\0"
+
+    verify_wheel._require_exported_symbols("native", bytes(data), {"xy_abi_version"})
+
+
+def test_native_binary_accepts_exported_pe_abi_symbol() -> None:
+    data = bytearray(0x300)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 64)
+    data[64:68] = b"PE\0\0"
+    struct.pack_into("<HH", data, 68, 0x8664, 1)
+    struct.pack_into("<H", data, 84, 240)
+    optional_offset = 88
+    struct.pack_into("<H", data, optional_offset, 0x20B)
+    struct.pack_into("<II", data, optional_offset + 112, 0x1000, 40)
+    section_offset = optional_offset + 240
+    struct.pack_into("<IIII", data, section_offset + 8, 0x100, 0x1000, 0x100, 0x200)
+    struct.pack_into("<I", data, 0x200 + 24, 1)
+    struct.pack_into("<I", data, 0x200 + 32, 0x1028)
+    struct.pack_into("<I", data, 0x228, 0x1040)
+    data[0x240 : 0x240 + len(b"xy_abi_version\0")] = b"xy_abi_version\0"
+
+    verify_wheel._require_exported_symbols("native", bytes(data), {"xy_abi_version"})
+
+
 def test_macho_linkage_rejects_binary_above_wheel_floor() -> None:
     data = bytearray(48)
     data[:4] = b"\xcf\xfa\xed\xfe"

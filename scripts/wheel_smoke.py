@@ -1,5 +1,7 @@
 """Run the representative native-kernel smoke test against an installed wheel."""
 
+from __future__ import annotations
+
 import importlib.metadata as metadata
 from pathlib import Path
 
