@@ -186,6 +186,7 @@ def test_browser_and_export_agree_on_every_side() -> None:
     off = {"show": False}
     for label, axes in (
         ("both off", {"x": off, "y": off}),
+        ("top axis off", {"x": {"side": "top", "show": False}, "y": off}),
         ("x off, y on", {"x": off, "y": {}}),
         ("x on, y off", {"x": {}, "y": off}),
         ("titled x", {"x": {"label": "Time"}, "y": off}),
@@ -235,6 +236,96 @@ def _parity_chart(**axes):
         height=HEIGHT,
         padding=(0, 0, 0, 0),
     )
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [
+        {"label": "Value", "style": {"label_color": "red"}},
+        {"style": {"tick_color": "steelblue", "tick_length": 5}},
+        {"style": {"tick_label_color": "transparent"}},
+        {"style": {"tick_label_color": "rgba(0,0,0,0)"}},
+    ],
+)
+def test_initial_layout_resolves_css_axis_colors(axis) -> None:
+    chart = _parity_chart(x={"show": False}, y=axis)
+    _assert_parity(
+        "CSS axis paint", _browser_plot_rect(chart, "CSS axis paint"), _svg_plot_rect(chart)
+    )
+
+
+def test_initial_layout_resolves_axis_colors_on_the_chart_root() -> None:
+    chart = xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0]),
+        xy.x_axis(show=False),
+        xy.y_axis(style={"tick_label_color": "var(--axis-text)"}),
+        style={"--axis-text": "transparent"},
+        width=WIDTH,
+        height=HEIGHT,
+        padding=(0, 0, 0, 0),
+    )
+    assert _browser_plot_rect(chart, "root CSS variable") == (0.0, 0.0, float(WIDTH), float(HEIGHT))
+
+
+@pytest.mark.parametrize("side", ["top", "bottom"])
+@pytest.mark.parametrize("hidden", [{"show": False}, {"tick_label_strategy": "off"}])
+def test_hidden_x_axis_reserves_no_band(side, hidden) -> None:
+    chart = _parity_chart(x={"side": side, **hidden}, y={"show": False})
+    assert _svg_plot_rect(chart) == (0.0, 0.0, float(WIDTH), float(HEIGHT))
+    _assert_parity(
+        "hidden x band", _browser_plot_rect(chart, "hidden x band"), _svg_plot_rect(chart)
+    )
+
+
+@pytest.mark.parametrize("colorbar", [False, True])
+def test_right_facing_marks_reserve_export_and_colorbar_clearance(colorbar) -> None:
+    children = [
+        xy.scatter([0.0, 1.0], [0.0, 1.0], color=[0.0, 1.0]),
+        xy.x_axis(show=False),
+        xy.y_axis(
+            side="left",
+            tick_sides=["right"],
+            tick_label_strategy="off",
+            style={"tick_length": 40, "tick_width": 2},
+        ),
+    ]
+    if colorbar:
+        children.append(xy.colorbar())
+    chart = xy.chart(*children, width=600, height=300, padding=(0, 0, 0, 0))
+    export = _svg_plot_rect(chart)
+    _assert_parity("right-facing marks", _browser_plot_rect(chart, "right-facing marks"), export)
+    if colorbar:
+        root = ET.fromstring(chart.to_svg())
+        bar = next(
+            node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+        )
+        assert float(bar.get("x")) > export[0] + export[2] + 40
+    else:
+        assert export[0] + export[2] == 600 - 54
+
+
+@pytest.mark.parametrize("side, opposite", [("bottom", "top"), ("top", "bottom")])
+def test_minor_ticks_reserve_only_their_authored_side(side, opposite) -> None:
+    chart = _parity_chart(
+        x={
+            "side": side,
+            "tick_sides": [opposite],
+            "tick_label_strategy": "off",
+            "style": {"tick_length": 5, "tick_width": 2},
+            "minor_tick_values": [0.25, 0.5, 0.75],
+            "minor_style": {"tick_length": 50, "tick_width": 2},
+        },
+        y={"show": False},
+    )
+    browser = _browser_plot_rect(chart, "minor tick side")
+    export = _svg_plot_rect(chart)
+    _assert_parity("minor tick side", browser, export)
+    if side == "bottom":
+        assert export[1] == 32
+        assert HEIGHT - export[1] - export[3] == 54
+    else:
+        assert export[1] == 54
+        assert HEIGHT - export[1] - export[3] == 9
 
 
 def test_browser_measures_no_band_for_labels_it_will_not_draw() -> None:

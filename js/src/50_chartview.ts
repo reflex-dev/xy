@@ -648,8 +648,6 @@ export class ChartView {
       w: Math.max(this.fluid ? 120 : 48, cw),
       h: Math.max(this.fluidH ? 120 : 48, ch),
     };
-    this._layout();
-
     this._buildDom(el);
     // getComputedStyle yields nothing on a detached element, so a chart
     // constructed before its output node lands in the document (notebook
@@ -2639,8 +2637,6 @@ export class ChartView {
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
-      `--xy-legend-max-width:${Math.max(40, (this._legendRect || this.plot).w - 12)}px;` +
-      `--xy-legend-max-height:${Math.max(40, (this._legendRect || this.plot).h - 12)}px;` +
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
       "user-select:none;";
     this._applySlot(root, "root");
@@ -2653,6 +2649,10 @@ export class ChartView {
     // Visual chrome defaults live in one zero-specificity stylesheet so user
     // classes/styles win (§36). Only structural/state styles stay inline below.
     ensureChromeStylesheet(root);
+    // Axis paints can use CSS colors and variables from the styled root.
+    this._layout();
+    root.style.setProperty("--xy-legend-max-width", `${Math.max(40, (this._legendRect || this.plot).w - 12)}px`);
+    root.style.setProperty("--xy-legend-max-height", `${Math.max(40, (this._legendRect || this.plot).h - 12)}px`);
 
     // Canvas pixels need a parallel semantic surface (§20). Keep the region
     // separate from the plot-area image role so the real toolbar descendants

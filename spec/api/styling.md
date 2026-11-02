@@ -338,10 +338,19 @@ the major tier is drawn for the computed ticks, on every `tick_sides`, in
 `tick_color`. So a `minor_style` with no `minor_tick_values` paints nothing
 and claims nothing; a minor tier with values claims its reach whatever the
 major tier's paint says; and an axis whose `tick_sides` send its major marks
-to the opposite edge still keeps the band its minor marks are drawn in. Only
-the primary `x` and `y` axes have a minor tier: a named axis draws its major
+to the opposite edge still keeps the band its minor marks are drawn in. Each
+side is measured from the original axis: minor marks never inherit another
+side merely because that side's text is being measured. Right-facing marks
+reserve the right gutter and colorbar clearance even on a left-side axis.
+Hidden top axes contribute no automatic top band, just as hidden bottom axes
+contribute no bottom band. Only the primary `x` and `y` axes have a minor tier:
+a named axis draws its major
 marks and stops, so it reserves for those and never for a minor tier it will
 not paint.
+
+Browser layout starts after the styled chart root is created, so named CSS
+colors, alpha colors, and inherited or root-authored CSS variables resolve
+against the chart on the initial frame.
 
 ### Plot rectangle and chrome reservations
 

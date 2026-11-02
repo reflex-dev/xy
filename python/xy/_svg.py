@@ -2103,7 +2103,11 @@ def _colorbar_right_axis_room(
     # their major marks and stop, so they must not reserve for a minor one.
     axes = [(y_axis, True), *((axis, False) for _axis_id, axis, _axis_scale in extra_y_axes)]
     if any(
-        (axis.get("side", "left") == "right" or "right" in _axis_tick_label_sides(axis, is_x=False))
+        (
+            axis.get("side", "left") == "right"
+            or "right" in _axis_tick_label_sides(axis, is_x=False)
+            or _axis_outward_tick_room(axis, "right", minor_tier=minor_tier) > 0.0
+        )
         and _axis_gutter_visible(axis, "right", minor_tier=minor_tier)
         for axis, minor_tier in axes
     ):
@@ -2473,7 +2477,9 @@ def _x_axis_title_room(axis: dict[str, Any]) -> float:
     )
 
 
-def _x_tick_label_room(axis: dict[str, Any], plot_w: float, *, minor_tier: bool) -> float:
+def _x_tick_label_room(
+    axis: dict[str, Any], plot_w: float, *, side: str, minor_tier: bool
+) -> float:
     """Outward room needed by the x axis's final tick-label set and title.
 
     The old 32/42 px bands only fit horizontal labels. Measure the strings and
@@ -2488,12 +2494,18 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float, *, minor_tier: bool)
     # Marks drawn into this band need it as much as the text does, and the
     # flat 32/42 px bands are smaller than a long authored ``tick_length``.
     # Mirrors the ``tickRoomOnSide`` term in `_xAxisRoom`.
-    tick_room = _axis_outward_tick_room(axis, axis.get("side", "bottom"), minor_tier=minor_tier)
+    # Minor marks stay on the authored side even when measuring opposite-side text.
+    tick_room = _axis_outward_tick_room(axis, side, minor_tier=minor_tier)
+    labels_on_side = side in _axis_tick_label_sides(axis, is_x=True)
+    title_side = axis.get("side", "bottom")
+    axis = {**axis, "side": side}
+    if side != title_side:
+        axis.pop("label", None)
     title_room = max(
         _x_axis_title_room(axis),
         _AXIS_TEXT_EDGE_PAD + tick_room if tick_room > 0.0 else 0.0,
     )
-    if strategy == "off" or not _axis_text_paint_visible(axis, "tick_label_color", "tick_color"):
+    if not labels_on_side or not _axis_tick_labels_visible(axis):
         return title_room
     if (
         strategy == "auto"
@@ -2529,7 +2541,6 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float, *, minor_tier: bool)
     for item in items:
         block = _textblock.measure(item["text"], font_size)
         extent = max(extent, _textblock.rotated_extent(block, float(item["angle"]))[1])
-    side = axis.get("side", "bottom")
     label_offset = (
         _axis_tick_label_offset(axis, 7.0, 0.2)
         if side == "top"
@@ -2626,21 +2637,22 @@ def _x_axis_rooms(
         if not axis_id.startswith("x") or _axis_tick_label_strategy(axis) == "none":
             continue
         title_side = axis.get("side", "bottom")
-        room_sides = set(_axis_tick_label_sides(axis, is_x=True))
+        room_sides = (
+            set(_axis_tick_label_sides(axis, is_x=True))
+            if _axis_tick_labels_visible(axis)
+            else set()
+        )
         # `tick_sides` can put marks on a side the labels and the axis itself
         # do not use, and that side still needs its band.
         room_sides.update(
             side
-            for side in _axis_tick_sides(axis, is_x=True)
+            for side in ("bottom", "top")
             if _axis_outward_tick_room(axis, side, minor_tier=axis_id == "x") > 0.0
         )
-        if _axis_tick_label_strategy(axis) == "off" or axis.get("label"):
+        if _axis_title_visible(axis):
             room_sides.add(title_side)
         for side in room_sides:
-            side_axis = {**axis, "side": side}
-            if side != title_side:
-                side_axis.pop("label", None)
-            measured = _x_tick_label_room(side_axis, plot_w, minor_tier=axis_id == "x")
+            measured = _x_tick_label_room(axis, plot_w, side=side, minor_tier=axis_id == "x")
             if side == "top":
                 top = max(top, 26.0 if compact else 32.0, measured)
             else:
@@ -2772,6 +2784,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         and (
             axis.get("side", "right") == "right"
             or "right" in _axis_tick_label_sides(axis, is_x=False)
+            or _axis_outward_tick_room(axis, "right", minor_tier=axis_id == "y") > 0.0
         )
         # An axis whose text is switched off draws none of what this gutter
         # exists to hold, so it claims none of it — the same question the left
