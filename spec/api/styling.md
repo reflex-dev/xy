@@ -350,7 +350,12 @@ not paint.
 
 Browser layout starts after the styled chart root is created, so named CSS
 colors, alpha colors, and inherited or root-authored CSS variables resolve
-against the chart on the initial frame.
+against the chart on the initial frame. A chart constructed while detached
+re-measures its paint-dependent gutters when it first connects, alongside theme
+healing. Canvas geometry, legend bounds, and other positioned chrome are updated
+before rendering, including before the shared GL host chooses its presentation
+extent. This also applies to fixed-size charts, which need no resize event to
+finish connection-time layout.
 
 ### Plot rectangle and chrome reservations
 

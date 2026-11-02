@@ -2588,6 +2588,17 @@ export class ChartView {
     this.size.h = h;
     // Before the layout/paint below, so this frame draws at the new scale.
     this._rescaleDprBakedBuffers();
+    this._layoutDom();
+    // Changing a canvas backing-store dimension clears it immediately. Resize
+    // work is already coalesced into one animation frame, so paint in that same
+    // frame instead of exposing cleared canvases until a second rAF callback.
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    this._drawNow();
+    this._scheduleViewRequest();
+  }
+
+  _layoutDom() {
     this._layout();
     const p = this.plot;
     // Legends are bounded by the box they place in, which under polar is the
@@ -2621,13 +2632,6 @@ export class ChartView {
     this._fitModebar();
     this._layoutAxisBands();
     this._pickDirty = true;
-    // Changing a canvas backing-store dimension clears it immediately. Resize
-    // work is already coalesced into one animation frame, so paint in that same
-    // frame instead of exposing cleared canvases until a second rAF callback.
-    if (this._raf) cancelAnimationFrame(this._raf);
-    this._raf = null;
-    this._drawNow();
-    this._scheduleViewRequest();
   }
 
   _buildDom(el) {
@@ -6570,7 +6574,6 @@ export class ChartView {
 
 
   _renderGlFrame() {
-    this._healStaleTheme();
     // `_drawPoints` records authored-marker draws here so the Canvas overlay
     // paints the exact direct/sample/drill entries and LOD alpha chosen by
     // this frame.  Reconstructing them from gpuTraces would lose density
@@ -6624,6 +6627,8 @@ export class ChartView {
 
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
+    // Heal layout before the shared host chooses its render/presentation extent.
+    this._healStaleTheme();
     let rendered;
     if (this._glHost) {
       rendered = this._glHost.render(
@@ -9338,12 +9343,13 @@ export class ChartView {
     this.draw();
   }
 
-  // Once a stale-themed root is connected, re-read tokens and re-resolve mark
-  // colors in place. Returns true when a heal happened (callers outside a
-  // frame should redraw).
+  // Once a stale-themed root is connected, refresh paints and the layout that
+  // depends on them. Returns true when callers outside a frame should redraw.
   _healStaleTheme() {
     if (!this._themeStale || !this.root.isConnected) return false;
     this._applyTheme();
+    this._layoutDom();
+    this._scheduleViewRequest();
     return true;
   }
 

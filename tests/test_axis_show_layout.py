@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import probe_document, run_browser_probe
+from conftest import RENDER_CALLS, probe_document, run_browser_probe
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
@@ -265,6 +265,64 @@ def test_initial_layout_resolves_axis_colors_on_the_chart_root() -> None:
         padding=(0, 0, 0, 0),
     )
     assert _browser_plot_rect(chart, "root CSS variable") == (0.0, 0.0, float(WIDTH), float(HEIGHT))
+
+
+@pytest.mark.parametrize("paint", ["transparent", "var(--axis-text)"])
+def test_detached_axis_paints_relayout_on_connection(paint, tmp_path) -> None:
+    chromium = find_chromium()
+    if not chromium:
+        if os.environ.get("XY_REQUIRE_BROWSER"):
+            pytest.fail("XY_REQUIRE_BROWSER is set but no chromium was found")
+        pytest.skip("no chromium available for the detached axis probe")
+    chart = xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0]),
+        xy.x_axis(side="top", style={"tick_label_color": paint}),
+        xy.y_axis(style={"tick_label_color": paint}),
+        style={"--axis-text": "transparent"},
+        width=WIDTH,
+        height=HEIGHT,
+        padding=(0, 0, 0, 0),
+    )
+    document = chart.to_html()
+    render_call = next(call for call in RENDER_CALLS if call in document)
+    detached_render = render_call.replace('document.getElementById("chart")', "host")
+    probe = """
+    try {
+      const host = document.getElementById("chart");
+      const parent = host.parentNode;
+      host.remove();
+      const view = DETACHED_RENDER
+      const wasDetached = !view.root.isConnected;
+      parent.appendChild(host);
+      view._drawNow();
+      const firstFrame = view.canvas.toDataURL();
+      view._drawNow();
+      document.body.setAttribute("data-xy-attached", JSON.stringify({
+        wasDetached, plot: view.plot,
+        canvas: [view.canvas.style.left, view.canvas.style.top,
+                 view.canvas.style.width, view.canvas.style.height].map(parseFloat),
+        backing: [view.canvas.width, view.canvas.height], dpr: view.dpr,
+        legend: ["--xy-legend-max-width", "--xy-legend-max-height"].map(
+          (key) => parseFloat(view.root.style.getPropertyValue(key))),
+        samePixels: firstFrame === view.canvas.toDataURL(),
+      }));
+    } catch (err) {
+      document.body.setAttribute("data-xy-attached-error", String(err.stack || err));
+    }
+    """.replace("DETACHED_RENDER", detached_render)
+    payload = run_browser_probe(
+        chromium,
+        document.replace(render_call, probe, 1),
+        tmp_path / "detached-axis.html",
+        "data-xy-attached",
+        label="detached axis paints",
+    )
+    assert payload["wasDetached"]
+    assert payload["plot"] == {"x": 0, "y": 0, "w": WIDTH, "h": HEIGHT}
+    assert payload["canvas"] == [0, 0, WIDTH, HEIGHT]
+    assert payload["backing"] == [int(WIDTH * payload["dpr"]), int(HEIGHT * payload["dpr"])]
+    assert payload["legend"] == [WIDTH - 12, HEIGHT - 12]
+    assert payload["samePixels"], "the first connected frame must use the healed plot size"
 
 
 @pytest.mark.parametrize("side", ["top", "bottom"])

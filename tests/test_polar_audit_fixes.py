@@ -570,8 +570,8 @@ def test_a_dpr_change_rescales_the_buffers_baked_in_device_pixels() -> None:
     # Widths ride component 2 of the style row; radii are their own buffer.
     assert "for (let i = 2; i < style.length; i += 4) style[i] *= factor;" in CHARTVIEW
     assert "g._cpuRadius = values;" in CHARTVIEW
-    # Run before the layout/paint of the same frame.
-    assert "this._rescaleDprBakedBuffers();\n    this._layout();" in CHARTVIEW
+    # Run before the layout/paint shared by resize and connection-time healing.
+    assert "this._rescaleDprBakedBuffers();\n    this._layoutDom();" in CHARTVIEW
 
 
 def test_the_dpr_rescale_defers_to_the_append_rebuild_on_a_short_mirror() -> None:
