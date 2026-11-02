@@ -4,6 +4,10 @@ The full contributor guide — PR checklist, local gate commands, and the
 chart-type contribution walkthrough — lives at
 [`spec/process/contributing.md`](spec/process/contributing.md).
 
+Release maintainers should follow the ordered
+[`release operator checklist`](spec/process/release-checklist.md) in addition to
+the production-readiness gates.
+
 Quick start:
 
 ```bash
