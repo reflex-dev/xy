@@ -1,0 +1,1 @@
+Download and cache a pinned, hash-verified Ubuntu FFmpeg package bundle once per CI run and share it across all eight standard gallery shards, replacing repeated package-server installs with offline restoration.
