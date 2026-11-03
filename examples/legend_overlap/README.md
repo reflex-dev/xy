@@ -30,3 +30,33 @@ node examples/legend_overlap/shoot.js                 # writes png/ + report.jso
 
 `report.json` records each legend's resolved location and size. Rebuild
 `contact_sheet.png` by screenshotting `sheet.html`.
+
+## Compared with matplotlib and TanStack Charts
+
+![xy vs matplotlib vs TanStack Charts](compare/comparison.png)
+
+Same data in every column (`compare/data.json`, dumped by
+`compare/dump_data.py`). Matplotlib 3.11.1 uses its default `ax.legend()`
+(`loc="best"`) with `layout="constrained"`. `@tanstack/charts` 1.2.1 uses its
+default `colorLegend()`, and its SVG comes from the DOM-free `renderChartSvg`.
+
+- **TanStack Charts never draws the legend over the plot.** Its
+  `ChartLegendPlacement` is only `'top' | 'bottom'`, and the legend reserves
+  its own layout height, so the plot shrinks instead. All six cases are clean,
+  including stacked areas and 8 series (which wrap to a second row).
+- **matplotlib's `"best"` fails the same way xy's `"best"` does.** It covers
+  data on the 8-series, stacked-area and small-card charts, because every
+  in-plot position overlaps something.
+- TanStack's one weak spot: with long names, the equal-width legend columns
+  let labels run into each other. That is with the DOM-free renderer's text
+  estimate; its docs say `colorLegendItems({ justify: "start" })` wraps labels
+  using the host's text measurer when mounted in a browser.
+
+Reproduce (TanStack needs `npm install @tanstack/charts` in a scratch folder
+containing `tanstack_render.mjs` and `data.json`):
+
+```bash
+uv run python examples/legend_overlap/compare/dump_data.py examples/legend_overlap/compare/data.json
+uv run --with matplotlib python examples/legend_overlap/compare/matplotlib_render.py examples/legend_overlap/compare
+node tanstack_render.mjs   # writes svg/; copy into compare/tanstack/
+```
