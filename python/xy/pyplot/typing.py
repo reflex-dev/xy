@@ -14,7 +14,7 @@ installs can inspect and type-check this module without installing the optional
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from ._axes import Axes as _NativeAxes
 from ._mplfig import Figure as _NativeFigure
@@ -71,6 +71,33 @@ class FigureProtocol(Protocol):
 @runtime_checkable
 class CompatAxesProtocol(AxesProtocol, Protocol):
     """Matplotlib-owned Axes surface available specifically in compat mode."""
+
+    xaxis: Any
+    yaxis: Any
+
+    def set_xlim(self, left: Any = None, right: Any = None, **kwargs: Any) -> Any: ...
+
+    def set_ylim(self, bottom: Any = None, top: Any = None, **kwargs: Any) -> Any: ...
+
+    def get_xticks(self, minor: bool = False) -> Any: ...
+
+    def get_yticks(self, minor: bool = False) -> Any: ...
+
+    def get_xticklabels(
+        self,
+        minor: bool = False,
+        which: Literal["major", "minor", "both"] | None = None,
+    ) -> Any: ...
+
+    def get_yticklabels(
+        self,
+        minor: bool = False,
+        which: Literal["major", "minor", "both"] | None = None,
+    ) -> Any: ...
+
+    def set_xticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> Any: ...
+
+    def set_yticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> Any: ...
 
     def get_subplotspec(self) -> Any: ...
 
