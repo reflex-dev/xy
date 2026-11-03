@@ -256,3 +256,45 @@ def test_browser_tall_category_axis_strides_like_static() -> None:
     payload = _probe(chart, _TICK_PROBE, "data-xy-category-ticks", "category_ticks_tall")
     assert len(static) <= 200, len(static)
     assert sorted(payload["labels"]) == sorted(static), (payload["labels"][-3:], static[-3:])
+
+
+def _polar_stores_chart():
+    return xy.polar_chart(
+        xy.scatter(np.linspace(0.0, 300.0, len(STORES)), STORES),
+        xy.theta_axis(unit="degrees"),
+        width=420,
+        height=420,
+    )
+
+
+_RADIAL_TARGET_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    // The polar path draws one grid ring per tick of this target; its labels
+    // are thinned separately to the spoke, so the target is what to compare.
+    const h = 220;
+    document.body.setAttribute("data-xy-radial-target", JSON.stringify({
+      target: view._yTickTarget("y", h),
+      numeric: view._axisTickTarget("y", Math.max(3, h / 45)),
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-radial-target-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_polar_radial_category_axis_keeps_numeric_density() -> None:
+    # A real polar chart with a category radius: the client must keep the
+    # 45 px density on the radial axis, as the static exporters do.
+    chart = _polar_stores_chart()
+    spec, _blob = chart.figure().build_payload()
+    assert spec["coords"] == "polar" and spec["axes"]["y"]["kind"] == "category"
+    payload = _probe(chart, _RADIAL_TARGET_PROBE, "data-xy-radial-target", "polar_radial_target")
+    assert payload["target"] == payload["numeric"], payload
