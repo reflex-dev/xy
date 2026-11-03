@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 16859)
-Total output lines: 1034
-
 # Production Readiness
 
 This is the release bar for xy while the core renderer is still moving.
@@ -423,7 +420,97 @@ These must pass before publishing.
 | JavaScript | Render client builds cleanly from source | `node js/build.mjs` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
 | Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
-| Real chart render | A real …1859 tokens truncated…omium)`, and `Browser dashboard reliability smoke (Chromium)`.
+| Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
+| Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
+| Dashboard reliability | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, retains partial larger rows, and applies the production shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
+| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including the `matplotlib` and `reflex` extras with their supported ranges) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info` (numeric local versions compare without leading zeros), complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
+| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
+| Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
+| Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
+
+Type checking is **advisory, not release-blocking**. CI runs `ty check python`
+and reports findings without failing the build, and `scripts/verify_local.py`
+registers the same check with `advisory=True`, so `make check-full` prints
+warnings for type findings rather than failing. Promoting it to a hard gate is
+tracked in the Hardening Backlog. The full-package `py.typed` marker is a hard
+gate, but it is enforced by `make check-api`
+(`scripts/check_public_api.py`), not by the type checker.
+
+## Standalone HTML Safety
+
+`Chart.to_html()` produces one self-contained document: inline JavaScript,
+inline JSON spec, and a base64 data blob. That shape is convenient for notebooks,
+reports, and sharing a single file, but it has a clear security contract:
+
+- User-controlled strings in titles, labels, legends, trace names, categories,
+  and series names must be escaped before entering inline JSON or `<title>`.
+- The bundled standalone client is escaped before inlining so a literal
+  `</script>` inside future client source cannot terminate the script element.
+- The export rejects `NaN` and infinity in JSON metadata instead of emitting
+  browser-dependent invalid JavaScript.
+- Path-based exports write through a same-directory temporary file and only
+  replace the target after the full document is flushed, so failed writes do
+  not corrupt the previous standalone artifact.
+- The standalone file emits a defensive `Content-Security-Policy` meta tag that
+  blocks network fetches, external worker scripts, objects, forms, and external
+  images, and pins `base-uri 'none'`, while allowing the inline scripts/styles
+  required by single-file export. Workers are restricted to `blob:` URLs so the
+  bundled density re-bin worker can boot from its own inlined source; no
+  external worker script can load.
+- The browser client inserts user-facing text with `textContent` or text nodes;
+  HTML parser sinks such as `innerHTML` are reserved for fixed internal icons,
+  not titles, labels, legends, categories, or tooltips.
+- Hosts that need nonce/hash-only strict CSP should serve the JavaScript bundle
+  as a separate asset and inject data through a nonce/hash-aware wrapper.
+- Static PNG export validates width, height, scale, and timeout options before
+  launching Chromium so bad user input produces actionable Python errors, and
+  keeps Chromium's sandbox enabled by default. Pass `sandbox=False` only for
+  trusted HTML in constrained CI/container environments that cannot launch a
+  sandboxed browser.
+- Export tests should include weird strings with `</script>`, HTML entities,
+  mixed-case tags, and Unicode line/paragraph separators.
+
+## Local Verification Shortcut
+
+Use the focused gates below while iterating, then run the full gate before a
+production-facing push:
+
+| Changed surface | Focused gate |
+|---|---|
+| API prose, examples, public benchmark wording | `make check-docs` |
+| `spec/api/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
+| Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching | `make check-errors` |
+| Public exports, lazy import mappings, component factories, public annotations | `make check-api` |
+| Import-time budget, `xy.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
+| `xy.pyplot` shim behavior, matplotlib interoperability, reference corpus | `make check-pyplot` |
+| Reviewed matplotlib compatibility snapshot (`spec/matplotlib/compat-matrix.md`) | `python scripts/sync_matplotlib_compat.py --check` |
+| `xy.pyplot` speed margin against matplotlib | `make check-pyplot-speed` |
+| Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
+| Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
+| Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
+| CI/CodSpeed workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
+| Source distributions and wheels | `make check-sdist` and `make check-wheel` |
+| Existing release artifacts | `make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl` |
+| Browser render/lifecycle/interaction smoke | `make check-browser CHROMIUM=/path/to/chrome` |
+| Production-facing PR | `make check-full` |
+
+Use this before pushing production-facing changes:
+
+```bash
+make check-full
+```
+
+Use this after editing API docs, example snippets, or public benchmark wording:
+
+```bash
+make check-docs
+```
+
+The browser gates are split into app-facing checks that match the CI step
+names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
+(Chromium)`, `Step tier-update smoke (Chromium)`, `Browser interaction stress
+smoke (Chromium)`, and `Browser dashboard reliability smoke (Chromium)`.
 `make check-browser` runs all of these except the dashboard reliability smoke,
 which runs in CI only. The lifecycle and visual smokes both boot the
 `examples/fastapi` app under uvicorn and drive Chromium at its live routes (no
