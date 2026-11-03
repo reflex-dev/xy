@@ -441,8 +441,9 @@ spelling is normalized to it before the wire). It never carries `auto_loc`:
 the receiver reserves a band between the title and the plot, chooses the
 column count from the shared glyph-advance table, and lays the legend out there
 (`spec/api/styling.md`, *`loc="outside top"`*). A receiver that predates it
-token-matches `top` and draws an in-plot `upper center` legend: the legend
-still renders, it just overlaps again.
+would token-match `top` and draw an in-plot `upper center` legend over the
+marks — a silent misrender under §7's rule — so this value is what bumps the
+protocol to v14.
 
 A composition-API `loc="best"` legend also carries `"auto_outside": "top"`.
 It is the payload builder's input, not a receiver instruction: it permits
@@ -453,8 +454,11 @@ above that `auto_loc` accompanies only an in-plot concrete `loc`; otherwise it
 ships the in-plot decision with `auto_loc: "best"` as before. Static export at
 a different size re-resolves under the same rule. The pyplot shim never sets
 `auto_outside`, so its `best` keeps Matplotlib's in-plot-only semantics.
-Receivers ignore the field. Both are new values and an optional field, not a
-new shape, so the protocol version is unchanged.
+Receivers ignore the field, which alone needs no bump (it accompanies a
+concrete `loc`, like `auto_loc`); the `"outside top"` value it can produce is
+the v14 change above. A static export at another size re-resolves a legend
+that carries `auto_outside`, even after it resolved to the band, so a larger
+export can bring it back inside an empty corner.
 
 ### 5.2 Full-payload data transition
 
@@ -497,9 +501,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 13` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 14` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 13` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 14` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -552,8 +556,12 @@ Two independent version constants:
   `tooltip_rows` — the funnel geometry contract in
   `spec/api/chart-kind-contract.md`). `markOf()` falls back to scatter for
   unknown kinds, so a cached v12 client would silently draw every funnel as a
-  point cloud of trailing cross edges.
-  The optional `legend.auto_loc` field described in §5.1 deliberately does
+  point cloud of trailing cross edges. v14 adds `legend.loc = "outside top"`
+  (§5.1a), a legend band the plot shrinks to make room for. A cached v13 client
+  token-matches `top` and draws an in-plot `upper center` legend over the very
+  marks the band exists to keep clear, at the unshrunk plot size, so the v14
+  handshake rejects it.
+  The optional `legend.auto_loc` field described in §5.1 deliberately did
   **not** increment v13: it accompanies an already concrete `legend.loc`, so a
   cached client that does not recognize the hint renders the same correct
   first placement and merely forgoes later adaptive re-scoring. Ignoring it

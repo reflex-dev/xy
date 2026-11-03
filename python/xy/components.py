@@ -3141,8 +3141,11 @@ def legend(
         loc: Legend placement within or around the plot. ``"best"`` selects
             automatic least-overlap placement for an unanchored Cartesian
             chart, and moves the legend to the ``"outside top"`` band when
-            every in-plot position would cover data; concrete names and
-            ``None`` remain fixed.
+            every in-plot position would cover data. That inside-or-outside
+            choice is made when the chart is built (and again by a static
+            export at another size); the live renderer's later re-scoring
+            after a pan, zoom or resize only moves an inside legend between
+            inside positions. Concrete names and ``None`` remain fixed.
             ``"outside top"`` puts the legend in a band above the plot that
             the plot shrinks to make room for, so it never covers data;
             entries use as many columns as fit and wrap into rows (``ncols``

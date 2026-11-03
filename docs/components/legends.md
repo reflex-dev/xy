@@ -125,8 +125,9 @@ def automatic_legend_demo():
 
 `loc="outside top"` moves the legend into a band of its own between the title
 and the plot. The plot shrinks to make room, so the legend never covers a mark.
-Entries use as many columns as fit the chart's width and wrap into more rows as
-it narrows; `ncols` is ignored. Matplotlib's `"outside upper center"` is
+Entries use as many columns as fit the width available to the title and wrap
+into more rows as it narrows; `ncols` is ignored. A very long legend is capped
+at 30% of the chart's height and scrolls past that. Matplotlib's `"outside upper center"` is
 accepted as the same placement.
 
 `loc="best"` uses this band on its own when no position inside the plot is

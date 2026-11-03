@@ -154,6 +154,34 @@ const OUTSIDE_LEGEND_GAP = 8;
 // The canonical spelling `xy._validate.legend_loc` returns for every
 // outside-top form, so the client never token-matches it as an in-plot `upper`.
 const OUTSIDE_TOP_LEGEND = "outside top";
+// Tallest an outside-top legend box may be, as a fraction of the chart height;
+// rows past it scroll. One row always shows. Mirrored by
+// `_OUTSIDE_LEGEND_MAX_FRACTION` in python/xy/_svg.py.
+const OUTSIDE_LEGEND_MAX_FRACTION = 0.3;
+// Legend style keys the exporters canonicalize (`_LEGEND_SLOT_ALIASES` in
+// python/xy/_svg.py), so both renderers read padding/row gap from one spelling.
+const XY_LEGEND_STYLE_ALIASES = {
+  "background-color": "background",
+  "box-shadow": "boxShadow",
+  "border-radius": "borderRadius",
+  "row-gap": "rowGap",
+};
+
+// The legend style the band's column count is computed from: the
+// `styles={"legend": ...}` slot, then `xy.legend(style=...)` on top. Mirrors
+// `legend_options_with_slot` in python/xy/_svg.py — without the slot, a slot
+// padding the exporters honored chose one column more here than in a file.
+function xyLegendBandStyle(slotStyle, ownStyle) {
+  const out = {};
+  for (const [key, value] of Object.entries(slotStyle || {})) {
+    const kebab = key.startsWith("--") ? key : key.replace(/_/g, "-");
+    out[XY_LEGEND_STYLE_ALIASES[kebab] || kebab] = value;
+  }
+  for (const [key, value] of Object.entries(ownStyle || {})) {
+    out[XY_LEGEND_STYLE_ALIASES[key] || key] = value;
+  }
+  return out;
+}
 
 function xyLegendEm(style, key, fallback) {
   const raw = String((style && style[key]) ?? "").trim();
@@ -950,7 +978,9 @@ export class ChartView {
     if (!lg) return null;
     const names = lg._xyLegendNames || [];
     if (!names.length) return null;
-    const options = lg._xyLegendOptions || {};
+    const own = lg._xyLegendOptions || {};
+    const style = xyLegendBandStyle(this.spec?.dom?.styles?.legend, own.style);
+    const options = { ...own, style };
     const computedSize = lg.isConnected
       ? Number.parseFloat(getComputedStyle(lg).fontSize)
       : NaN;
@@ -958,7 +988,9 @@ export class ChartView {
     const ncols = xyLegendBandColumns(names, options, bandW, fontSize);
     lg.style.gridTemplateColumns = `repeat(${ncols},minmax(0,max-content))`;
     if (lg._xyLegendTitle) lg._xyLegendTitle.style.gridColumn = `1 / span ${ncols}`;
-    // The band, not the plot, bounds this box; every row stays visible.
+    // The band, not the plot, bounds this box. Border-box so the height cap
+    // below includes the box's own padding.
+    lg.style.boxSizing = "border-box";
     lg.style.setProperty("--xy-legend-max-width", `${Math.max(40, bandW)}px`);
     lg.style.setProperty("--xy-legend-max-height", "none");
     // Measure from the root's left edge. An absolutely positioned box shrinks
@@ -969,13 +1001,28 @@ export class ChartView {
     lg.style.setProperty("--xy-legend-right", "auto");
     lg.style.setProperty("--xy-legend-transform", "none");
     lg.dataset.xyLegendColumns = String(ncols);
+    const cap = OUTSIDE_LEGEND_MAX_FRACTION * this.size.h;
     const measured = lg.isConnected ? lg.offsetHeight : 0;
-    if (measured > 0) return { h: measured, ncols };
-    const style = options.style || {};
+    if (measured > 0) {
+      if (measured <= cap) return { h: measured, ncols };
+      // Too tall: cap it (the box scrolls, as in-plot legends do), but never
+      // below the title and one full row.
+      const cs = getComputedStyle(lg);
+      const padV = (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.paddingBottom) || 0);
+      const titleH = lg._xyLegendTitle ? lg._xyLegendTitle.offsetHeight + (Number.parseFloat(cs.rowGap) || 0) : 0;
+      const firstRow = (lg._xyItemRows && lg._xyItemRows[0] && lg._xyItemRows[0].row.offsetHeight) || 0;
+      const h = Math.min(measured, Math.max(cap, padV + titleH + firstRow));
+      lg.style.setProperty("--xy-legend-max-height", `${h}px`);
+      return { h, ncols };
+    }
     const rows = Math.ceil(names.length / ncols) + (options.title ? 1 : 0);
     const rowGap = xyLegendEm(style, "rowGap", 0.5) * fontSize;
     const pad = 2 * xyLegendEm(style, "padding", 0.4) * fontSize;
-    return { h: rows * fontSize * 1.03 + Math.max(0, rows - 1) * rowGap + pad, ncols };
+    const oneRow = (options.title ? 2 : 1) * fontSize * 1.03 + (options.title ? rowGap : 0) + pad;
+    const estimate = rows * fontSize * 1.03 + Math.max(0, rows - 1) * rowGap + pad;
+    const h = Math.min(estimate, Math.max(cap, oneRow));
+    lg.style.setProperty("--xy-legend-max-height", `${h}px`);
+    return { h, ncols };
   }
 
   // Side and px a polar legend gutter claims, or null when nothing is reserved:

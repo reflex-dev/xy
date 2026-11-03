@@ -190,11 +190,16 @@ def legend_loc(value: Any, label: str) -> Optional[str]:
     `"northeast"` and `"best"` parked the legend dead center, on top of the
     data. Close the vocabulary instead: refuse what is genuinely a guess.
 
-    The caller's **spelling is preserved** (lowercased, so `_legend_layout`'s
-    token match sees it). `top`/`bottom` are public core aliases for
-    `upper`/`lower` that `_svg._legend_layout` resolves to the same geometry;
-    rewriting them here would change a value the pyplot compatibility suite
-    pins as passthrough.
+    For the in-plot names the caller's **spelling is preserved** (lowercased,
+    so `_legend_layout`'s token match sees it). `top`/`bottom` are public core
+    aliases for `upper`/`lower` that `_svg._legend_layout` resolves to the same
+    geometry; rewriting them here would change a value the pyplot compatibility
+    suite pins as passthrough.
+
+    The outside-top forms are the exception: every spelling of them
+    (`outside top`, Matplotlib's `outside upper center`, ...) is returned as
+    the canonical `LEGEND_OUTSIDE_TOP`, so no token match can read one as the
+    in-plot `upper center`.
     """
     if value is None:
         return None

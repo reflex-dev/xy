@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import _native, channels, interaction, kernels, lod
+from . import _native, _validate, channels, interaction, kernels, lod
 from ._trace import Trace
 from .columns import Column
 from .config import (
@@ -425,7 +425,7 @@ class PayloadMixin(_Host):
                 from ._legendfit import resolve_for_figure
 
                 legend["loc"] = resolve_for_figure(self, spec, legend, rendered_columns=pw)
-                if legend["loc"] == "outside top":
+                if legend["loc"] == _validate.LEGEND_OUTSIDE_TOP:
                     # No in-plot position was empty, so the legend took the
                     # band above the plot. That is exact, not a first guess:
                     # `auto_loc` is only ever shipped with an in-plot `loc`, and

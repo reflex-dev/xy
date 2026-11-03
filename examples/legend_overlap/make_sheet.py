@@ -5,6 +5,7 @@ sibling `node examples/legend_overlap/shoot_sheet.js`) to refresh
 contact_sheet.png.
 """
 
+import html
 import json
 from pathlib import Path
 
@@ -34,9 +35,9 @@ def main() -> None:
     rows = []
     for key, title in CASES:
         cells = "".join(
-            f'<td><div class=frame><img src="png/{key}__{tag}.png"></div>'
-            f"<div class=cap>resolved: {report[f'{key}__{tag}']['loc']}</div></td>"
-            for tag, _label in VARIANTS
+            f'<td><div class=frame><img src="png/{key}__{tag}.png" alt="{html.escape(f"{title}, {label}")}"></div>'
+            f"<div class=cap>resolved: {(report[f'{key}__{tag}'] or {}).get('loc', 'not rendered')}</div></td>"
+            for tag, label in VARIANTS
         )
         rows.append(f"<tr><td colspan=3 class=case>{title}</td></tr><tr>{cells}</tr>")
     (HERE / "sheet.html").write_text(

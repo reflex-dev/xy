@@ -637,8 +637,9 @@ Every in-plot location, `"best"` included, covers marks whenever no corner of
 the plot is empty: stacked areas, many series, and bars that reach the axis
 maximum (`examples/legend_overlap/`). `loc="outside top"` instead reserves a
 band **between the title and the plot**, and the plot shrinks by the band's
-height plus an 8 px gap (`_OUTSIDE_LEGEND_GAP` / `OUTSIDE_LEGEND_GAP`). This is
-the placement TanStack Charts, Chart.js, Recharts and Vega-Lite default to.
+height plus an 8 px gap (`_OUTSIDE_LEGEND_GAP` / `OUTSIDE_LEGEND_GAP`). TanStack
+Charts and Chart.js default to a legend above the plot; Recharts (below) and
+Vega-Lite (right) also keep their default legends outside it.
 
 - **Spelling.** `"outside top"` is canonical. Matplotlib's figure-legend
   `"outside upper center"` and the usual case, separator, `top`/`upper` and
@@ -648,7 +649,11 @@ the placement TanStack Charts, Chart.js, Recharts and Vega-Lite default to.
   `upper center`. Other `outside …` sides are refused.
 - **Columns and rows.** Entries fill row-major, as in the in-plot grid. The band
   uses the most columns whose natural widths fit the band width without
-  ellipsizing a label, and wraps the rest into rows; `ncols` is ignored. Both
+  ellipsizing a label, and wraps the rest into rows; `ncols` is ignored. The
+  padding it charges is the merged legend style — the `styles={"legend": ...}`
+  slot, then `xy.legend(style=...)` (`legend_options_with_slot` /
+  `xyLegendBandStyle`) — and the static layout keeps that count rather than
+  re-applying the in-plot minimum column width. Both
   renderers compute the count from the shared DejaVu advance table
   (`_legend_band_columns` / `xyLegendBandColumns`), so the browser and every
   export wrap the same entries into the same rows. The one known divergence:
@@ -660,8 +665,15 @@ the placement TanStack Charts, Chart.js, Recharts and Vega-Lite default to.
   the title is: the final plot width depends on the plot height, which depends
   on this band. The box is centered over the plot like the title, then kept
   inside the band.
+- **Height cap.** The box is at most 30% of the chart height
+  (`_OUTSIDE_LEGEND_MAX_FRACTION` / `OUTSIDE_LEGEND_MAX_FRACTION`), and never
+  less than its title plus one row. Uncapped, a dozen long one-column rows on a
+  small card claimed more than the canvas and pushed the plot off its bottom
+  edge. Past the cap, static export drops the rows that do not fit (a file
+  cannot scroll) and the browser scrolls the box, as both already do for an
+  oversized in-plot legend.
 - **Height.** Static export reserves the formula height of the laid-out box (all
-  rows, nothing truncated). The browser reserves the **measured** height of the
+  rows up to the cap). The browser reserves the **measured** height of the
   live box, because the legend slot is author-stylable and a formula would
   under-reserve a restyled legend; the first layout runs before the box exists,
   so `_buildDom` lays out again once it can be measured, and a box that cannot

@@ -12,6 +12,7 @@ failure.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import tempfile
@@ -26,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
 import xy  # noqa: E402
-from xy import _svg, _validate  # noqa: E402
+from xy import _raster, _svg, _validate  # noqa: E402
 from xy.export import find_chromium  # noqa: E402
 
 REGIONS = ["North", "South", "East", "West", "Central", "Online", "Wholesale", "Partners"]
@@ -56,6 +57,16 @@ def _work_orders(loc="outside top"):
         width=900,
         height=360,
     )
+
+
+def _chromium() -> str:
+    """Chromium for the browser probes: skip without one, fail under XY_REQUIRE_BROWSER."""
+    chromium = find_chromium()
+    if not chromium:
+        if os.environ.get("XY_REQUIRE_BROWSER"):
+            pytest.fail("XY_REQUIRE_BROWSER is set but no Chromium installation was found")
+        pytest.skip("no chromium available for the outside-top legend probes")
+    return chromium
 
 
 def _layout(chart):
@@ -255,9 +266,7 @@ _PROBE = """
 
 
 def test_browser_band_never_overlaps_the_plot_and_rewraps_on_resize() -> None:
-    chromium = find_chromium()
-    if not chromium:
-        pytest.skip("no chromium available for the outside-top legend probe")
+    chromium = _chromium()
     chart = _lines(REGIONS, width=900, height=360)
     _spec, plot = _layout(chart)
     document = chart.to_html()
@@ -380,9 +389,7 @@ def test_pyplot_best_keeps_matplotlib_in_plot_semantics() -> None:
 
 
 def test_browser_best_fallback_uses_the_band() -> None:
-    chromium = find_chromium()
-    if not chromium:
-        pytest.skip("no chromium available for the best-to-outside probe")
+    chromium = _chromium()
     chart = _work_orders(loc="best")
     document = chart.to_html()
     render_call = next((call for call in _RENDER_CALLS if call in document), None)
@@ -407,3 +414,130 @@ def test_browser_best_fallback_uses_the_band() -> None:
         assert state["legendBottomToCanvasTop"] >= 0, payload
         assert state["wrappedLabels"] == 0, payload
     assert payload["initial"]["columns"] == 4, payload
+
+
+# --- review findings (PR 544) -------------------------------------------------------------
+
+LONG_NAMES = [f"Customer segment number {i} revenue (USD)" for i in range(8)]
+
+
+def _band_box(spec, plot):
+    return _svg._legend_layout(
+        _svg.legend_items(spec["traces"]), plot, _svg.legend_options_with_slot(spec, spec["legend"])
+    )
+
+
+def test_band_height_is_capped_so_a_tall_legend_cannot_push_the_plot_off_canvas() -> None:
+    spec, plot = _layout(_lines(LONG_NAMES, width=320, height=200))
+    cap = _svg._OUTSIDE_LEGEND_MAX_FRACTION * 200
+    assert plot["legend_band_h"] <= cap + 1e-6
+    assert plot["y"] + plot["h"] <= 200
+    box = _band_box(spec, plot)
+    # Static files cannot scroll: rows past the cap are dropped, never drawn over the plot.
+    assert 0 < box["visible_count"] < len(LONG_NAMES)
+    assert box["y"] + box["box_h"] <= plot["y"]
+
+
+def test_band_cap_still_keeps_one_row() -> None:
+    _spec, plot = _layout(_lines(["Revenue", "Gross profit"], width=320, height=60))
+    assert plot["legend_band_h"] > 0
+
+
+def _hole_chart(width: int, height: int):
+    """Dense points everywhere except a small empty upper-left square."""
+    grid = np.linspace(0.0, 1.0, 60)
+    xs, ys = np.meshgrid(grid, grid)
+    keep = ~((xs < 0.22) & (ys > 0.78))
+    return xy.scatter_chart(
+        xy.scatter(xs[keep], ys[keep], name="points", size=3),
+        xy.scatter(xs[keep][:5], ys[keep][:5], name="more", size=3),
+        xy.x_axis(domain=(0.0, 1.0)),
+        xy.y_axis(domain=(0.0, 1.0)),
+        xy.legend(loc="best"),
+        width=width,
+        height=height,
+    )
+
+
+def test_export_at_another_size_reconsiders_a_best_band() -> None:
+    # The hole is too small for the legend on a 320x200 card but not at 1400x900.
+    assert _legend(_hole_chart(320, 200))[1]["loc"] == "outside top"
+    assert _legend(_hole_chart(1400, 900))[1]["loc"] == "upper left"
+    figure = _hole_chart(320, 200).figure()
+    spec, _blob, _columns = _raster._export_payload(figure, 1400, 900, None)
+    assert spec["legend"]["loc"] == "upper left"
+
+
+def test_export_keeps_the_band_column_count_for_short_labels() -> None:
+    spec, plot = _layout(_lines(["A", "B", "C", "D"], width=300, height=220))
+    assert plot["legend_band_ncols"] == 4
+    assert _band_box(spec, plot)["ncols"] == 4
+
+
+_STATIC_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const legend = document.querySelector('[data-xy-legend-band="top"]');
+    if (!legend) throw new Error("outside-top legend never rendered");
+    const root = view.root.getBoundingClientRect();
+    const box = legend.getBoundingClientRect();
+    const canvas = view.canvas.getBoundingClientRect();
+    document.body.setAttribute("data-xy-band-static", JSON.stringify({
+      columns: Number(legend.dataset.xyLegendColumns),
+      legendHeight: box.height,
+      legendBottomToCanvasTop: canvas.top - box.bottom,
+      canvasBottomToRootBottom: root.bottom - canvas.bottom,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-band-static-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def _static_probe(chart, name: str) -> dict:
+    chromium = _chromium()
+    document = chart.to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None, "to_html render call shape changed; update the probe swap"
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    document = document.replace("</body>", _STATIC_PROBE + "\n</body>", 1)
+    with tempfile.TemporaryDirectory() as td:
+        return run_browser_probe(
+            chromium, document, Path(td) / f"{name}.html", "data-xy-band-static", label=name
+        )
+
+
+def test_browser_band_height_is_capped() -> None:
+    payload = _static_probe(_lines(LONG_NAMES, width=320, height=200), "band_cap")
+    assert payload["legendHeight"] <= _svg._OUTSIDE_LEGEND_MAX_FRACTION * 200 + 1, payload
+    assert payload["legendBottomToCanvasTop"] >= 0, payload
+    assert payload["canvasBottomToRootBottom"] >= 0, payload
+
+
+def test_browser_columns_include_slot_padding() -> None:
+    # At 534 px the default padding fits five columns and a 2em slot padding four.
+    months = np.arange(12)
+    chart = xy.line_chart(
+        *[xy.line(months, months + i, name=n) for i, n in enumerate(REGIONS)],
+        xy.legend(loc="outside top"),
+        styles={"legend": {"padding": "2em"}},
+        width=534,
+        height=320,
+    )
+    _spec, plot = _layout(chart)
+    assert plot["legend_band_ncols"] == 4
+    payload = _static_probe(chart, "band_slot_padding")
+    assert payload["columns"] == plot["legend_band_ncols"], payload

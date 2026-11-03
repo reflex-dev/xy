@@ -12,9 +12,10 @@ top"`*).
 
 ## Findings
 
-- The Cartesian legend is always drawn inside the plot; no location reserves
-  space beside it (`js/src/50_chartview.ts`, the note above
-  `POLAR_LEGEND_ROOM_FRACTION`).
+- Before this change, every Cartesian legend location was drawn inside the
+  plot and none reserved space beside it (`js/src/50_chartview.ts`, the note
+  above `POLAR_LEGEND_ROOM_FRACTION`); `loc="outside top"` is the first that
+  does.
 - The default is a fixed `upper right`, exactly where rising lines and the
   tallest late bars end (cases 1, 3, 5, 6).
 - `loc="best"` fixes those, but cannot help when no empty corner exists:
@@ -40,6 +41,7 @@ From the repo root, after building the core and the JS bundles:
 ```bash
 uv run python examples/legend_overlap/make_cases.py   # writes html/ (git-ignored)
 node examples/legend_overlap/shoot.js                 # writes png/ + report.json
+# Playwright uses its own browser; set XY_CHROMIUM=/path/to/chrome to override.
 ```
 
 `report.json` records each legend's resolved location, size and (for the
@@ -55,7 +57,9 @@ node examples/legend_overlap/shoot_sheet.js           # writes contact_sheet.png
 ![xy vs matplotlib vs TanStack Charts](compare/comparison.png)
 
 Same data in every column (`compare/data.json`, dumped by
-`compare/dump_data.py`). Matplotlib 3.11.1 uses its default `ax.legend()`
+`compare/dump_data.py`). It covers cases 1–6; case 7, the reported builder
+chart, was added after this comparison and appears only in the contact sheet
+above. Matplotlib 3.11.1 uses its default `ax.legend()`
 (`loc="best"`) with `layout="constrained"`. `@tanstack/charts` 1.2.1 uses its
 default `colorLegend()`, and its SVG comes from the DOM-free `renderChartSvg`.
 

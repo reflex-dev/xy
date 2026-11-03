@@ -32,6 +32,8 @@ from typing import Any, Optional
 
 import numpy as np
 
+from ._validate import LEGEND_OUTSIDE_TOP
+
 #: Every Matplotlib candidate, in Matplotlib's own preference order (corners,
 #: then the mid-edges, then dead center) so a tie keeps the first. Each entry is
 #: `(name, x_lo, x_hi, y_lo, y_hi)` in the normalized [0, 1] plot box with y up.
@@ -1424,12 +1426,10 @@ def resolve_for_figure(
         # Every in-plot position covers marks: no corner is empty (stacked
         # areas or bars at the axis maximum, many series). The least-bad corner
         # still hides data, so take the band above the plot instead.
-        return _OUTSIDE_TOP
+        return LEGEND_OUTSIDE_TOP
     return next(name for name, score in scores.items() if score <= floor + 1e-12)
 
 
-#: The outside-top band, as `xy._validate.legend_loc` canonicalizes it.
-_OUTSIDE_TOP = "outside top"
 #: A best in-plot score above this means no candidate is empty. Scores are
 #: non-negative sums of covered fractions and crossings, so an empty box is an
 #: exact 0; the epsilon only absorbs float noise.

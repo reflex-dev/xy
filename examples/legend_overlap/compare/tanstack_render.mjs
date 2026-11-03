@@ -35,9 +35,15 @@ for (const [key, def] of Object.entries(defs)) {
   const scene = createChartScene(def, size);
   // renderChartSvg emits an inline-embeddable <svg> (no xmlns, 100% size);
   // make it a standalone file with a white background and a fixed pixel size.
-  const svg = renderChartSvg(scene, { idPrefix: key, ariaLabel: key })
-    .replace('<svg class="ts-chart" width="100%" height="100%"',
-      `<svg xmlns="http://www.w3.org/2000/svg" class="ts-chart" width="${size.width}" height="${size.height}"`)
+  const inline = renderChartSvg(scene, { idPrefix: key, ariaLabel: key });
+  const head = '<svg class="ts-chart" width="100%" height="100%"';
+  // Fail loudly if a TanStack release changes this markup: a silent no-op
+  // would write SVGs that do not render as standalone images.
+  if (!inline.startsWith(head) || !/^<svg[^>]*style="/.test(inline)) {
+    throw new Error(`unexpected renderChartSvg markup for ${key}: ${inline.slice(0, 120)}`);
+  }
+  const svg = inline
+    .replace(head, `<svg xmlns="http://www.w3.org/2000/svg" class="ts-chart" width="${size.width}" height="${size.height}"`)
     .replace(/(<svg[^>]*style=")/, '$1background:#fff;color:#111;font-family:system-ui,sans-serif;');
   fs.writeFileSync(new URL(`./svg/${key}.svg`, import.meta.url), svg);
   console.log('wrote', key, size.width + 'x' + size.height);

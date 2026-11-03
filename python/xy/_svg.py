@@ -2584,7 +2584,9 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     # An outside-top legend is a band between the title and the plot. It is
     # sized at the title's wrap width for the same reason the title is: the
     # final plot width depends on the plot height, which depends on this band.
-    legend_band = _outside_top_legend_band(spec, title_wrap_width)
+    legend_band = _outside_top_legend_band(
+        spec, title_wrap_width, _OUTSIDE_LEGEND_MAX_FRACTION * float(height)
+    )
     band_room = legend_band["room"] if legend_band else 0.0
     top += band_room
     top += top_axis_room
@@ -2671,6 +2673,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         plot["legend_band_w"] = title_wrap_width
         plot["legend_band_h"] = legend_band["box_h"]
         plot["legend_band_ncols"] = legend_band["ncols"]
+        plot["legend_band_cap"] = legend_band["cap"]
     if spec.get("coords") == "polar":
         _recut_polar_plot(spec, plot, width, height, compact)
     return width, height, compact, plot
@@ -6490,6 +6493,13 @@ def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
 #: js/src/50_chartview.ts.
 _OUTSIDE_LEGEND_GAP = 8.0
 
+#: Tallest an outside-top legend box may be, as a fraction of the chart height.
+#: Uncapped, a dozen long one-column rows on a small card claimed more than the
+#: whole canvas and pushed the plot off its bottom edge. Rows past the cap are
+#: dropped in static files and scroll in the browser; one row always shows.
+#: Mirrored by OUTSIDE_LEGEND_MAX_FRACTION in js/src/50_chartview.ts.
+_OUTSIDE_LEGEND_MAX_FRACTION = 0.3
+
 
 def _legend_band_columns(named: list[dict], options: dict, band_w: float) -> int:
     """Most columns an outside-top legend can use without ellipsizing a label.
@@ -6520,7 +6530,9 @@ def _legend_band_columns(named: list[dict], options: dict, band_w: float) -> int
     return 1
 
 
-def _outside_top_legend_band(spec: dict[str, Any], band_w: float) -> Optional[dict[str, float]]:
+def _outside_top_legend_band(
+    spec: dict[str, Any], band_w: float, cap: float = math.inf
+) -> Optional[dict[str, float]]:
     """Room an outside-top legend claims above the plot, or None.
 
     Only the main, unanchored legend of a Cartesian chart reserves a band: an
@@ -6552,9 +6564,15 @@ def _outside_top_legend_band(spec: dict[str, Any], band_w: float) -> Optional[di
         "legend_band_w": band_w,
         "legend_band_h": 0.0,
         "legend_band_ncols": ncols,
+        "legend_band_cap": cap,
     }
     box = _legend_layout(named, probe, options)
-    return {"ncols": ncols, "box_h": box["box_h"], "room": box["box_h"] + _OUTSIDE_LEGEND_GAP}
+    return {
+        "ncols": ncols,
+        "cap": cap,
+        "box_h": box["box_h"],
+        "room": box["box_h"] + _OUTSIDE_LEGEND_GAP,
+    }
 
 
 def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:
@@ -6630,7 +6648,10 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         available_w = max(1.0, float(plot["legend_band_w"]))
     ncols = requested_cols
     min_column_w = handle + gap + 4 * char_width
-    if ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
+    # A band's column count was already fitted to the labels' natural widths
+    # (`_legend_band_columns`); re-charging the in-plot minimum here dropped a
+    # column the browser keeps (four one-letter labels went 4 -> 3).
+    if not band and ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
         # A column must at least retain its handle and a visible ellipsis.
         max_fit_cols = max(
             1,
@@ -6683,8 +6704,10 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
     if band:
-        # The band was sized from this very layout, so every row fits it.
-        available_h = math.inf
+        # The band was sized from this very layout under the same cap, so the
+        # rows that fit the cap all show; at least one row always does.
+        one_row = (2 if title else 1) * text_h + (row_gap if title else 0.0) + pad
+        available_h = max(float(plot.get("legend_band_cap", math.inf)), one_row + 1e-6)
     visible_rows = nrows
     content_rows = nrows + (1 if title else 0)
     natural_box_h = content_rows * text_h + max(0, content_rows - 1) * row_gap + pad
@@ -7316,7 +7339,10 @@ def _resolve_auto_legend_locations(
     def resolved(options: Any) -> Any:
         if (
             not isinstance(options, dict)
-            or options.get("auto_loc") != "best"
+            # `auto_outside` marks a composition-API `best` even after it
+            # resolved to the band (which drops `auto_loc`), so a larger export
+            # can bring the legend back inside an empty corner.
+            or (options.get("auto_loc") != "best" and options.get("auto_outside") != "top")
             or options.get("anchor") is not None
             or spec.get("coords", "cartesian") != "cartesian"
         ):
@@ -7331,6 +7357,8 @@ def _resolve_auto_legend_locations(
         if concrete["loc"] == _validate.LEGEND_OUTSIDE_TOP:
             # Same contract as the payload: a band legend is exact.
             concrete.pop("auto_loc", None)
+        elif options.get("auto_outside") == "top":
+            concrete["auto_loc"] = "best"
         return concrete
 
     legend = spec.get("legend")
