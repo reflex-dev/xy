@@ -609,8 +609,8 @@ def test_detached_chart_remeasures_the_band_when_it_connects() -> None:
     assert payload["legendBottomToCanvasTop"] >= 0, payload
     # The first connected frame lays out again; the shared host must present
     # at the size the frame drew, not the detached size.
-    if payload["presented"]:
-        assert payload["presented"][-1] == payload["canvas"], payload
+    assert payload["presented"], payload
+    assert payload["presented"][-1] == payload["canvas"], payload
 
 
 @pytest.mark.parametrize("key", ["font_size", "font-size", "fontSize"])
