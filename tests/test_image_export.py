@@ -33,6 +33,28 @@ def _pil():
     return pytest.importorskip("PIL.Image")
 
 
+def test_browser_session_does_not_retry_without_sandbox(monkeypatch):
+    from xy import _chromium
+
+    calls = []
+
+    class FailingSession:
+        def __init__(self, executable, *, gl, sandbox):
+            calls.append((executable, gl, sandbox))
+            raise _chromium.ChromiumError("sandbox unavailable")
+
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
+    monkeypatch.setattr(_chromium, "ChromiumSession", FailingSession)
+
+    with pytest.raises(
+        _chromium.ChromiumError,
+        match=r"sandbox unavailable.*pass sandbox=False only for HTML you trust",
+    ):
+        export._browser_session(gl="software", sandbox=True)
+
+    assert calls == [("/fake/chrome", "software", True)]
+
+
 def _decode(data: bytes):
     image = _pil().open(io.BytesIO(data))
     image.load()

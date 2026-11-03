@@ -100,7 +100,8 @@ python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromi
 python3 scripts/append_stream_smoke.py   # streaming-append tail uploads + coalesced refines
 uv sync --extra reflex --group dev
 uv run pytest                         # native core required (no fallback)
-python3 scripts/reflex_ws_smoke.py    # browser E2E vs the running Reflex demo app
+python3 scripts/reflex_ws_smoke.py    # browser E2E; sandbox is on by default
+# If Chromium cannot sandbox, pass --no-sandbox only for a trusted --frontend URL.
 uv run ruff check . && uv run ruff format . && uv run ty check
 uv run python scripts/bench.py        # §12 benchmark harness
 python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps

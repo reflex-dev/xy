@@ -411,6 +411,9 @@ flags. Artifacts record `environment.browser_renderer=hardware`.
 The workflow benchmark measures native Rust PNG separately from the opt-in
 `engine=Engine.chromium` screenshot row. The Chromium adapter remains
 `software-gl` because it forces SwiftShader; keep it out of hardware-GPU comparisons.
+That screenshot row explicitly uses `sandbox=False`: its input is the controlled,
+repository-generated chart in `bench_workflows.py`, and hosted CI cannot initialize
+Chromium's sandbox. This is not permission for application exports to opt out.
 Record CPU model/core count, RAM, GPU and driver, OS build, power mode, browser
 version, Python, Rust, Node, package versions, commit, and ambient workload.
 

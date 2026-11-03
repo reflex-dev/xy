@@ -664,6 +664,8 @@ def test_makefile_exposes_security_verification_shortcut() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "check-security:" in makefile
+    assert "check-dependency-audit:" in makefile
+    assert "scripts/audit_dependencies.py" in makefile
     assert "scripts/verify_local.py --only security_export" in makefile
     assert "make check-security" in makefile
     assert "standalone HTML safety" in makefile

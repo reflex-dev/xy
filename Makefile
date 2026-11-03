@@ -17,7 +17,7 @@ NAME ?=
 RELEASE_VERSION ?= 0.1.0a4
 RELEASE_CLI = uvx reflex-release@$(RELEASE_VERSION)
 
-.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-gallery-contract check-pyplot-gallery-extended check-pyplot-gallery-shard check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke news news-check
+.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-security-static check-dependency-audit check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-gallery-contract check-pyplot-gallery-extended check-pyplot-gallery-shard check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke news news-check
 
 help:
 	@printf '%s\n' \
@@ -31,7 +31,8 @@ help:
 		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
 		'  make check-docs       run documentation examples' \
 		'  make check-examples   run canonical API examples and Reflex asset registry checks' \
-		'  make check-security   run standalone HTML safety and client text-sink checks' \
+		'  make check-security   run standalone HTML safety plus all dependency-advisory audits' \
+		'  make check-dependency-audit audit every active committed dependency lock' \
 		'  make check-errors     run public error, LOD, and mutation-safety tests' \
 		'  make check-api        run lazy public API and type-surface checks' \
 		'  make check-import     run import-time and dependency-boundary checks' \
@@ -114,8 +115,13 @@ check-pyplot-gallery-shard:
 		--profile "$(GALLERY_PROFILE)" \
 		--shard "$(GALLERY_SHARD)"
 
-check-security:
+check-security: check-security-static check-dependency-audit
+
+check-security-static:
 	$(PYTHON) scripts/verify_local.py --only security_export
+
+check-dependency-audit:
+	$(PYTHON) scripts/audit_dependencies.py
 
 check-errors:
 	$(PYTHON) scripts/verify_local.py --only error_safety

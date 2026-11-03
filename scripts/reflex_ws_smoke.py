@@ -23,7 +23,7 @@ design:
    guarantee.
 
 Usage:
-    python3 scripts/reflex_ws_smoke.py [--frontend http://localhost:3100]
+    python3 scripts/reflex_ws_smoke.py [--frontend http://localhost:3100] [--no-sandbox]
 
 Stdlib only (repo CDP driver + a minimal PNG reader); needs the demo app
 already serving and a Chromium binary.
@@ -239,6 +239,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--frontend", default="http://localhost:3100")
     parser.add_argument("--chromium", default=None)
+    parser.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        help="disable Chromium's sandbox for a trusted frontend URL",
+    )
     parser.add_argument("--screenshot", default=None, help="save the final page PNG here")
     args = parser.parse_args()
 
@@ -246,7 +251,7 @@ def main() -> None:
     print(f"chromium: {chromium}")
     failures: list[str] = []
 
-    with ChromiumSession(chromium, gl="software", sandbox=False) as session:
+    with ChromiumSession(chromium, gl="software", sandbox=not args.no_sandbox) as session:
         probe = Probe(session, args.frontend)
 
         # 1) every chart mounts a view (ten live sources + two static charts;
