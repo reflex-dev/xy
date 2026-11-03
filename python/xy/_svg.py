@@ -570,8 +570,7 @@ def _category_ticks(lo: float, hi: float, n_categories: int, target: int = 6) ->
     stop = min(n_categories - 1, int(np.floor(max(lo, hi))))
     if stop < start:
         return []
-    # At most 200 labels, strided across the whole visible range.
-    step = max(1, int(np.ceil((stop - start + 1) / max(1, min(200, target)))))
+    step = max(1, int(np.ceil((stop - start + 1) / max(1, target))))
     return list(range(start, stop + 1, step))
 
 
@@ -3025,8 +3024,9 @@ def axis_ticks(
             # renderers resolve the two in opposite orders.
             size = max(_axis_tick_font_size(axis), float(slot_font_px or 0.0))
             pitch = size * _CATEGORY_LABEL_PITCH
-            # Floor of one: a row too short for three labels shows one.
-            target = max(1, int(length_px / pitch))
+            # Floor of one: a row too short for three labels shows one. At
+            # most 200, so a tall axis strides its labels across every row.
+            target = max(1, min(200, int(length_px / pitch)))
         t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
         return t, t, 1.0
     if axis.get("theta_unit") is not None:

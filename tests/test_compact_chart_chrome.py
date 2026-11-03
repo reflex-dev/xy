@@ -240,10 +240,23 @@ MANY = [f"c{i:03d}" for i in range(300)]
 
 
 def test_category_ticks_stride_to_200_across_the_whole_range() -> None:
-    # A capacity above 200 strides the labels instead of truncating them.
-    ticks = _svg._category_ticks(-0.5, 299.5, len(MANY), 340)
+    # A vertical capacity above 200 strides the labels instead of truncating them.
+    axis = {"kind": "category", "categories": MANY, "range": [-0.5, 299.5]}
+    ticks = _svg.axis_ticks(axis, 6000.0, False)[1]
     assert len(ticks) <= 200
     assert ticks[0] == 0 and ticks[-1] >= 290, ticks[-3:]
+
+
+def test_polar_category_theta_keeps_every_spoke_past_200() -> None:
+    # The 200 cap is the vertical label target's, not the shared helper's:
+    # each category theta is one spoke of the grid, so none may be dropped.
+    axis = {
+        "kind": "category",
+        "categories": MANY,
+        "range": [-0.5, 299.5],
+        "theta_unit": "radians",
+    }
+    assert len(_svg.axis_ticks(axis, 400.0, True)[1]) == len(MANY)
 
 
 def test_browser_tall_category_axis_strides_like_static() -> None:

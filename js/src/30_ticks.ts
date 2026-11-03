@@ -58,8 +58,7 @@ export function categoryTicks(lo, hi, categories, target = 6) {
   const stop = Math.min(categories.length - 1, Math.floor(Math.max(lo, hi)));
   if (stop < start) return { ticks: [], step: 1 };
   const visible = stop - start + 1;
-  // At most 200 labels, strided across the whole visible range (not cut off).
-  const step = Math.max(1, Math.ceil(visible / Math.max(1, Math.min(200, target))));
+  const step = Math.max(1, Math.ceil(visible / Math.max(1, target)));
   const out = [];
   for (let v = start; v <= stop && out.length < 200; v += step) out.push(v);
   return { ticks: out, step };
