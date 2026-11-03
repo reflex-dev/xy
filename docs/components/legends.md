@@ -84,7 +84,8 @@ def positioned_legend_demo():
 ## Automatically Avoid Plotted Data
 
 Use `loc="best"` for an unanchored Cartesian legend that should choose the
-least-overlapping standard in-plot position. The browser scores the marks and
+least-overlapping standard in-plot position, or move above the plot when every
+inside position would cover data (see *Legend Above the Plot*). The browser scores the marks and
 important annotations it actually rendered, then rechecks the choice after a
 responsive resize or a settled pan/zoom. A concrete location such as
 `"upper left"`, an explicit `anchor=`, and polar legend placement remain fixed.
@@ -122,13 +123,19 @@ def automatic_legend_demo():
 
 ## Legend Above the Plot
 
-`loc="best"` can only pick among positions inside the plot, so it still covers
-data when no corner is empty: stacked bars or areas, many series, or bars that
-reach the axis maximum. `loc="outside top"` moves the legend into a band of its
-own between the title and the plot. The plot shrinks to make room, so the
-legend never covers a mark. Entries use as many columns as fit the chart's
-width and wrap into more rows as it narrows; `ncols` is ignored. Matplotlib's
-`"outside upper center"` is accepted as the same placement.
+`loc="outside top"` moves the legend into a band of its own between the title
+and the plot. The plot shrinks to make room, so the legend never covers a mark.
+Entries use as many columns as fit the chart's width and wrap into more rows as
+it narrows; `ncols` is ignored. Matplotlib's `"outside upper center"` is
+accepted as the same placement.
+
+`loc="best"` uses this band on its own when no position inside the plot is
+free: stacked bars or areas, many series, or bars that reach the axis maximum.
+It stays inside whenever a corner is empty. The inside-or-outside choice is
+made when the chart is built; later pans, zooms and resizes only move an inside
+legend between inside positions, so the plot never jumps. Use
+`loc="outside top"` to always get the band, or a concrete location such as
+`"upper right"` to always stay inside.
 
 ~~~python demo exec
 import reflex_xy

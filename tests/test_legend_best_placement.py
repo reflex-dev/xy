@@ -320,6 +320,12 @@ def test_best_compares_area_coverage_not_only_intersection() -> None:
         xy.y_axis(domain=(0.0, 1.0)),
         xy.legend(loc="best"),
     ).figure()
+    # Even the sliver covers data, so the composition API's `best` leaves the
+    # plot for the outside-top band (tests/test_legend_outside_top.py).
+    assert _loc(figure) == "outside top"
+    # The in-plot ranking this test pins still drives every caller that stays
+    # inside (pyplot's `best`, which never sets `auto_outside`).
+    figure.legend_options.pop("auto_outside")
     assert _loc(figure) == "upper left"
 
 

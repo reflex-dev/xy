@@ -22,9 +22,12 @@ top"`*).
 - Legend size follows label length while the plot does not shrink (case 3:
   219 px wide on a 520 px chart; case 6: a 320x200 card).
 - Separate bug: the 320x200 card's wrapped title is clipped at the top.
-- `loc="outside top"` clears every case, including case 7, where `"best"`
-  still resolves to `upper right` because no corner is empty. Entries wrap into
-  rows (two rows of four for case 2) instead of covering the plot.
+- `loc="outside top"` clears every case. Entries wrap into rows (two rows of
+  four for case 2) instead of covering the plot.
+- `loc="best"` now falls back to that band when no in-plot position is empty:
+  cases 2, 4, 6 and 7 resolve to `outside top`, while cases 1, 3 and 5 keep an
+  empty in-plot corner (`upper left`). Before the fallback, case 7's `best`
+  resolved to `upper right`, on top of the bars.
 - Side effect to know about: a shorter plot can thin category tick labels.
   Case 7 drops to every other store because vertical axes target one label per
   45 px of plot height (`plot.h / 45`), which category axes inherit. That rule

@@ -7328,6 +7328,9 @@ def _resolve_auto_legend_locations(
             concrete,
             rendered_columns=rendered_columns,
         )
+        if concrete["loc"] == _validate.LEGEND_OUTSIDE_TOP:
+            # Same contract as the payload: a band legend is exact.
+            concrete.pop("auto_loc", None)
         return concrete
 
     legend = spec.get("legend")

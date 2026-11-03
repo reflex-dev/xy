@@ -437,14 +437,24 @@ unanchored Cartesian plot.
 ### 5.1a Outside-top legend band
 
 `legend.loc` may also be the canonical string `"outside top"` (every accepted
-spelling is normalized to it before the wire). It carries no extra field and
-never carries `auto_loc`: the receiver reserves a band between the title and
-the plot, chooses the column count from the shared glyph-advance table, and
-lays the legend out there (`spec/api/styling.md`, *`loc="outside top"`*). It
-adds a new value, not a new field or shape, so the protocol version is
-unchanged. A receiver that predates it token-matches `top` and draws an
-in-plot `upper center` legend: the legend still renders, it just overlaps
-again.
+spelling is normalized to it before the wire). It never carries `auto_loc`:
+the receiver reserves a band between the title and the plot, chooses the
+column count from the shared glyph-advance table, and lays the legend out there
+(`spec/api/styling.md`, *`loc="outside top"`*). A receiver that predates it
+token-matches `top` and draws an in-plot `upper center` legend: the legend
+still renders, it just overlaps again.
+
+A composition-API `loc="best"` legend also carries `"auto_outside": "top"`.
+It is the payload builder's input, not a receiver instruction: it permits
+`_legendfit.resolve_for_figure` to resolve `best` to `"outside top"` when every
+in-plot candidate scores above zero (no empty position). In that case the
+payload ships `loc: "outside top"` **without** `auto_loc`, preserving the rule
+above that `auto_loc` accompanies only an in-plot concrete `loc`; otherwise it
+ships the in-plot decision with `auto_loc: "best"` as before. Static export at
+a different size re-resolves under the same rule. The pyplot shim never sets
+`auto_outside`, so its `best` keeps Matplotlib's in-plot-only semantics.
+Receivers ignore the field. Both are new values and an optional field, not a
+new shape, so the protocol version is unchanged.
 
 ### 5.2 Full-payload data transition
 

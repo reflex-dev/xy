@@ -3023,8 +3023,12 @@ export class ChartView {
     // ships the separate intent bit only when the author requested automatic
     // placement. Anchors are authored geometry and polar legends own a gutter,
     // so neither is ever reconsidered here.
+    // A band legend is never handed to the in-plot best pass: Python only
+    // resolves `best` to the band when no in-plot position was empty, and
+    // moving it back inside would shrink and regrow the plot mid-interaction.
     if (
       String(options.auto_loc || "").trim().toLowerCase() === "best" &&
+      loc !== OUTSIDE_TOP_LEGEND &&
       !Array.isArray(options.anchor) &&
       this.spec?.coords !== "polar"
     ) {

@@ -12,6 +12,7 @@ failure.
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -291,3 +292,118 @@ def test_browser_band_never_overlaps_the_plot_and_rewraps_on_resize() -> None:
         assert state["withinRoot"], payload
         assert not state["scrolls"], payload
         assert state["wrappedLabels"] == 0, payload
+
+
+# --- `best` falls back to the band when every in-plot position covers data ----------
+
+
+def _legend(chart):
+    spec, _blob = chart.figure().build_payload()
+    return spec, spec["legend"]
+
+
+def test_best_moves_outside_when_no_corner_is_empty() -> None:
+    spec, legend = _legend(_work_orders(loc="best"))
+    assert legend["loc"] == "outside top"
+    # A band legend is exact: `auto_loc` only ever ships with an in-plot `loc`,
+    # so the live best pass never drags it back over the bars.
+    assert "auto_loc" not in legend
+    _w, _h, _compact, plot = _svg.layout(spec)
+    assert plot["legend_band_ncols"] == 4
+    assert plot["legend_band_y"] + plot["legend_band_h"] < plot["y"]
+
+
+def test_best_stays_inside_when_a_corner_is_empty() -> None:
+    _spec, legend = _legend(_lines(["Revenue", "Gross profit"], loc="best"))
+    assert legend["loc"] == "upper left"
+    assert legend["auto_loc"] == "best"
+    assert legend["auto_outside"] == "top"
+
+
+def test_best_outside_fallback_reaches_svg_and_png(tmp_path: Path) -> None:
+    chart = _work_orders(loc="best")
+    spec, _legend_spec = _legend(chart)
+    _w, _h, _compact, plot = _svg.layout(spec)
+    svg = chart.to_svg()
+    assert ">Waiting Parts</text>" in svg
+    # Every legend label is drawn in the band, above the band-shrunk plot.
+    for name in ("Waiting Parts", "In Progress", "Waiting Approval", "Complete"):
+        match = re.search(rf'<text x="[0-9.]+" y="([0-9.]+)"[^>]*>{name}</text>', svg)
+        assert match, name
+        assert float(match.group(1)) < plot["y"], (name, match.group(1), plot["y"])
+    png = tmp_path / "best.png"
+    chart.to_png(str(png))
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.parametrize(
+    "chart",
+    [
+        pytest.param(lambda: _work_orders(loc="upper right"), id="concrete-loc"),
+        pytest.param(
+            lambda: xy.chart(
+                xy.bar(["a", "b"], [[1.0, 1.0], [1.0, 1.0]], series=["s", "t"], mode="stacked"),
+                xy.legend(loc="best", anchor=(0.5, 0.5)),
+            ),
+            id="anchored",
+        ),
+        pytest.param(
+            lambda: xy.polar_chart(
+                xy.line([0, 90, 180, 270, 360], [1, 1, 1, 1, 1], name="a"),
+                xy.line([0, 90, 180, 270, 360], [0.5, 0.5, 0.5, 0.5, 0.5], name="b"),
+                xy.legend(loc="best"),
+            ),
+            id="polar",
+        ),
+    ],
+)
+def test_best_never_moves_authored_or_polar_legends_outside(chart) -> None:
+    _spec, legend = _legend(chart())
+    assert legend["loc"] != "outside top"
+
+
+def test_pyplot_best_keeps_matplotlib_in_plot_semantics() -> None:
+    from xy import pyplot as plt
+
+    figure = plt.figure()
+    axes = figure.add_subplot(1, 1, 1)
+    stores = np.arange(6)
+    left = np.zeros(6)
+    for name in ["Waiting Parts", "In Progress", "Waiting Approval", "Complete"]:
+        axes.barh(stores, np.full(6, 5.0), left=left, label=name)
+        left = left + 5.0
+    axes.legend(loc="best")
+    spec, _blob = axes._build_chart(640, 480).figure().build_payload()
+    plt.close(figure)
+    assert spec["legend"]["loc"] != "outside top"
+    assert "auto_outside" not in spec["legend"]
+
+
+def test_browser_best_fallback_uses_the_band() -> None:
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the best-to-outside probe")
+    chart = _work_orders(loc="best")
+    document = chart.to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None, "to_html render call shape changed; update the probe swap"
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    document = document.replace("</body>", _PROBE + "\n</body>", 1)
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            chromium,
+            document,
+            Path(td) / "best_outside.html",
+            "data-xy-outside-top",
+            label="best-to-outside legend probe",
+        )
+    for state in (payload["initial"], payload["narrow"]):
+        assert state["legendBottomToCanvasTop"] >= 0, payload
+        assert state["wrappedLabels"] == 0, payload
+    assert payload["initial"]["columns"] == 4, payload

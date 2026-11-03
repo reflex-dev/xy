@@ -425,6 +425,12 @@ class PayloadMixin(_Host):
                 from ._legendfit import resolve_for_figure
 
                 legend["loc"] = resolve_for_figure(self, spec, legend, rendered_columns=pw)
+                if legend["loc"] == "outside top":
+                    # No in-plot position was empty, so the legend took the
+                    # band above the plot. That is exact, not a first guess:
+                    # `auto_loc` is only ever shipped with an in-plot `loc`, and
+                    # the live renderer never moves a band legend back inside.
+                    auto_loc = False
                 if auto_loc:
                     # Static writers and the first browser frame receive one
                     # concrete decision. The live renderer retains the intent

@@ -676,6 +676,8 @@ the placement TanStack Charts, Chart.js, Recharts and Vega-Lite default to.
   its gutter beside the disc; a hidden legend or one with no rows reserves
   nothing. `auto_loc` is never emitted for it, so the live best-location pass
   never moves it.
+- **Reached from `best`.** The band is also where the composition API's
+  `loc="best"` lands when every in-plot position covers marks (next section).
 - **Static clipping.** `legend_clip_rect` unions the band with the plot rect,
   as it does the polar gutter, so the SVG and raster clips keep the legend.
 
@@ -687,6 +689,22 @@ also records `auto_loc: "best"`, allowing the live browser to refine that choice
 from the pixels it actually rendered on its first settled draw, after a
 responsive resize, or after a settled view change. A concrete named `loc` is
 exact and never moves automatically.
+
+**`best` leaves the plot when nothing inside is empty.** In the composition API,
+when every one of the nine in-plot candidates scores above zero — no corner,
+edge or center position is free of marks — `best` resolves to `"outside top"`
+(below) instead of the least-bad corner, because that corner still hides data.
+This is the case of the reported builder chart: stacked bars that reach the axis
+maximum cover every candidate, and `best` used to settle on `upper right`, over
+the bars. The payload then ships `loc: "outside top"` without `auto_loc`, so the
+decision is exact: the live pass refines only among in-plot positions and never
+moves a band legend back inside, nor moves an in-plot legend out — switching
+would shrink or regrow the plot after a pan, zoom or resize. The inside/outside
+choice is therefore made when the payload is built (and again by a static export
+at a different size). The opt-in is the `auto_outside: "top"` legend option the
+composition API sets for an unanchored `best`; the `pyplot` shim never sets it,
+so `plt.legend(loc="best")` keeps Matplotlib's in-plot-only behavior. Anchored
+and polar legends never move outside.
 
 `xy.legend(anchor=...)` replaces that bounded, name-only placement with explicit
 geometry, mirroring Matplotlib's `bbox_to_anchor`; the `pyplot` shim maps
@@ -1453,7 +1471,9 @@ compatible `loc=None` default remains fixed at upper right. Python first records
 a concrete static decision and first-paint fallback, then adds the separate
 `auto_loc="best"` intent for the live renderer. Concrete named locations,
 anchored legends, and polar legends omit that intent and are never moved by the
-browser.
+browser. When no in-plot candidate is empty, the composition API's `best`
+resolves to the `"outside top"` band and omits `auto_loc` (see *`best` leaves
+the plot when nothing inside is empty* above); pyplot's `best` never does.
 
 The initial Python pass (`xy._legendfit`) scores the **measured** box returned by
 the same `_legend_layout` used for static export, including its title, columns,

@@ -38,11 +38,11 @@
   {
     "file": "2_many_series__best.html",
     "legend": {
-      "loc": "upper left",
-      "auto": "best",
-      "columns": null,
-      "w": 101,
-      "h": 159,
+      "loc": "outside top",
+      "auto": null,
+      "columns": 4,
+      "w": 374,
+      "h": 42,
       "scroll": false
     },
     "errors": []
@@ -110,11 +110,11 @@
   {
     "file": "4_stacked_area__best.html",
     "legend": {
-      "loc": "upper center",
-      "auto": "best",
-      "columns": null,
-      "w": 90,
-      "h": 61,
+      "loc": "outside top",
+      "auto": null,
+      "columns": 3,
+      "w": 262,
+      "h": 22,
       "scroll": false
     },
     "errors": []
@@ -182,11 +182,11 @@
   {
     "file": "6_small_card__best.html",
     "legend": {
-      "loc": "upper left",
-      "auto": "best",
-      "columns": null,
-      "w": 136,
-      "h": 61,
+      "loc": "outside top",
+      "auto": null,
+      "columns": 2,
+      "w": 246,
+      "h": 42,
       "scroll": false
     },
     "errors": []
@@ -218,11 +218,11 @@
   {
     "file": "7_work_orders__best.html",
     "legend": {
-      "loc": "upper right",
-      "auto": "best",
-      "columns": null,
-      "w": 135,
-      "h": 81,
+      "loc": "outside top",
+      "auto": null,
+      "columns": 4,
+      "w": 471,
+      "h": 22,
       "scroll": false
     },
     "errors": []

@@ -14,6 +14,11 @@ contribute covered fill area, bars contribute their rectangles, and annotations
 contribute their visible anchors/boxes. Candidate order is stable and is the
 deterministic tie break.
 
+When the composition API opted in (`auto_outside="top"`) and every candidate
+scores above zero, no in-plot position is free and the least-bad one would
+still hide marks, so the pass resolves to the `"outside top"` band instead
+(`_may_go_outside`). The pyplot shim never opts in.
+
 `xy.pyplot._axes.Axes._best_legend_loc` carries a second copy of this scoring
 that runs against the shim's own entry arrays. The two are pinned to agree by
 `tests/test_legend_best_placement.py`; folding the shim onto this module is a
@@ -1415,7 +1420,34 @@ def resolve_for_figure(
     if not used:
         return _FALLBACK
     floor = min(scores.values())
+    if floor > _OUTSIDE_FLOOR and _may_go_outside(spec, options):
+        # Every in-plot position covers marks: no corner is empty (stacked
+        # areas or bars at the axis maximum, many series). The least-bad corner
+        # still hides data, so take the band above the plot instead.
+        return _OUTSIDE_TOP
     return next(name for name, score in scores.items() if score <= floor + 1e-12)
+
+
+#: The outside-top band, as `xy._validate.legend_loc` canonicalizes it.
+_OUTSIDE_TOP = "outside top"
+#: A best in-plot score above this means no candidate is empty. Scores are
+#: non-negative sums of covered fractions and crossings, so an empty box is an
+#: exact 0; the epsilon only absorbs float noise.
+_OUTSIDE_FLOOR = 1e-9
+
+
+def _may_go_outside(spec: Optional[dict[str, Any]], options: dict[str, Any]) -> bool:
+    """Whether a `best` legend may resolve to the outside-top band.
+
+    Only the composition API opts in (`auto_outside="top"`); the pyplot shim's
+    `best` keeps Matplotlib's in-plot-only semantics. Anchored and polar
+    legends own their placement and never move outside.
+    """
+    return (
+        options.get("auto_outside") == "top"
+        and options.get("anchor") is None
+        and (spec or {}).get("coords", "cartesian") == "cartesian"
+    )
 
 
 def _column_values(column: Any) -> Optional[np.ndarray]:
