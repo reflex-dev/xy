@@ -1404,6 +1404,10 @@ _LEGEND_SLOT_ALIASES: dict[str, str] = {
     "box-shadow": "boxShadow",
     "border-radius": "borderRadius",
     "row-gap": "rowGap",
+    # The browser applies every spelling; `_legend_font_size` reads `fontSize`,
+    # so the others sized and drew static legends at the 11 px default.
+    "font-size": "fontSize",
+    "font_size": "fontSize",
 }
 
 
@@ -6706,7 +6710,10 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     if band:
         # The band was sized from this very layout under the same cap, so the
         # rows that fit the cap all show; at least one row always does.
-        one_row = (2 if title else 1) * text_h + (row_gap if title else 0.0) + pad
+        # Rows are counted below with `line_h` (raised by a tall
+        # `handleheight` swatch), so the floor uses the same pitch.
+        title_room = text_h + row_gap if title else 0.0
+        one_row = pad + title_room + line_h - row_gap
         available_h = max(float(plot.get("legend_band_cap", math.inf)), one_row + 1e-6)
     visible_rows = nrows
     content_rows = nrows + (1 if title else 0)

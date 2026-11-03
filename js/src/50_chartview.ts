@@ -165,6 +165,8 @@ const XY_LEGEND_STYLE_ALIASES = {
   "box-shadow": "boxShadow",
   "border-radius": "borderRadius",
   "row-gap": "rowGap",
+  "font-size": "fontSize",
+  "font_size": "fontSize",
 };
 
 // The legend style the band's column count is computed from: the
@@ -6755,6 +6757,12 @@ export class ChartView {
 
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
+    // Heal before the shared host reads the canvas size below: on a chart
+    // built detached, the first connected heal re-lays out an outside-top
+    // legend band, which resizes the canvas. Healing inside `_renderGlFrame`
+    // drew at the new size but presented at the old one, shifting the marks
+    // against the axes. The later call inside the frame is then a no-op.
+    this._healStaleTheme();
     let rendered;
     if (this._glHost) {
       rendered = this._glHost.render(

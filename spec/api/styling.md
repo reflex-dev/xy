@@ -649,7 +649,10 @@ Vega-Lite (right) also keep their default legends outside it.
   `upper center`. Other `outside …` sides are refused.
 - **Columns and rows.** Entries fill row-major, as in the in-plot grid. The band
   uses the most columns whose natural widths fit the band width without
-  ellipsizing a label, and wraps the rest into rows; `ncols` is ignored. The
+  ellipsizing a label, and wraps the rest into rows; `ncols` is ignored. When
+  even one column of the widest label exceeds the band, the band falls back to
+  a single column, and that label ellipsizes (static) or wraps (browser) like
+  an oversized in-plot legend. The
   padding it charges is the merged legend style — the `styles={"legend": ...}`
   slot, then `xy.legend(style=...)` (`legend_options_with_slot` /
   `xyLegendBandStyle`) — and the static layout keeps that count rather than

@@ -80,10 +80,10 @@ renders in a scratch folder:
 
 ```bash
 uv run python examples/legend_overlap/compare/dump_data.py examples/legend_overlap/compare/data.json
-uv run --with matplotlib python examples/legend_overlap/compare/matplotlib_render.py examples/legend_overlap/compare
+uv run --with matplotlib==3.11.1 python examples/legend_overlap/compare/matplotlib_render.py examples/legend_overlap/compare
 
 scratch=$(mktemp -d)
 cp examples/legend_overlap/compare/tanstack_render.mjs examples/legend_overlap/compare/data.json "$scratch"/
-(cd "$scratch" && npm init -y >/dev/null && npm install @tanstack/charts && node tanstack_render.mjs)
+(cd "$scratch" && npm init -y >/dev/null && npm install @tanstack/charts@1.2.1 && node tanstack_render.mjs)
 cp "$scratch"/svg/*.svg examples/legend_overlap/compare/tanstack/
 ```

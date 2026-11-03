@@ -550,6 +550,15 @@ _DETACHED_PROBE = """
     const host = document.createElement("div");
     const view = xy.renderStandalone(host, spec, window.__fcBuf);
     const estimated = view._legendBand ? view._legendBand.h : null;
+    // Record the canvas size the shared GL host is asked to present.
+    const presented = [];
+    if (view._glHost) {
+      const render = view._glHost.render.bind(view._glHost);
+      view._glHost.render = (owner, present, w, h, frame) => {
+        presented.push([w, h]);
+        return render(owner, present, w, h, frame);
+      };
+    }
     document.body.appendChild(host);
     view._drawNow();
     view._raf = null;
@@ -562,6 +571,8 @@ _DETACHED_PROBE = """
       reserved: view._legendBand ? view._legendBand.h : null,
       measured: legend.offsetHeight,
       natural: legend.scrollHeight,
+      presented,
+      canvas: [view.canvas.width, view.canvas.height],
       legendBottomToCanvasTop: canvas.top - box.bottom,
     }));
   } catch (err) {
@@ -596,3 +607,54 @@ def test_detached_chart_remeasures_the_band_when_it_connects() -> None:
     assert payload["natural"] <= payload["measured"] + 1, payload
     assert payload["reserved"] == pytest.approx(payload["measured"], abs=1), payload
     assert payload["legendBottomToCanvasTop"] >= 0, payload
+    # The first connected frame lays out again; the shared host must present
+    # at the size the frame drew, not the detached size.
+    if payload["presented"]:
+        assert payload["presented"][-1] == payload["canvas"], payload
+
+
+@pytest.mark.parametrize("key", ["font_size", "font-size", "fontSize"])
+def test_static_legend_honors_every_font_size_spelling(key: str) -> None:
+    # The browser applies all three; the exporters read only `fontSize`, so a
+    # snake_case or kebab-case slot font sized the band (and drew the labels)
+    # at the 11 px default while the browser used 20 px.
+    months = np.arange(12)
+    chart = xy.line_chart(
+        *[xy.line(months, months + i, name=n) for i, n in enumerate(REGIONS)],
+        xy.legend(loc="outside top"),
+        styles={"legend": {key: "20px"}},
+        width=520,
+        height=320,
+    )
+    spec, plot = _layout(chart)
+    assert _band_box(spec, plot)["font_size"] == 20.0
+    reference_spec, reference = _layout(
+        xy.line_chart(
+            *[xy.line(months, months + i, name=n) for i, n in enumerate(REGIONS)],
+            xy.legend(loc="outside top"),
+            styles={"legend": {"fontSize": "20px"}},
+            width=520,
+            height=320,
+        )
+    )
+    assert plot["legend_band_ncols"] == reference["legend_band_ncols"]
+
+
+def test_band_cap_keeps_one_row_with_a_tall_swatch() -> None:
+    # Rows are counted with `line_h`, which a tall `handleheight` swatch raises
+    # above `text_h + row_gap`; the one-row floor must use the same pitch.
+    named = [{"name": f"Series {i}"} for i in range(6)]
+    plot = {
+        "x": 0.0,
+        "y": 0.0,
+        "w": 120.0,
+        "h": 300.0,
+        "legend_band_x": 0.0,
+        "legend_band_y": 0.0,
+        "legend_band_w": 120.0,
+        "legend_band_h": 0.0,
+        "legend_band_ncols": 1,
+        "legend_band_cap": 1.0,
+    }
+    box = _svg._legend_layout(named, plot, {"loc": "outside top", "handleheight": 3.0})
+    assert box["visible_count"] == 1
