@@ -1,0 +1,134 @@
+[
+  {
+    "file": "1_rising_lines__best.html",
+    "legend": {
+      "loc": "upper left",
+      "auto": "best",
+      "w": 108,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "1_rising_lines__default.html",
+    "legend": {
+      "loc": "upper right",
+      "auto": null,
+      "w": 108,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "2_many_series__best.html",
+    "legend": {
+      "loc": "upper left",
+      "auto": "best",
+      "w": 101,
+      "h": 159,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "2_many_series__default.html",
+    "legend": {
+      "loc": "upper right",
+      "auto": null,
+      "w": 101,
+      "h": 159,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "3_long_names__best.html",
+    "legend": {
+      "loc": "upper left",
+      "auto": "best",
+      "w": 219,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "3_long_names__default.html",
+    "legend": {
+      "loc": "upper right",
+      "auto": null,
+      "w": 219,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "4_stacked_area__best.html",
+    "legend": {
+      "loc": "upper center",
+      "auto": "best",
+      "w": 90,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "4_stacked_area__default.html",
+    "legend": {
+      "loc": "upper right",
+      "auto": null,
+      "w": 90,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "5_grouped_columns__best.html",
+    "legend": {
+      "loc": "upper left",
+      "auto": "best",
+      "w": 74,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "5_grouped_columns__default.html",
+    "legend": {
+      "loc": "upper right",
+      "auto": null,
+      "w": 74,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "6_small_card__best.html",
+    "legend": {
+      "loc": "upper left",
+      "auto": "best",
+      "w": 136,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  },
+  {
+    "file": "6_small_card__default.html",
+    "legend": {
+      "loc": "upper right",
+      "auto": null,
+      "w": 136,
+      "h": 61,
+      "scroll": false
+    },
+    "errors": []
+  }
+]
