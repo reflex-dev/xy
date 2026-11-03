@@ -163,7 +163,9 @@ Eight properties this pins down, each of which has matching coverage:
   box with only `left` set shrink-wraps to the room right of `left`, which for
   a centred or right title is the plot's midpoint or right edge, so a short
   title on a 320 px card wrapped into lines no band reserved and lost its first
-  line above the canvas.
+  line above the canvas. Because a measured left gutter can move the plot's
+  centre right of the canvas centre, the client then clamps the measured box
+  inside the canvas (it is never wider than the canvas, so this only shifts it).
 - **A partial sector owns its bounding box.** Full turns retain the centred
   circle above. For a partial turn, layout finds the bounds of the visible
   outer arc plus inner boundary and scales/translates that shape to the plot

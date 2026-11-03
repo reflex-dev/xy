@@ -2168,6 +2168,7 @@ def _axis_text_paint_visible(
 def _y_title_baseline(
     axis: dict[str, Any],
     plot: dict[str, float],
+    slot_font_px: Optional[float] = None,
 ) -> Optional[float]:
     """Baseline x of a quarter-turned y-axis title, or None when it has none.
 
@@ -2191,7 +2192,7 @@ def _y_title_baseline(
         shift = (ascent - descent) / 2 if abs(abs(angle) - 90.0) < 0.5 else 0.0
         return plot["x"] + plot["w"] + 40.0 - shift + float(axis.get("label_offset", 0.0))
     tick_offset, tick_room = (
-        _y_tick_label_room(axis, plot["h"])
+        _y_tick_label_room(axis, plot["h"], slot_font_px)
         if "left" in _axis_tick_label_sides(axis, is_x=False)
         else (0.0, 0.0)
     )
@@ -2202,7 +2203,9 @@ def _y_title_baseline(
     return plot["x"] - tick_offset - tick_room - gap - title_depth
 
 
-def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, float]:
+def _y_tick_label_room(
+    axis: dict[str, Any], plot_h: float, slot_font_px: Optional[float] = None
+) -> tuple[float, float]:
     """(offset from the spine, widest tick-label extent) for a y axis, in px.
 
     Measured from the advance widths of the strings that will actually be drawn,
@@ -2217,7 +2220,7 @@ def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, floa
     font_size = _axis_tick_font_size(axis)
     raw_angle = axis.get("tick_label_angle")
     angle = float(raw_angle or 0.0)
-    _values, labels, step = axis_ticks(axis, plot_h, False)
+    _values, labels, step = axis_ticks(axis, plot_h, False, slot_font_px=slot_font_px)
     room = 0.0
     for value in labels:
         block = _textblock.measure(_tick_text(axis, value, step), font_size)
@@ -2253,7 +2256,11 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
         left_title = axis.get("side", "left") != "right"
         if not left_labels and not left_title:
             continue
-        tick_offset, tick_room = _y_tick_label_room(axis, plot_h) if left_labels else (0.0, 0.0)
+        tick_offset, tick_room = (
+            _y_tick_label_room(axis, plot_h, _tick_label_slot_px(spec))
+            if left_labels
+            else (0.0, 0.0)
+        )
         title_visible = (
             left_title
             and _has_outside_y_title(axis)
@@ -2963,8 +2970,18 @@ def _tick_window_filter(axis: dict[str, Any], lo: float, hi: float) -> Callable[
 _CATEGORY_LABEL_PITCH = 1.6
 
 
+def _tick_label_slot_px(spec: dict[str, Any]) -> Optional[float]:
+    """The `styles={"tick_label": ...}` font size in px, when one is authored."""
+    slot = slot_styles(spec).get("tick_label") or {}
+    return slot_font_size(slot, 0.0) or None if "font-size" in slot else None
+
+
 def axis_ticks(
-    axis: dict[str, Any], length_px: float, is_x: bool
+    axis: dict[str, Any],
+    length_px: float,
+    is_x: bool,
+    *,
+    slot_font_px: Optional[float] = None,
 ) -> tuple[list[float], list[float], float]:
     """(ticks, labeled ticks, step) for an axis at a given pixel length — shared
     tick density so SVG and PNG label the same values."""
@@ -2993,10 +3010,20 @@ def axis_ticks(
         categories = axis.get("categories") or []
         if axis.get("theta_unit") is not None and requested is None:
             target = len(categories)
-        elif not is_x and not authored and axis.get("theta_unit") is None:
+        elif (
+            not is_x
+            and not authored
+            and axis.get("theta_unit") is None
+            # A polar radial axis (it always carries `hole`) keeps the
+            # numeric density: its labels ride a spoke, not a vertical edge.
+            and axis.get("hole") is None
+        ):
             # Unauthored vertical category axis: label every row that fits a
-            # line of text, not one per numeric-tick spacing.
-            pitch = _axis_tick_font_size(axis) * _CATEGORY_LABEL_PITCH
+            # line of text, not one per numeric-tick spacing. The larger of the
+            # axis's own and the `tick_label` slot's font size, because the
+            # renderers resolve the two in opposite orders.
+            size = max(_axis_tick_font_size(axis), float(slot_font_px or 0.0))
+            pitch = size * _CATEGORY_LABEL_PITCH
             target = max(3, int(length_px / pitch))
         t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
         return t, t, 1.0
@@ -3248,6 +3275,7 @@ def _axis_label_geometry(
     plot: dict[str, float],
     *,
     is_x: bool,
+    slot_font_px: Optional[float] = None,
 ) -> dict[str, Any]:
     """Resolve named axis-title placement shared by SVG and native output.
 
@@ -3296,7 +3324,7 @@ def _axis_label_geometry(
             # baseline. `_y_title_baseline` applies that half-line-box
             # correction and the axis's own `label_offset`, and is the same
             # function `layout()` reserves the gutter from.
-            baseline = _y_title_baseline(axis, plot)
+            baseline = _y_title_baseline(axis, plot, slot_font_px)
             x = (
                 baseline
                 if baseline is not None
@@ -3900,8 +3928,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 f'clip-rule="nonzero"/></clipPath>'
             )
 
+    tick_slot_px = _tick_label_slot_px(spec)
+
     def ticks_for(axis: dict[str, Any], length_px: float) -> tuple[list[float], list[float], float]:
-        return axis_ticks(axis, length_px, axis is xa)
+        return axis_ticks(axis, length_px, axis is xa, slot_font_px=tick_slot_px)
 
     # -- grid + tick labels + baselines ------------------------------------
     xt, xlab, xstep = ticks_for(xa, plot["w"])
@@ -4086,7 +4116,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         append_tick_labels(axis, tick_labels, step, axis_scale, is_x=True)
     extra_y_ticks: dict[str, tuple[list[float], list[float], float]] = {}
     for axis_id, axis, axis_scale in extra_y_axes:
-        ticks, tick_labels, step = axis_ticks(axis, plot["h"], False)
+        ticks, tick_labels, step = axis_ticks(axis, plot["h"], False, slot_font_px=tick_slot_px)
         extra_y_ticks[axis_id] = (ticks, tick_labels, step)
         append_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
 
@@ -4274,7 +4304,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             return
         axis_style = axis.get("style") or {}
         slot = slots.get("axis_title") or {}
-        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x, slot_font_px=tick_slot_px)
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
         transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""

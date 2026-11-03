@@ -1078,6 +1078,17 @@ export class ChartView {
       // lines the band never reserved and its first line left the canvas.
       title.style.width = "max-content";
       title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
+      // A wide measured left gutter moves the plot's centre right of the
+      // canvas centre, and the title (sized at the authored gutters' wrap
+      // width) can then cross the right edge. Keep the box on the canvas: it
+      // is never wider than the canvas, so this only shifts it.
+      const boxW = title.isConnected ? title.offsetWidth : 0;
+      if (boxW > 0) {
+        const shift = loc === "left" ? 0 : loc === "right" ? 1 : 0.5;
+        const leftEdge = Math.min(Math.max(x - shift * boxW, 0), Math.max(0, this.size.w - boxW));
+        title.style.left = `${leftEdge}px`;
+        title.style.transform = `translate(0, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
+      }
     }
   }
 
@@ -1147,7 +1158,9 @@ export class ChartView {
 
   _slotFontSize(slot, fallback) {
     const styles = this.spec.dom && this.spec.dom.styles;
-    const value = styles && styles[slot] && styles[slot]["font-size"];
+    const decls = styles && styles[slot];
+    // Slot styles keep the caller's spelling (`chrome_styles`), so read each.
+    const value = decls && (decls["font-size"] ?? decls.font_size ?? decls.fontSize);
     const parsed = parseFloat(String(value ?? ""));
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
@@ -1499,10 +1512,15 @@ export class ChartView {
   // category branch of `axis_ticks` in python/xy/_svg.py.
   _yTickTarget(axisId, h) {
     const axis = this._axis(axisId);
-    if (axis && axis.kind === "category" && !axis.theta_unit) {
+    // A polar radial axis keeps the numeric density: its labels ride a spoke.
+    if (axis && axis.kind === "category" && !axis.theta_unit && this.spec?.coords !== "polar") {
+      // The larger of the axis's own and the `tick_label` slot's font size:
+      // the renderers resolve the two in opposite orders, and the pitch must
+      // fit whichever one is painted.
       const size = Math.max(
         8,
         this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
+        this._slotFontSize("tick_label", 0),
       );
       return this._axisTickTarget(axisId, Math.max(3, Math.floor(h / (size * CATEGORY_LABEL_PITCH))));
     }

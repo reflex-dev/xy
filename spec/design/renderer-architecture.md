@@ -354,14 +354,18 @@ into view rather than overlapping.
 
 On a **vertical** Cartesian category axis without an authored `tick_count`, the
 `target` is the number of one-line labels that fit, `max(3, floor(h / (size ×
-1.6)))`, with `size` the axis tick-label font size (≥ 8 px, default 11) —
+1.6)))`. `size` is the larger of the axis's own tick-label font size (≥ 8 px,
+default 11) and the `styles={"tick_label": ...}` slot font size, because the
+renderers resolve those two in opposite orders and the pitch has to fit
+whichever is painted (`_tick_label_slot_px`, `_slotFontSize`) —
 `CATEGORY_LABEL_PITCH` / `_CATEGORY_LABEL_PITCH`, via `_yTickTarget` and the
 vertical category branch of `axis_ticks`. It used the numeric density (one tick
 per 45 px of plot height), which assumed a few labelled values suffice; every
 category is a label someone needs, and a six-row horizontal bar chart at a
 dashboard height lost every other row. Horizontal category axes keep the
 80 px-per-tick target and their collision handling; polar category theta keeps
-one spoke per category.
+one spoke per category; and a polar radial category axis (identified by its
+`hole` field, or `coords: "polar"` in the client) keeps the numeric density.
 
 **Time.** Time axes carry epoch milliseconds. `timeTicks` picks the first
 member of `TIME_STEPS` — a fixed ladder of 1/2/5/10/20/50/100/200/500 ms, then

@@ -62,6 +62,7 @@ from ._svg import (
     _solid_paint,
     _step_arrays,
     _tick_label_anchor,
+    _tick_label_slot_px,
     _title_entries,
     _title_metrics,
     affine_fast_path,
@@ -1004,13 +1005,15 @@ def render_raster(
         )
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
-    yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
+    tick_slot_px = _tick_label_slot_px(spec)
+    yt, ylab, ystep = axis_ticks(ya, plot["h"], False, slot_font_px=tick_slot_px)
     xmt, ymt = minor_axis_ticks(xa), minor_axis_ticks(ya)
     extra_x_ticks = {
         axis_id: axis_ticks(axis, plot["w"], True) for axis_id, axis, _axis_scale in extra_x_axes
     }
     extra_y_ticks = {
-        axis_id: axis_ticks(axis, plot["h"], False) for axis_id, axis, _axis_scale in extra_y_axes
+        axis_id: axis_ticks(axis, plot["h"], False, slot_font_px=tick_slot_px)
+        for axis_id, axis, _axis_scale in extra_y_axes
     }
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
     xmstyle, ymstyle = xa.get("minor_style") or {}, ya.get("minor_style") or {}
@@ -1523,7 +1526,7 @@ def render_raster(
         if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
             return
         axis_style = axis.get("style") or {}
-        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x, slot_font_px=tick_slot_px)
         anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
         axis_title_slot = slots.get("axis_title") or {}
         italic, bold = _native_font_emphasis(
