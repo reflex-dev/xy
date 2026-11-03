@@ -1522,7 +1522,8 @@ export class ChartView {
         this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
         this._slotFontSize("tick_label", 0),
       );
-      return this._axisTickTarget(axisId, Math.max(3, Math.floor(h / (size * CATEGORY_LABEL_PITCH))));
+      // Floor of one: a row too short for three labels shows one.
+      return this._axisTickTarget(axisId, Math.max(1, Math.floor(h / (size * CATEGORY_LABEL_PITCH))));
     }
     return this._axisTickTarget(axisId, Math.max(3, h / 45));
   }

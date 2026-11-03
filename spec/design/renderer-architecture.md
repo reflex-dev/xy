@@ -349,12 +349,16 @@ raster renderers.
 
 **Category.** Positions are integer category indices. `categoryTicks` clamps
 the visible index range to `[0, categories.length − 1]`, then strides it by
-`max(1, ceil(visible / target))`, so labels thin out as more categories come
-into view rather than overlapping.
+`max(1, ceil(visible / min(200, target)))`, so labels thin out as more
+categories come into view rather than overlapping, and never exceed 200 labels
+spread across the whole range (`_category_ticks` mirrors it). Before the 200
+cap moved into the stride, the client cut the label list off after 200 entries
+while the static exporters labelled every category.
 
 On a **vertical** Cartesian category axis without an authored `tick_count`, the
-`target` is the number of one-line labels that fit, `max(3, floor(h / (size ×
-1.6)))`. `size` is the larger of the axis's own tick-label font size (≥ 8 px,
+`target` is the number of one-line labels that fit, `max(1, floor(h / (size ×
+1.6)))`; a plot too short for three rows shows one label rather than three
+overlapping ones. `size` is the larger of the axis's own tick-label font size (≥ 8 px,
 default 11) and the `styles={"tick_label": ...}` slot font size, because the
 renderers resolve those two in opposite orders and the pitch has to fit
 whichever is painted (`_tick_label_slot_px`, `_slotFontSize`) —

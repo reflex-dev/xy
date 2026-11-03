@@ -91,7 +91,7 @@ def test_static_vertical_category_axis_still_thins_when_rows_are_too_short() -> 
 
 
 def test_authored_tick_count_still_wins() -> None:
-    assert len(_y_ticks(_stores_chart(height=300, tick_count=2))) <= 3
+    assert len(_y_ticks(_stores_chart(height=300, tick_count=2))) == 2
 
 
 _TICK_PROBE = """
@@ -227,3 +227,32 @@ def test_browser_title_stays_on_the_canvas_beside_a_wide_left_gutter() -> None:
     assert payload["plotLeft"] > 120, payload  # the wide gutter this test needs
     assert payload["left"] >= 0, payload
     assert payload["right"] >= 0, payload
+
+
+def test_vertical_category_axis_too_short_for_three_rows_labels_one() -> None:
+    # 20 px fits one 11 px label at the 1.6 pitch; the old floor of three
+    # forced three labels into it.
+    axis = {"kind": "category", "categories": STORES, "range": [-0.5, 5.5]}
+    assert len(_svg.axis_ticks(axis, 20.0, False)[1]) == 1
+
+
+MANY = [f"c{i:03d}" for i in range(300)]
+
+
+def test_category_ticks_stride_to_200_across_the_whole_range() -> None:
+    # A capacity above 200 strides the labels instead of truncating them.
+    ticks = _svg._category_ticks(-0.5, 299.5, len(MANY), 340)
+    assert len(ticks) <= 200
+    assert ticks[0] == 0 and ticks[-1] >= 290, ticks[-3:]
+
+
+def test_browser_tall_category_axis_strides_like_static() -> None:
+    chart = xy.chart(
+        xy.bar(MANY, np.ones(len(MANY)), orientation="horizontal"),
+        width=600,
+        height=6000,
+    )
+    static = [MANY[int(v)] for v in _y_ticks(chart)]
+    payload = _probe(chart, _TICK_PROBE, "data-xy-category-ticks", "category_ticks_tall")
+    assert len(static) <= 200, len(static)
+    assert sorted(payload["labels"]) == sorted(static), (payload["labels"][-3:], static[-3:])
