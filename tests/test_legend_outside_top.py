@@ -541,3 +541,58 @@ def test_browser_columns_include_slot_padding() -> None:
     assert plot["legend_band_ncols"] == 4
     payload = _static_probe(chart, "band_slot_padding")
     assert payload["columns"] == plot["legend_band_ncols"], payload
+
+
+_DETACHED_PROBE = """
+<script>
+(async () => {
+  try {
+    const host = document.createElement("div");
+    const view = xy.renderStandalone(host, spec, window.__fcBuf);
+    const estimated = view._legendBand ? view._legendBand.h : null;
+    document.body.appendChild(host);
+    view._drawNow();
+    view._raf = null;
+    const legend = host.querySelector('[data-xy-legend-band="top"]');
+    if (!legend) throw new Error("outside-top legend never rendered");
+    const box = legend.getBoundingClientRect();
+    const canvas = view.canvas.getBoundingClientRect();
+    document.body.setAttribute("data-xy-band-detached", JSON.stringify({
+      estimated,
+      reserved: view._legendBand ? view._legendBand.h : null,
+      measured: legend.offsetHeight,
+      natural: legend.scrollHeight,
+      legendBottomToCanvasTop: canvas.top - box.bottom,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-band-detached-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_detached_chart_remeasures_the_band_when_it_connects() -> None:
+    # Built before its node is in the document, the band can only use the
+    # formula estimate; the first connected frame must lay out again from the
+    # measured box, or the taller live legend overlaps the plot.
+    chromium = _chromium()
+    document = _lines(REGIONS, width=520, height=320).to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None, "to_html render call shape changed; update the probe swap"
+    # Keep a copy of the payload for the detached view, and skip the page's own chart.
+    document = document.replace(render_call, "window.__fcBuf = buf.slice(0);", 1)
+    document = document.replace("</body>", _DETACHED_PROBE + "\n</body>", 1)
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            chromium,
+            document,
+            Path(td) / "band_detached.html",
+            "data-xy-band-detached",
+            label="detached outside-top legend probe",
+        )
+    # The detached estimate also capped the box, so the stale reservation shows
+    # as a clipped, scrolling legend rather than an overlap.
+    assert payload["natural"] <= payload["measured"] + 1, payload
+    assert payload["reserved"] == pytest.approx(payload["measured"], abs=1), payload
+    assert payload["legendBottomToCanvasTop"] >= 0, payload

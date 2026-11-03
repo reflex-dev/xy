@@ -2655,6 +2655,21 @@ export class ChartView {
     this.size.h = h;
     // Before the layout/paint below, so this frame draws at the new scale.
     this._rescaleDprBakedBuffers();
+    this._applyLayout();
+    // Changing a canvas backing-store dimension clears it immediately. Resize
+    // work is already coalesced into one animation frame, so paint in that same
+    // frame instead of exposing cleared canvases until a second rAF callback.
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    this._drawNow();
+    this._scheduleViewRequest();
+  }
+
+  // Lay out the plot rect at the current size and move every positioned layer
+  // to it. Shared by `_resize` and by the first connected frame of a chart that
+  // was built detached (`_healStaleTheme`), whose outside-top legend could only
+  // be estimated until it had geometry.
+  _applyLayout() {
     this._layout();
     const p = this.plot;
     // Legends are bounded by the box they place in, which under polar is the
@@ -2688,13 +2703,6 @@ export class ChartView {
     this._fitModebar();
     this._layoutAxisBands();
     this._pickDirty = true;
-    // Changing a canvas backing-store dimension clears it immediately. Resize
-    // work is already coalesced into one animation frame, so paint in that same
-    // frame instead of exposing cleared canvases until a second rAF callback.
-    if (this._raf) cancelAnimationFrame(this._raf);
-    this._raf = null;
-    this._drawNow();
-    this._scheduleViewRequest();
   }
 
   _buildDom(el) {
@@ -9321,6 +9329,13 @@ export class ChartView {
   _healStaleTheme() {
     if (!this._themeStale || !this.root.isConnected) return false;
     this._applyTheme();
+    if (this._outsideLegend) {
+      // Built detached, the band was the formula estimate (and capped the box
+      // to it). Now that the legend has geometry, measure it and lay out again
+      // before this frame paints.
+      this._applyLayout();
+      this._scheduleViewRequest();
+    }
     return true;
   }
 

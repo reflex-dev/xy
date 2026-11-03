@@ -75,11 +75,15 @@ default `colorLegend()`, and its SVG comes from the DOM-free `renderChartSvg`.
   estimate; its docs say `colorLegendItems({ justify: "start" })` wraps labels
   using the host's text measurer when mounted in a browser.
 
-Reproduce (TanStack needs `npm install @tanstack/charts` in a scratch folder
-containing `tanstack_render.mjs` and `data.json`):
+Reproduce from the repo root. TanStack Charts is not a repo dependency, so it
+renders in a scratch folder:
 
 ```bash
 uv run python examples/legend_overlap/compare/dump_data.py examples/legend_overlap/compare/data.json
 uv run --with matplotlib python examples/legend_overlap/compare/matplotlib_render.py examples/legend_overlap/compare
-node tanstack_render.mjs   # writes svg/; copy into compare/tanstack/
+
+scratch=$(mktemp -d)
+cp examples/legend_overlap/compare/tanstack_render.mjs examples/legend_overlap/compare/data.json "$scratch"/
+(cd "$scratch" && npm init -y >/dev/null && npm install @tanstack/charts && node tanstack_render.mjs)
+cp "$scratch"/svg/*.svg examples/legend_overlap/compare/tanstack/
 ```

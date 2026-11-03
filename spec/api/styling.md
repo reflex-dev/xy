@@ -677,7 +677,9 @@ Vega-Lite (right) also keep their default legends outside it.
   live box, because the legend slot is author-stylable and a formula would
   under-reserve a restyled legend; the first layout runs before the box exists,
   so `_buildDom` lays out again once it can be measured, and a box that cannot
-  be measured (a detached chart) falls back to the formula. The two heights
+  be measured (a detached chart) falls back to the formula until the first
+  connected frame (`_healStaleTheme`) measures it and lays out again
+  (`_applyLayout`). The two heights
   therefore differ by the browser's own padding and line height (a few px), as
   in-plot legends already do; the row and column structure does not.
 - **Title.** The band counts toward the room the title is lifted over
