@@ -3141,6 +3141,11 @@ def legend(
         loc: Legend placement within or around the plot. ``"best"`` selects
             automatic least-overlap placement for an unanchored Cartesian
             chart; concrete names and ``None`` remain fixed.
+            ``"outside top"`` puts the legend in a band above the plot that
+            the plot shrinks to make room for, so it never covers data;
+            entries use as many columns as fit and wrap into rows (``ncols``
+            is ignored). Matplotlib's ``"outside upper center"`` is accepted
+            as the same placement.
         anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.

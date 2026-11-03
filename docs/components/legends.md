@@ -120,6 +120,40 @@ def automatic_legend_demo():
     return reflex_xy.chart(automatic_legend_chart, height="320px")
 ~~~
 
+## Legend Above the Plot
+
+`loc="best"` can only pick among positions inside the plot, so it still covers
+data when no corner is empty: stacked bars or areas, many series, or bars that
+reach the axis maximum. `loc="outside top"` moves the legend into a band of its
+own between the title and the plot. The plot shrinks to make room, so the
+legend never covers a mark. Entries use as many columns as fit the chart's
+width and wrap into more rows as it narrows; `ncols` is ignored. Matplotlib's
+`"outside upper center"` is accepted as the same placement.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+outside_legend_chart = xy.chart(
+    xy.bar(
+        ["Bismarck", "Fargo", "Grand Forks", "Jamestown", "Minot", "West Fargo"],
+        [[4, 4, 4, 8]] * 6,
+        series=["Waiting Parts", "In Progress", "Waiting Approval", "Complete"],
+        colors=["#f2c12e", "#7a8899", "#ddd8d6", "#2e8b57"],
+        mode="stacked",
+        orientation="horizontal",
+    ),
+    xy.x_axis(label="Work orders"),
+    xy.y_axis(label="Store"),
+    xy.legend(loc="outside top"),
+    title="Work orders by store",
+)
+
+
+def outside_legend_demo():
+    return reflex_xy.chart(outside_legend_chart, height="360px")
+~~~
+
 ## Multi-Column Layout and Unnamed Series
 
 With many series, `ncols=2` lays the entries out in two columns; the dashed
@@ -204,7 +238,9 @@ you want to configure placement, columns, title, visibility, or styling.
 
 Pass `loc=` to `xy.legend()`, e.g. `xy.legend(loc="upper right")`, or use
 `xy.legend(loc="best")` for content-aware automatic placement. The compatible
-`loc=None` default and every concrete location stay fixed. If more than one
+`loc=None` default and every concrete location stay fixed. Use
+`xy.legend(loc="outside top")` when the legend must never cover data: it sits
+in its own band above the plot. If more than one
 `legend()` component is present, the last one supplies the effective
 configuration.
 

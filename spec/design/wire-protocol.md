@@ -434,6 +434,18 @@ with `anchor`, and polar coordinates. Those are authored placements, not live
 scoring requests. Receivers must likewise ignore `auto_loc` outside an
 unanchored Cartesian plot.
 
+### 5.1a Outside-top legend band
+
+`legend.loc` may also be the canonical string `"outside top"` (every accepted
+spelling is normalized to it before the wire). It carries no extra field and
+never carries `auto_loc`: the receiver reserves a band between the title and
+the plot, chooses the column count from the shared glyph-advance table, and
+lays the legend out there (`spec/api/styling.md`, *`loc="outside top"`*). It
+adds a new value, not a new field or shape, so the protocol version is
+unchanged. A receiver that predates it token-matches `top` and draws an
+in-plot `upper center` legend: the legend still renders, it just overlaps
+again.
+
 ### 5.2 Full-payload data transition
 
 A host receiving a replacement `{spec, buffers}` for the same mounted figure

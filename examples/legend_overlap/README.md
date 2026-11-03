@@ -1,8 +1,12 @@
 # Legend overlap reproduction
 
-Six typical dashboard charts (the shapes the builder generates) where the
-legend covers the data. Each is rendered with the default legend (`loc=None`,
-fixed `upper right`) and with `loc="best"` (content-aware placement, #496).
+Seven typical dashboard charts (the shapes the builder generates) where the
+legend covers the data. Case 7 is the chart from the original report: stacked
+horizontal bars that reach the axis maximum. Each is rendered with the default
+legend (`loc=None`, fixed `upper right`), with `loc="best"` (content-aware
+placement, #496), and with `loc="outside top"`, the fix: a band above the plot
+that the plot shrinks to make room for (spec: `spec/api/styling.md`, *`loc="outside
+top"`*).
 
 ![contact sheet](contact_sheet.png)
 
@@ -18,6 +22,13 @@ fixed `upper right`) and with `loc="best"` (content-aware placement, #496).
 - Legend size follows label length while the plot does not shrink (case 3:
   219 px wide on a 520 px chart; case 6: a 320x200 card).
 - Separate bug: the 320x200 card's wrapped title is clipped at the top.
+- `loc="outside top"` clears every case, including case 7, where `"best"`
+  still resolves to `upper right` because no corner is empty. Entries wrap into
+  rows (two rows of four for case 2) instead of covering the plot.
+- Side effect to know about: a shorter plot can thin category tick labels.
+  Case 7 drops to every other store because vertical axes target one label per
+  45 px of plot height (`plot.h / 45`), which category axes inherit. That rule
+  predates this change and affects any short chart.
 
 ## Reproduce
 
@@ -28,8 +39,13 @@ uv run python examples/legend_overlap/make_cases.py   # writes html/ (git-ignore
 node examples/legend_overlap/shoot.js                 # writes png/ + report.json
 ```
 
-`report.json` records each legend's resolved location and size. Rebuild
-`contact_sheet.png` by screenshotting `sheet.html`.
+`report.json` records each legend's resolved location, size and (for the
+outside-top band) column count. Rebuild the contact sheet with:
+
+```bash
+python3 examples/legend_overlap/make_sheet.py         # writes sheet.html
+node examples/legend_overlap/shoot_sheet.js           # writes contact_sheet.png
+```
 
 ## Compared with matplotlib and TanStack Charts
 

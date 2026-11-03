@@ -148,6 +148,48 @@ function xyTextAdvance(text, fontSize) {
   return Number(fontSize) * units / XY_FONT_BASE_PX;
 }
 
+// Gap between an outside-top legend band and the top of the plot (or the
+// top-axis tick labels). Mirrored by `_OUTSIDE_LEGEND_GAP` in python/xy/_svg.py.
+const OUTSIDE_LEGEND_GAP = 8;
+// The canonical spelling `xy._validate.legend_loc` returns for every
+// outside-top form, so the client never token-matches it as an in-plot `upper`.
+const OUTSIDE_TOP_LEGEND = "outside top";
+
+function xyLegendEm(style, key, fallback) {
+  const raw = String((style && style[key]) ?? "").trim();
+  if (!raw.endsWith("em")) return fallback;
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
+// Most columns an outside-top legend can use without ellipsizing a label.
+// Entries fill row-major, as in the in-plot grid, so a column is as wide as its
+// widest label. Same metrics and glyph advances as `_legend_band_columns` in
+// python/xy/_svg.py, so the browser and every export wrap the same entries
+// into the same rows; only the measured row HEIGHT is the browser's own.
+function xyLegendBandColumns(names, options, bandW, fontSize = 11) {
+  const count = names.length;
+  if (count <= 1) return 1;
+  const style = (options && options.style) || {};
+  const pad = 2 * xyLegendEm(style, "padding", 0.4) * fontSize;
+  const handle = Math.max(0, Number(options?.handlelength ?? 2)) * fontSize;
+  const gap = Math.max(0, Number(options?.handletextpad ?? 0.8)) * fontSize;
+  const columnGap = 2 * fontSize;
+  const widths = names.map((name) => xyTextAdvance(String(name ?? ""), fontSize));
+  for (let ncols = count; ncols > 1; ncols--) {
+    let total = pad + (ncols - 1) * columnGap;
+    for (let column = 0; column < ncols; column++) {
+      let widest = 0;
+      for (let index = column; index < count; index += ncols) {
+        widest = Math.max(widest, widths[index]);
+      }
+      total += handle + gap + widest;
+    }
+    if (total <= bandW + 1e-9) return ncols;
+  }
+  return 1;
+}
+
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
@@ -830,9 +872,18 @@ export class ChartView {
       return Math.max(room, candidate);
     }, 0);
     this._titleRoom = titleRoom;
+    // An outside-top legend is a band between the title and the plot, sized at
+    // the title's wrap width for the same reason the title is (the final plot
+    // width depends on the plot height, which depends on this band). Mirrors
+    // `_outside_top_legend_band` in python/xy/_svg.py.
+    const band = this._outsideLegendBand(this._titleWrapWidth);
+    const bandRoom = band ? band.h + OUTSIDE_LEGEND_GAP : 0;
+    this._legendBand = band
+      ? { x: authoredLeft, y: marginTop + titleRoom, w: this._titleWrapWidth, h: band.h }
+      : null;
     const provisionalTopAxisRoom = hasTopAxis ? (compact ? 26 : 32) : 0;
     const provisionalBottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
-    const provisionalTop = marginTop + titleRoom + provisionalTopAxisRoom;
+    const provisionalTop = marginTop + titleRoom + bandRoom + provisionalTopAxisRoom;
     const provisionalBottom =
       Math.max(baseBottom, provisionalBottomAxisRoom) + colorbarBottomRoom;
     const plotHeight = Math.max(40, this.size.h - provisionalTop - provisionalBottom);
@@ -860,12 +911,15 @@ export class ChartView {
     const topAxisRoom = hasTopAxis
       ? Math.max(provisionalTopAxisRoom, measuredTopAxisRoom)
       : 0;
-    this._topAxisRoom = topAxisRoom;
+    // The band counts toward the room `_positionTitles` lifts the title over,
+    // as `_recutPolarPlot` does with its angular-label room, so the title sits
+    // above the legend rather than on it.
+    this._topAxisRoom = topAxisRoom + bandRoom;
     const bottomAxisRoom = hasBottomAxis
       ? Math.max(provisionalBottomAxisRoom, measuredBottomAxisRoom)
       : 0;
     this._bottomAxisRoom = bottomAxisRoom;
-    const top = marginTop + titleRoom + topAxisRoom;
+    const top = marginTop + titleRoom + bandRoom + topAxisRoom;
     const marginBottom =
       (measuredBottomAxisRoom ? Math.max(baseBottom, measuredBottomAxisRoom) : baseBottom)
       + colorbarBottomRoom;
@@ -881,6 +935,47 @@ export class ChartView {
     // that object and an alias would freeze the pre-recut geometry.
     this._legendRect = null;
     this._recutPolarPlot(compact);
+  }
+
+  // Height an outside-top legend claims above the plot at band width `bandW`,
+  // or null when there is none. The column count comes from the shared glyph
+  // metrics (so it matches every export); the HEIGHT is measured from the live
+  // box, because the legend slot is author-stylable (padding, gaps, font) and a
+  // formula would under-reserve a restyled legend and let it cover the plot.
+  // A box that cannot be measured yet (the first layout runs before the DOM
+  // exists; a detached chart has no geometry) falls back to the exporters'
+  // formula, and `_buildDom` re-lays out once the box exists.
+  _outsideLegendBand(bandW) {
+    const lg = this._outsideLegend;
+    if (!lg) return null;
+    const names = lg._xyLegendNames || [];
+    if (!names.length) return null;
+    const options = lg._xyLegendOptions || {};
+    const computedSize = lg.isConnected
+      ? Number.parseFloat(getComputedStyle(lg).fontSize)
+      : NaN;
+    const fontSize = Number.isFinite(computedSize) && computedSize > 0 ? computedSize : 11;
+    const ncols = xyLegendBandColumns(names, options, bandW, fontSize);
+    lg.style.gridTemplateColumns = `repeat(${ncols},minmax(0,max-content))`;
+    if (lg._xyLegendTitle) lg._xyLegendTitle.style.gridColumn = `1 / span ${ncols}`;
+    // The band, not the plot, bounds this box; every row stays visible.
+    lg.style.setProperty("--xy-legend-max-width", `${Math.max(40, bandW)}px`);
+    lg.style.setProperty("--xy-legend-max-height", "none");
+    // Measure from the root's left edge. An absolutely positioned box shrinks
+    // to fit the room right of its `left`, so measuring it where it last sat
+    // (centred, or at an in-plot corner) squeezed the grid and wrapped labels
+    // under their swatches. `_positionLegend` moves it into place afterwards.
+    lg.style.setProperty("--xy-legend-left", "0px");
+    lg.style.setProperty("--xy-legend-right", "auto");
+    lg.style.setProperty("--xy-legend-transform", "none");
+    lg.dataset.xyLegendColumns = String(ncols);
+    const measured = lg.isConnected ? lg.offsetHeight : 0;
+    if (measured > 0) return { h: measured, ncols };
+    const style = options.style || {};
+    const rows = Math.ceil(names.length / ncols) + (options.title ? 1 : 0);
+    const rowGap = xyLegendEm(style, "rowGap", 0.5) * fontSize;
+    const pad = 2 * xyLegendEm(style, "padding", 0.4) * fontSize;
+    return { h: rows * fontSize * 1.03 + Math.max(0, rows - 1) * rowGap + pad, ncols };
   }
 
   // Side and px a polar legend gutter claims, or null when nothing is reserved:
@@ -2660,6 +2755,25 @@ export class ChartView {
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
+    if (this._outsideLegend) {
+      // The first `_layout` ran before this box existed and reserved no band.
+      // Lay out again now that it can be measured, and move what was already
+      // placed from the band-less rect. Backing stores are sized later, from
+      // this final rect, by GL init.
+      this._layout();
+      const p = this.plot;
+      this.canvas.style.left = p.x + "px";
+      this.canvas.style.top = p.y + "px";
+      this.canvas.style.width = p.w + "px";
+      this.canvas.style.height = p.h + "px";
+      root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
+      root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+      this._positionTitles();
+      for (const lg of this._legends) {
+        const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
+        this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
+      }
+    }
     this._buildColorbar(root);
     this._buildReductionBadges(root);
   }
@@ -2783,6 +2897,7 @@ export class ChartView {
     this._legendBestMutationObserver?.disconnect();
     this._legendBestMutationObserver = null;
     this._legends = [];
+    this._outsideLegend = null;
     this._legendBestDirty = false;
     // Toggle state survives chrome/GPU rebuilds: it lives on the view keyed
     // by spec-trace index, and freshly built rows re-adopt it below.
@@ -2928,6 +3043,7 @@ export class ChartView {
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
       this._applySlot(title, "legend_title");
       lg.appendChild(title);
+      lg._xyLegendTitle = title;
     }
     const rows = [];
     for (const it of items) {
@@ -3088,6 +3204,20 @@ export class ChartView {
       lg.appendChild(row);
     }
     lg._xyItemRows = rows;
+    // Only the main, unanchored legend of a Cartesian chart claims the band
+    // above the plot (`_outsideLegendBand`); an anchor is authored geometry and
+    // a polar legend keeps its gutter. Mirrors `_outside_top_legend_band`.
+    if (
+      source === "main" &&
+      loc === OUTSIDE_TOP_LEGEND &&
+      !Array.isArray(options.anchor) &&
+      this.spec?.coords !== "polar"
+    ) {
+      lg.dataset.xyLegendBand = "top";
+      lg._xyLegendNames = items.map((it) => String(it.name ?? ""));
+      lg._xyLegendOptions = options;
+      this._outsideLegend = lg;
+    }
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
     if (this._legends.some((item) => item.dataset.xyLegendAutoLoc === "best")) {
@@ -4067,6 +4197,25 @@ export class ChartView {
 
   _positionLegend(lg, loc, anchor = null) {
     if (!lg) return;
+    if (lg === this._outsideLegend && this._legendBand) {
+      // Centered over the plot like the title, kept inside the band: the band
+      // spans the authored gutters, which a measured y-axis gutter may have
+      // pushed the plot's left edge past. Mirrors the band branch of
+      // `_legend_layout` in python/xy/_svg.py.
+      const band = this._legendBand;
+      const boxW = lg.isConnected ? lg.offsetWidth : 0;
+      const centre = this.plot.x + this.plot.w / 2;
+      const centred = boxW > 0;
+      const left = centred
+        ? Math.min(Math.max(centre - boxW / 2, band.x), band.x + Math.max(0, band.w - boxW))
+        : centre;
+      lg.style.setProperty("--xy-legend-left", `${left}px`);
+      lg.style.setProperty("--xy-legend-right", "auto");
+      lg.style.setProperty("--xy-legend-top", `${band.y}px`);
+      lg.style.setProperty("--xy-legend-bottom", "auto");
+      lg.style.setProperty("--xy-legend-transform", centred ? "none" : "translate(-50%,0)");
+      return;
+    }
     // Responsive anchors flow through private custom properties consumed by a
     // zero-specificity rule. Author classes or component styles can still set
     // real left/right/top/bottom/transform declarations and win normally.

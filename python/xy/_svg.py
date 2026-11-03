@@ -29,7 +29,7 @@ from typing import Any, NamedTuple, Optional, cast
 
 import numpy as np
 
-from . import _fontmetrics, _native, _paint, _png, _textblock
+from . import _fontmetrics, _native, _paint, _png, _textblock, _validate
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE, polar_bar_segments
 
@@ -2575,11 +2575,18 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     # Resolved before the title band, because the band's height now depends on
     # how many lines the title wraps into at this width.
     title_wrap_width = _title_wrap_width(width, left, right)
+    left_authored = left
     title_room = _title_room(spec, compact, title_wrap_width)
     top_axis_room, bottom_axis_room, measured_bottom_room = _x_axis_rooms(
         axes, provisional_w, compact
     )
     top += title_room
+    # An outside-top legend is a band between the title and the plot. It is
+    # sized at the title's wrap width for the same reason the title is: the
+    # final plot width depends on the plot height, which depends on this band.
+    legend_band = _outside_top_legend_band(spec, title_wrap_width)
+    band_room = legend_band["room"] if legend_band else 0.0
+    top += band_room
     top += top_axis_room
     if measured_bottom_room:
         bottom = max(bottom, measured_bottom_room)
@@ -2651,9 +2658,19 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # The width the title band was measured at. Emitters must wrap at the
         # same width or they draw more lines than `title_room` reserved.
         "title_wrap_width": title_wrap_width,
-        "top_axis_room": top_axis_room,
+        # The legend band counts toward the room the title is lifted over, the
+        # same way `_recut_polar_plot` folds in its angular-label room: the
+        # emitters anchor the title at `plot.y - top_axis_room`, which then
+        # lands above the band instead of on it.
+        "top_axis_room": top_axis_room + band_room,
         "bottom_axis_room": bottom_axis_room,
     }
+    if legend_band:
+        plot["legend_band_x"] = left_authored
+        plot["legend_band_y"] = top - top_axis_room - band_room
+        plot["legend_band_w"] = title_wrap_width
+        plot["legend_band_h"] = legend_band["box_h"]
+        plot["legend_band_ncols"] = legend_band["ncols"]
     if spec.get("coords") == "polar":
         _recut_polar_plot(spec, plot, width, height, compact)
     return width, height, compact, plot
@@ -6446,12 +6463,13 @@ def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -
 
 
 def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
-    """Rect that bounds a static legend: the plot, union any polar gutter.
+    """Rect that bounds a static legend: the plot, union any reserved legend room.
 
     A polar legend lives in a `legend_box_*` gutter OUTSIDE the plot rect
-    (`_recut_polar_plot`), so clipping a legend to the plot rect alone erases it
-    entirely. Union, not replacement: the same rect still bounds in-plot chrome.
-    Shared so the SVG clipPath and the raster clip command cannot drift.
+    (`_recut_polar_plot`), and an outside-top legend in the `legend_band_*`
+    band above it (`layout`), so clipping a legend to the plot rect alone erases
+    it entirely. Union, not replacement: the same rect still bounds in-plot
+    chrome. Shared so the SVG clipPath and the raster clip command cannot drift.
     """
     x0, y0 = float(plot["x"]), float(plot["y"])
     x1, y1 = x0 + float(plot["w"]), y0 + float(plot["h"])
@@ -6460,7 +6478,83 @@ def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
         y0 = min(y0, float(plot["legend_box_y"]))
         x1 = max(x1, float(plot["legend_box_x"]) + float(plot["legend_box_w"]))
         y1 = max(y1, float(plot["legend_box_y"]) + float(plot["legend_box_h"]))
+    if "legend_band_w" in plot:
+        x0 = min(x0, float(plot["legend_band_x"]))
+        y0 = min(y0, float(plot["legend_band_y"]))
+        x1 = max(x1, float(plot["legend_band_x"]) + float(plot["legend_band_w"]))
     return x0, y0, x1 - x0, y1 - y0
+
+
+#: Gap between an outside-top legend band and the top of the plot (or the
+#: top-axis tick labels). Mirrored by OUTSIDE_LEGEND_GAP in
+#: js/src/50_chartview.ts.
+_OUTSIDE_LEGEND_GAP = 8.0
+
+
+def _legend_band_columns(named: list[dict], options: dict, band_w: float) -> int:
+    """Most columns an outside-top legend can use without ellipsizing a label.
+
+    Entries fill row-major, exactly like the in-plot grid, so a column is as
+    wide as its widest label. The metrics are `_legend_layout`'s, and the
+    advances are the shared DejaVu table, so the browser
+    (`xyLegendBandColumns`) wraps the same entries into the same rows.
+    """
+    if len(named) <= 1:
+        return 1
+    style = options.get("style") or {}
+    font_size = _legend_font_size(style)
+    char_width = font_size * (_LEGEND_CHAR_WIDTH / 11.0)
+    pad = 2.0 * _legend_em(style, "padding", 0.4) * font_size
+    handle = max(0.0, float(options.get("handlelength", 2.0))) * font_size
+    gap = max(0.0, float(options.get("handletextpad", 0.8))) * font_size
+    column_gap = 2.0 * font_size
+    widths = [_legend_text_width(item.get("name", ""), char_width) for item in named]
+    for ncols in range(len(named), 1, -1):
+        total = (
+            sum(handle + gap + max(widths[column::ncols]) for column in range(ncols))
+            + (ncols - 1) * column_gap
+            + pad
+        )
+        if total <= band_w + _LEGEND_FIT_EPS:
+            return ncols
+    return 1
+
+
+def _outside_top_legend_band(spec: dict[str, Any], band_w: float) -> Optional[dict[str, float]]:
+    """Room an outside-top legend claims above the plot, or None.
+
+    Only the main, unanchored legend of a Cartesian chart reserves a band: an
+    `anchor` is authored geometry the author owns (and reserves room for), and
+    a polar legend keeps its gutter beside the disc.
+    """
+    options = spec.get("legend") or {}
+    if (
+        not _validate.is_outside_top_legend(options.get("loc"))
+        or not spec.get("show_legend", True)
+        or spec.get("coords") == "polar"
+    ):
+        return None
+    anchor = options.get("anchor")
+    if anchor and len(anchor) in (2, 4):
+        return None
+    named = options.get("items") or legend_items(spec.get("traces") or [])
+    if not named:
+        return None
+    options = legend_options_with_slot(spec, options)
+    ncols = _legend_band_columns(named, options, band_w)
+    probe = {
+        "x": 0.0,
+        "y": 0.0,
+        "w": band_w,
+        "h": band_w,
+        "legend_band_x": 0.0,
+        "legend_band_y": 0.0,
+        "legend_band_w": band_w,
+        "legend_band_h": 0.0,
+        "legend_band_ncols": ncols,
+    }
+    box = _legend_layout(named, probe, options)
+    return {"ncols": ncols, "box_h": box["box_h"], "room": box["box_h"] + _OUTSIDE_LEGEND_GAP}
 
 
 def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:
@@ -6474,7 +6568,17 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     A polar chart hands over a `legend_box_*` gutter beside the disc
     (`_recut_polar_plot`); everything below then bounds and places the legend in
     that box instead of over the marks, and `loc` chooses where within it.
+
+    An outside-top legend (`loc="outside top"`) is laid into the `legend_band_*`
+    band `layout` reserved above the plot: the band's column count, the band's
+    width as the cap, every row visible (the band was sized to hold them), and
+    the box centered over the plot.
     """
+    band = (
+        "legend_band_w" in plot
+        and _validate.is_outside_top_legend(options.get("loc"))
+        and not (options.get("anchor") and len(options["anchor"]) in (2, 4))
+    )
     if "legend_box_w" in plot:
         plot = {
             **plot,
@@ -6505,6 +6609,8 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         line_h = max(line_h, swatch_h + 2.0)
 
     requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
+    if band:
+        requested_cols = min(len(named), max(1, int(plot["legend_band_ncols"])))
     title = options.get("title")
     title_h = line_h if title else 0.0
     inset = 6.0
@@ -6520,6 +6626,8 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         1.0,
         float(plot["w"]) if anchor and len(anchor) in (2, 4) else float(plot["w"]) - 2 * inset,
     )
+    if band:
+        available_w = max(1.0, float(plot["legend_band_w"]))
     ncols = requested_cols
     min_column_w = handle + gap + 4 * char_width
     if ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
@@ -6574,6 +6682,9 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
+    if band:
+        # The band was sized from this very layout, so every row fits it.
+        available_h = math.inf
     visible_rows = nrows
     content_rows = nrows + (1 if title else 0)
     natural_box_h = content_rows * text_h + max(0, content_rows - 1) * row_gap + pad
@@ -6592,7 +6703,16 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     loc_tokens = set(re.split(r"[\s_-]+", loc))
     loc_is_upper = "upper" in loc or "top" in loc_tokens
     loc_is_lower = "lower" in loc or "bottom" in loc_tokens
-    if anchor and len(anchor) in (2, 4):
+    if band:
+        # Centered over the plot like the title, but kept inside the band: the
+        # band spans the authored gutters, which a measured y-axis gutter may
+        # have since pushed the plot's left edge past.
+        band_x = float(plot["legend_band_x"])
+        band_w = float(plot["legend_band_w"])
+        x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
+        x = min(max(x, band_x), band_x + max(0.0, band_w - box_w))
+        y = float(plot["legend_band_y"])
+    elif anchor and len(anchor) in (2, 4):
         ax, ay = float(anchor[0]), float(anchor[1])
         aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
         hx = 0.0 if "left" in loc else 1.0 if "right" in loc else 0.5

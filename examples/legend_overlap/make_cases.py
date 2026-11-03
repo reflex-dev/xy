@@ -77,6 +77,29 @@ def case_small_card(loc=None):
     )
 
 
+def case_work_orders(loc=None):
+    """The builder chart from the report: stacked horizontal bars at the axis max."""
+    stores = ["Bismarck", "Fargo", "Grand Forks", "Jamestown", "Minot", "West Fargo"]
+    counts = np.full((len(stores), 4), 4.0)
+    mark = xy.bar(
+        stores,
+        counts,
+        series=["Waiting Parts", "In Progress", "Waiting Approval", "Complete"],
+        colors=["#f2c12e", "#7a8899", "#ddd8d6", "#2e8b57"],
+        mode="stacked",
+        orientation="horizontal",
+    )
+    return xy.chart(
+        mark,
+        xy.x_axis(label="Work orders"),
+        xy.y_axis(label="Store"),
+        xy.legend(loc=loc),
+        title="Work orders by store",
+        width=900,
+        height=360,
+    )
+
+
 CASES = {
     "1_rising_lines": case_rising_lines,
     "2_many_series": case_many_series,
@@ -84,12 +107,13 @@ CASES = {
     "4_stacked_area": case_stacked_area,
     "5_grouped_columns": case_grouped_columns,
     "6_small_card": case_small_card,
+    "7_work_orders": case_work_orders,
 }
 
 if __name__ == "__main__":
     for key, build in CASES.items():
-        for loc in (None, "best"):
-            tag = "default" if loc is None else "best"
+        for loc in (None, "best", "outside top"):
+            tag = {None: "default", "best": "best", "outside top": "outside_top"}[loc]
             rng = np.random.default_rng(7)  # same data for both variants
             globals()["rng"] = rng
             build(loc).to_html(OUT / f"{key}__{tag}.html")

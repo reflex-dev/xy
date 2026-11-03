@@ -627,7 +627,57 @@ placeholder.
 `xy.legend(loc=...)` places the legend against the plot rectangle by name
 (`"upper right"`, `"lower left"`, `"center"`, …). The box is inset 6 px from the
 named edge and kept inside the plot rectangle — static export clamps it there
-explicitly — so `loc` alone can never paint a legend outside the axes.
+explicitly — so an in-plot name can never paint a legend outside the axes. The
+one exception is `"outside top"`, below, which places the legend in a band of
+its own above the axes.
+
+#### `loc="outside top"` — a legend band that never covers data
+
+Every in-plot location, `"best"` included, covers marks whenever no corner of
+the plot is empty: stacked areas, many series, and bars that reach the axis
+maximum (`examples/legend_overlap/`). `loc="outside top"` instead reserves a
+band **between the title and the plot**, and the plot shrinks by the band's
+height plus an 8 px gap (`_OUTSIDE_LEGEND_GAP` / `OUTSIDE_LEGEND_GAP`). This is
+the placement TanStack Charts, Chart.js, Recharts and Vega-Lite default to.
+
+- **Spelling.** `"outside top"` is canonical. Matplotlib's figure-legend
+  `"outside upper center"` and the usual case, separator, `top`/`upper` and
+  word-order variants are accepted and **stored as `"outside top"`**, unlike the
+  in-plot names, whose spelling is preserved: every renderer matches locations
+  by token, and `outside upper center` must never be read as the in-plot
+  `upper center`. Other `outside …` sides are refused.
+- **Columns and rows.** Entries fill row-major, as in the in-plot grid. The band
+  uses the most columns whose natural widths fit the band width without
+  ellipsizing a label, and wraps the rest into rows; `ncols` is ignored. Both
+  renderers compute the count from the shared DejaVu advance table
+  (`_legend_band_columns` / `xyLegendBandColumns`), so the browser and every
+  export wrap the same entries into the same rows. The one known divergence:
+  the browser reserves a full em for every non-ASCII character, where Python
+  measures the few the atlas carries, so a non-ASCII label can use one column
+  fewer in the browser — the safe direction.
+- **Width.** The band is sized at the title's wrap width (the authored or
+  default gutters, `_title_wrap_width` / `_titleWrapWidth`), for the same reason
+  the title is: the final plot width depends on the plot height, which depends
+  on this band. The box is centered over the plot like the title, then kept
+  inside the band.
+- **Height.** Static export reserves the formula height of the laid-out box (all
+  rows, nothing truncated). The browser reserves the **measured** height of the
+  live box, because the legend slot is author-stylable and a formula would
+  under-reserve a restyled legend; the first layout runs before the box exists,
+  so `_buildDom` lays out again once it can be measured, and a box that cannot
+  be measured (a detached chart) falls back to the formula. The two heights
+  therefore differ by the browser's own padding and line height (a few px), as
+  in-plot legends already do; the row and column structure does not.
+- **Title.** The band counts toward the room the title is lifted over
+  (`top_axis_room` / `_topAxisRoom`), exactly as the polar angular-label room
+  does, so the title sits above the band in every renderer.
+- **Exclusions.** Only the main, unanchored legend of a Cartesian chart claims
+  a band. An `anchor` is authored geometry the author owns; a polar legend keeps
+  its gutter beside the disc; a hidden legend or one with no rows reserves
+  nothing. `auto_loc` is never emitted for it, so the live best-location pass
+  never moves it.
+- **Static clipping.** `legend_clip_rect` unions the band with the plot rect,
+  as it does the polar gutter, so the SVG and raster clips keep the legend.
 
 For an **unanchored Cartesian** legend, `loc="best"` requests automatic
 placement. Payload build measures the static legend footprint, scores the nine
@@ -666,10 +716,11 @@ the plot's upper-left corner, seating the legend entirely above the axes.
 
 An anchored legend is **not** clamped into the plot rectangle: the 6 px inset and
 the containment clamp are both skipped and the coordinates are honored literally.
-Reserving room for a legend placed outside the axes is therefore the caller's
-job. The composition API performs no automatic padding reservation — only the
-`pyplot` shim widens its own chart padding when `bbox_to_anchor` pushes the
-legend past an edge.
+Reserving room for an *anchored* legend placed outside the axes is therefore the
+caller's job. The composition API performs no automatic padding reservation for
+anchors — only the `pyplot` shim widens its own chart padding when
+`bbox_to_anchor` pushes the legend past an edge. For a legend above the plot
+with its room reserved automatically, use `loc="outside top"` instead.
 
 An `anchor` is authored geometry and always bypasses live best-location
 scoring. Polar legends likewise keep their polar gutter placement; automatic
@@ -1384,8 +1435,9 @@ Full contract and enforcement: [export.md](export.md) § 9 and
 ### Legend placement
 
 `xy.legend(loc=...)` takes Matplotlib's vocabulary — `"upper right"`,
-`"lower left"`, `"center"`, `"upper center"`, and so on — plus `"best"`.
-Spellings that are unambiguous are normalized rather than refused: case and
+`"lower left"`, `"center"`, `"upper center"`, and so on — plus `"best"` and
+`"outside top"` (the reserved band above the plot; see *Legend placement — `loc`
+and `anchor`* above). Spellings that are unambiguous are normalized rather than refused: case and
 whitespace are free, `-`/`_` work as separators, either word order is accepted,
 `"right"`/`"left"` alone mean the centered edges, and **`top`/`bottom` are
 accepted for `upper`/`lower`** — the CSS and Plotly spelling, and the one XY's
