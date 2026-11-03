@@ -159,7 +159,11 @@ Eight properties this pins down, each of which has matching coverage:
   depends on the title band). The client also caps the title element at that
   width, so the DOM cannot wrap into more lines than layout reserved; measuring
   one line and painting two lifted a compact Wind Rose title ~10 px off the top
-  of the canvas.
+  of the canvas. It also sets `width: max-content`: an absolutely positioned
+  box with only `left` set shrink-wraps to the room right of `left`, which for
+  a centred or right title is the plot's midpoint or right edge, so a short
+  title on a 320 px card wrapped into lines no band reserved and lost its first
+  line above the canvas.
 - **A partial sector owns its bounding box.** Full turns retain the centred
   circle above. For a partial turn, layout finds the bounds of the visible
   outer arc plus inner boundary and scales/translates that shape to the plot

@@ -2954,6 +2954,15 @@ def _tick_window_filter(axis: dict[str, Any], lo: float, hi: float) -> Callable[
     return lambda value: bool(np.mod(value - low, turn) <= span + turn * 1e-9)
 
 
+#: Spacing, in tick-label font sizes, that one category label needs along a
+#: vertical axis: one text line plus a gap. The numeric density (one tick per
+#: 45 px) assumed tick values a few labels apart sufficed, but every category
+#: is a label someone needs, and at 45 px a six-row horizontal bar chart at a
+#: dashboard height labelled every other row. Mirrored by CATEGORY_LABEL_PITCH
+#: in js/src/50_chartview.ts.
+_CATEGORY_LABEL_PITCH = 1.6
+
+
 def axis_ticks(
     axis: dict[str, Any], length_px: float, is_x: bool
 ) -> tuple[list[float], list[float], float]:
@@ -2967,7 +2976,10 @@ def axis_ticks(
         step = abs(ticks[1] - ticks[0]) if len(ticks) > 1 else 1.0
         return ticks, ticks, step
     requested = axis.get("tick_count")
-    if isinstance(requested, (int, float)) and not isinstance(requested, bool) and requested > 0:
+    authored = (
+        isinstance(requested, (int, float)) and not isinstance(requested, bool) and requested > 0
+    )
+    if authored:
         target = max(1, min(200, int(requested)))
     else:
         target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
@@ -2981,6 +2993,11 @@ def axis_ticks(
         categories = axis.get("categories") or []
         if axis.get("theta_unit") is not None and requested is None:
             target = len(categories)
+        elif not is_x and not authored and axis.get("theta_unit") is None:
+            # Unauthored vertical category axis: label every row that fits a
+            # line of text, not one per numeric-tick spacing.
+            pitch = _axis_tick_font_size(axis) * _CATEGORY_LABEL_PITCH
+            target = max(3, int(length_px / pitch))
         t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
         return t, t, 1.0
     if axis.get("theta_unit") is not None:

@@ -148,6 +148,11 @@ function xyTextAdvance(text, fontSize) {
   return Number(fontSize) * units / XY_FONT_BASE_PX;
 }
 
+// Spacing, in tick-label font sizes, that one category label needs along a
+// vertical axis: one text line plus a gap, instead of the numeric one-tick-per-
+// 45-px density. Mirrored by `_CATEGORY_LABEL_PITCH` in python/xy/_svg.py.
+const CATEGORY_LABEL_PITCH = 1.6;
+
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
@@ -1066,6 +1071,12 @@ export class ChartView {
       // still positions by the element's REAL height, so an agreed line count
       // means the reserved band and the painted block are the same box.
       title.style.maxWidth = `${Math.max(40, Number(this._titleWrapWidth) || 40)}px`;
+      // Size to the text, not to the room right of `left`. An absolutely
+      // positioned box with only `left` set shrink-wraps to the containing
+      // block's remaining width, and a centred or right title's `left` is the
+      // plot's midpoint or right edge: on a 320 px card the title wrapped into
+      // lines the band never reserved and its first line left the canvas.
+      title.style.width = "max-content";
       title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
     }
   }
@@ -1090,7 +1101,7 @@ export class ChartView {
       const ticks = labelsOnLeft
         ? this._axisTicks(
           axis.id,
-          this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
+          this._yTickTarget(axis.id, plotHeight),
         )
         : { ticks: [], labels: [] };
       let tickRoom = 0;
@@ -1480,6 +1491,22 @@ export class ChartView {
       if (index >= 0 && index < axis.tick_labels.length) return String(axis.tick_labels[index]);
     }
     return fmtAxis(axis, value, step);
+  }
+
+  // Tick target for a vertical axis `h` px long. Category axes label every row
+  // that fits a line of text; every other kind keeps one tick per 45 px. An
+  // authored tick_count still wins (`_axisTickTarget`). Mirrors the vertical
+  // category branch of `axis_ticks` in python/xy/_svg.py.
+  _yTickTarget(axisId, h) {
+    const axis = this._axis(axisId);
+    if (axis && axis.kind === "category" && !axis.theta_unit) {
+      const size = Math.max(
+        8,
+        this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
+      );
+      return this._axisTickTarget(axisId, Math.max(3, Math.floor(h / (size * CATEGORY_LABEL_PITCH))));
+    }
+    return this._axisTickTarget(axisId, Math.max(3, h / 45));
   }
 
   _axisTickTarget(axisId, fallback) {
@@ -7843,7 +7870,7 @@ export class ChartView {
       "x",
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
-    const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+    const yt = this._axisTicks("y", this._yTickTarget("y", p.h));
     const minorTicks = (axis, axisId) => {
       if (!Array.isArray(axis.minor_tick_values)) return [];
       const [lo, hi] = this._axisRange(axisId);
@@ -8135,7 +8162,7 @@ export class ChartView {
         if (this._axisTickLabelStrategy(axis) === "none") continue;
         const ticks = this._axisTicks(
           axis.id,
-          this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
+          this._yTickTarget(axis.id, p.h),
         );
         const tick = tickParts(axis);
         for (const side of this._axisTickSides(axis)) {
@@ -8479,7 +8506,7 @@ export class ChartView {
       }
     };
     for (const axis of extraYAxes) {
-      const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
+      const ticks = this._axisTicks(axis.id, this._yTickTarget(axis.id, p.h));
       const labelCandidates = [];
       for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);

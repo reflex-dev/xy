@@ -1,0 +1,1 @@
+Vertical category axes now label every category that fits a line of text instead of thinning to one label per 45 px, so a horizontal bar chart at a dashboard height no longer skips every other row. A short centred chart title on a small card no longer wraps into extra lines and loses its first line above the chart.
