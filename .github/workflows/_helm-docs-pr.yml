@@ -31,8 +31,8 @@ permissions:
 env:
   HELM_REPO: reflex-dev/helm-charts
   CHART_DIR: charts/internal
-  FRONTEND_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/frontend
-  BACKEND_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/backend
+  FRONTEND_IMAGE: oci.main.reflexsandbox.com/apps/xy/frontend
+  BACKEND_IMAGE: oci.main.reflexsandbox.com/apps/xy/backend
 
 jobs:
   open-helm-pr:

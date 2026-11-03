@@ -810,6 +810,14 @@ creates a release tag, or creates a GitHub release. The generated library
 release workflows and their two integration workflows keep their existing
 contracts.
 
+The shared image builder publishes each frontend/backend tag to Harbor
+(`oci.main.reflexsandbox.com/apps/xy`) and Azure Container Registry
+(`reflexdev.azurecr.io/xy`). It does not publish to AWS ECR. The Helm workflow
+changes image tags only, preserving each environment's configured registry;
+current Flux deployments pull directly from Harbor's `apps` project. Any other
+consumer still pulling from ECR or Harbor's `ecr` proxy must migrate before
+using tags built after ECR publishing stops.
+
 Deployment reuses `_build-docs-images.yml` and `_helm-docs-pr.yml`. The Helm
 workflow updates both XY image tags in `charts/internal/values-stg.yaml` and,
 after approval, `charts/internal/values-prod.yaml`, bumps the chart version, and
