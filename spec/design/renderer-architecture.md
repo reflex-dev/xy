@@ -355,11 +355,16 @@ into view rather than overlapping (`_category_ticks` mirrors it).
 On a **vertical** Cartesian category axis without an authored `tick_count`, the
 `target` is the number of one-line labels that fit, `max(1, min(200, floor(h /
 (size × 1.6))))`; a plot too short for three rows shows one label rather than
-three overlapping ones. The 200 cap lives in this target, not in the shared
-stride helpers: a tall axis then strides at most 200 labels across every row
-(the client's `categoryTicks` otherwise cut its list off after the 200th while
-the static exporters labelled all of them), and polar category theta, whose
-target is one spoke per category, keeps every spoke. `size` is the larger of the axis's own tick-label font size (≥ 8 px,
+three overlapping ones. The 200 cap lives in this target, not in the stride:
+a tall axis then strides at most 200 labels across every row (the client's
+`categoryTicks` otherwise cut its list off after the 200th while the static
+exporters labelled all of them). Polar category theta, whose target is one
+spoke per category, is untouched by this cap. The static `_category_ticks` has
+no output bound, so the exporters draw every spoke. The client's
+`categoryTicks` keeps the generator bound below and stops after 200 entries,
+so a polar chart with more than 200 theta categories draws only its first 200
+spokes in the browser. That predates this cap and is a known divergence.
+`size` is the larger of the axis's own tick-label font size (≥ 8 px,
 default 11) and the `styles={"tick_label": ...}` slot font size, because the
 renderers resolve those two in opposite orders and the pitch has to fit
 whichever is painted (`_tick_label_slot_px`, `_slotFontSize`) —
@@ -383,8 +388,12 @@ stride from `1, 2, 3, 6, 12, 24, 60, 120` months and emits UTC month starts via
 by a fixed 30-day approximation. `calendarTicks` reports `step` back as
 `stepM * 30 * MS.d`, an approximation used only to choose a label format.
 
-**Bounds.** Every generator caps output at 200 ticks (`calendarTicks` at 1000)
-so a pathological domain cannot produce an unbounded loop or DOM label count.
+**Bounds.** Every client generator caps output at 200 ticks (`calendarTicks`
+at 1000) so a pathological domain cannot produce an unbounded loop or DOM label
+count. `categoryTicks` applies the bound by truncating its list, not by
+widening the stride. Callers that can exceed 200 categories cap their
+`target` instead (the vertical category target above). The static
+`_category_ticks` is unbounded.
 
 ### 6.2 Automatic label formats
 
