@@ -360,12 +360,12 @@ def test_browser_rem_slot_font_does_not_overlap_category_labels() -> None:
         styles={"tick_label": {"font_size": "2rem"}},
     )
     payload = _probe(chart, _LABEL_BOX_PROBE, "data-xy-label-boxes", "rem_labels")
-    assert payload["count"] >= 1 and payload["overlap"] <= 0.5, payload
+    assert payload["count"] >= 2 and payload["overlap"] <= 0.5, payload
 
 
 def test_browser_multiline_category_labels_collide_at_the_painted_size() -> None:
     payload = _probe(_two_line_chart(), _LABEL_BOX_PROBE, "data-xy-label-boxes", "two_line_labels")
-    assert payload["count"] >= 1 and payload["overlap"] <= 0.5, payload
+    assert payload["count"] >= 2 and payload["overlap"] <= 0.5, payload
 
 
 def test_static_multiline_category_labels_collide_at_the_painted_size() -> None:
@@ -376,7 +376,7 @@ def test_static_multiline_category_labels_collide_at_the_painted_size() -> None:
         float(m.group(1))
         for m in re.finditer(r'<text x="[^"]+" y="([^"]+)"[^>]*><tspan[^>]*>[A-J]</tspan>', svg)
     )
-    assert len(anchors) >= 1
+    assert len(anchors) >= 2
     block = 2 * 24 * 1.2  # two lines at the painted 24 px
     gaps = [b - a for a, b in itertools.pairwise(anchors)]
     assert not gaps or min(gaps) >= block, (len(anchors), gaps[:3])
@@ -395,3 +395,30 @@ def test_browser_title_clamp_holds_for_a_fractional_title_width() -> None:
     )
     payload = _probe(chart, _TITLE_BOUNDS_PROBE, "data-xy-title-bounds", "title_fraction")
     assert payload["right"] >= 0 and payload["left"] >= 0, payload
+
+
+_RELATIVE_FONT_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    const before = view._slotFontSize("tick_label", 0);
+    // A relative size follows its context: double the chart root's font.
+    view.root.style.fontSize = `${2 * parseFloat(getComputedStyle(view.root).fontSize)}px`;
+    view._applyLayout();
+    const after = view._slotFontSize("tick_label", 0);
+    document.body.setAttribute("data-xy-relative-font", JSON.stringify({ before, after }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-relative-font-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_relative_slot_font_is_remeasured_on_layout() -> None:
+    chart = _stores_chart(height=300, styles={"tick_label": {"font_size": "1.5em"}})
+    payload = _probe(chart, _RELATIVE_FONT_PROBE, "data-xy-relative-font", "relative_font")
+    assert payload["after"] == pytest.approx(2 * payload["before"]), payload

@@ -385,7 +385,9 @@ painted size as the target (`_verticalCategoryLabelFont` /
 two-line labels at 11 px let ten of them overlap where five fit. The client
 resolves the slot size to the px it paints: `_cssFontPx` reads non-px units
 (`2rem`, `1.5em`) through a probe element in the chart root, because
-`parseFloat("2rem")` is 2. The static exporters accept px only. Any other unit
+`parseFloat("2rem")` is 2. The probe result is cached per value and cleared
+on every `_layout`, because a relative size follows a context that a resize or
+theme change can move. The static exporters accept px only. Any other unit
 falls back to the axis size there, which is also the size they paint.
 
 **Time.** Time axes carry epoch milliseconds. `timeTicks` picks the first

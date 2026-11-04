@@ -759,6 +759,9 @@ export class ChartView {
   }
 
   _layout() {
+    // Relative slot font sizes (`em`, `vw`, `rem`) follow their context, which
+    // a resize or theme change can move; measure them again for this layout.
+    this._cssFontPxCache = null;
     // Plot rect from the current size — margins fixed, data area flexes.
     const compact = this.size.w < 520;
     // Explicit padding (spec.padding = [top,right,bottom,left]) overrides the
@@ -1170,6 +1173,8 @@ export class ChartView {
   // A CSS font-size in px, as the browser paints it. `parseFloat("2rem")` is
   // 2, not 32, so any unit but px resolves through a probe element styled
   // the same way inside the chart root (em/% then resolve as they do there).
+  // Cached per value between layouts (draws call it every frame); `_layout`
+  // clears the cache because a relative size can change with its context.
   _cssFontPx(value) {
     if (value === null || value === undefined || value === "") return NaN;
     if (typeof value === "number") return value;
