@@ -1,0 +1,2107 @@
+{
+  "schema_version": 2,
+  "kind": "pyplot-vs-matplotlib",
+  "environment": {
+    "generated_at_utc": "2026-11-04T21:31:40.012442Z",
+    "python": {
+      "version": "3.13.18",
+      "implementation": "CPython",
+      "compiler": "Clang 23.1.3 "
+    },
+    "platform": {
+      "system": "Linux",
+      "release": "6.18.44-fc-v233",
+      "version": "#1 SMP PREEMPT_DYNAMIC @0",
+      "machine": "x86_64",
+      "processor": "x86_64"
+    },
+    "cpu_count": 4,
+    "package_versions": {
+      "xy": "0.0.1.dev50+5e58b12",
+      "numpy": "2.5.1",
+      "plotly": null,
+      "matplotlib": "3.11.1",
+      "seaborn": null,
+      "bokeh": null,
+      "altair": null,
+      "datashader": null,
+      "holoviews": null,
+      "hvplot": null,
+      "pandas": null,
+      "psutil": "7.2.2",
+      "kaleido": null
+    },
+    "executables": {
+      "node": "v22.23.4",
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+      "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)"
+    },
+    "xy_backend": "native",
+    "browser_renderer": "software-gl",
+    "git": {
+      "commit": "5e58b12c0a1b89a58c4555af370204ef1ed0515e",
+      "branch": "farhan/issue-552-contour-png-export-perf",
+      "dirty": true
+    }
+  },
+  "benchmark_categories": [
+    {
+      "id": "small_data_startup",
+      "name": "Small-data startup",
+      "why": "Everyday charts should feel instant; a performance library cannot only win at 10M rows.",
+      "metrics": "TTFR, JS/payload size, Python overhead",
+      "harness": "benchmarks/bench_vs.py --ttfr at 1k-100k; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_small",
+      "status": "tracked",
+      "goal": "Beat Plotly/Bokeh/Altair on first interactive paint for common charts."
+    },
+    {
+      "id": "install_footprint_import_budget",
+      "name": "Install footprint and import budget",
+      "why": "Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists.",
+      "metrics": "cold import time, installed distribution bytes, file count",
+      "harness": "benchmarks/bench_install.py",
+      "status": "tracked",
+      "goal": "Keep xy lightweight at import and smaller to install than broad plotting stacks."
+    },
+    {
+      "id": "medium_direct_scatter",
+      "name": "Medium direct scatter",
+      "why": "Proves exact marker rendering, hover, color, and size channels before aggregation kicks in.",
+      "metrics": "FPS, TTFR, memory, bytes/point, hover latency",
+      "harness": "benchmarks/bench_vs.py at 100k-200k; benchmarks/bench_interaction.py; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_medium",
+      "status": "tracked",
+      "goal": "Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff."
+    },
+    {
+      "id": "huge_scatter_overview",
+      "name": "Huge scatter overview",
+      "why": "Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point.",
+      "metrics": "ingest/bin time, density payload size, peak memory, TTFR",
+      "harness": "benchmarks/bench_scatter_native.py, benchmarks/bench_vs.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, example app assets",
+      "status": "tracked",
+      "goal": "Keep resident/render payload flat in N while showing truthful density summaries."
+    },
+    {
+      "id": "adaptive_scatter_drilldown",
+      "name": "Adaptive scatter drilldown",
+      "why": "The large-data claim needs a credible path from overview to exact visible points.",
+      "metrics": "visible-query latency, tier-switch latency, exact-point recovery, badge accuracy",
+      "harness": "benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle and ::test_adaptive_drilldown_cycle_mean_color (channel-bearing: per-request cost must exclude full-column color work)",
+      "status": "tracked",
+      "goal": "Exact points when visible count is under budget; sampled/density with explicit counts otherwise."
+    },
+    {
+      "id": "huge_line_time_series",
+      "name": "Huge line/time series",
+      "why": "Common observability and finance workload; Plotly-resampler sets the bar here.",
+      "metrics": "decimation time, zoom re-decimation latency, TTFR, extrema preservation",
+      "harness": "benchmarks/bench.py, benchmarks/bench_native.py, benchmarks/bench_interaction.py, benchmarks/test_codspeed_kernels.py::test_decimate_view",
+      "status": "tracked",
+      "goal": "Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh."
+    },
+    {
+      "id": "many_chart_dashboards",
+      "name": "Many-chart dashboards",
+      "why": "Plotly-class apps often fail from total page weight and many live canvases, not one chart.",
+      "metrics": "payload prep, navigation readiness, per-chart setup/first draw, shader compiles/program links, startup long tasks, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling",
+      "harness": "benchmarks/bench_dashboard.py",
+      "status": "tracked",
+      "goal": "Measure the 10-60 chart scaling curve and expose LRU context eviction without discarding partial-row metrics."
+    },
+    {
+      "id": "interaction_smoothness",
+      "name": "Interaction smoothness",
+      "why": "Users judge performance by pan/zoom/hover, not just export time.",
+      "metrics": "pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta",
+      "harness": "benchmarks/bench_interaction.py; benchmarks/bench_transport.py",
+      "status": "tracked",
+      "goal": "Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles."
+    },
+    {
+      "id": "payload_export_size",
+      "name": "Payload/export size",
+      "why": "Notebooks, static HTML, docs, and dashboards pay for every byte shipped.",
+      "metrics": "standalone HTML bytes, binary payload bytes, bundle bytes",
+      "harness": "benchmarks/bench_vs.py, benchmarks/bench_scatter_native.py, benchmarks/bench_transport.py, benchmarks/test_codspeed_transport.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, benchmarks/test_codspeed_kernels.py::test_memory_report_density_medium, example app asset sizes",
+      "status": "tracked",
+      "goal": "Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge."
+    },
+    {
+      "id": "core_2d_chart_breadth",
+      "name": "Core 2D chart breadth",
+      "why": "The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads.",
+      "metrics": "payload-prep time, payload bytes, standalone HTML bytes, TTFR",
+      "harness": "benchmarks/bench_2d_charts.py vs Plotly/Seaborn; benchmarks/bench_pyplot_vs_matplotlib.py; benchmarks/bench_interaction.py; CodSpeed core_2d rows",
+      "status": "tracked",
+      "goal": "Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable."
+    },
+    {
+      "id": "input_ingestion",
+      "name": "Input ingestion",
+      "why": "Real applications provide float32, strided, datetime, list, pandas, and Arrow inputs rather than only ideal contiguous float64 arrays.",
+      "metrics": "ingest latency, copies, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py ingestion rows",
+      "status": "tracked",
+      "goal": "Keep zero-copy inputs cheap and make unavoidable conversions visible."
+    },
+    {
+      "id": "streaming_updates",
+      "name": "Streaming updates",
+      "why": "Monitoring and notebook workflows append data repeatedly; stable domains should not trigger full-index rebuilds.",
+      "metrics": "append latency, refresh bytes, incremental pyramid update latency, domain-growth rebuild latency",
+      "harness": "benchmarks/bench_workflows.py streaming rows; benchmarks/bench_transport.py append diagnostics",
+      "status": "tracked",
+      "goal": "Keep stable-domain appends proportional to the batch and expose unavoidable domain-growth rebuilds."
+    },
+    {
+      "id": "log_autorange",
+      "name": "Log autorange",
+      "why": "Large positive/negative and non-finite series are common in monitoring and scientific charts, and log axes must avoid full-data rescans.",
+      "metrics": "range latency, positive-domain correctness, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py log autorange row; tests/test_figure.py",
+      "status": "tracked",
+      "goal": "Compute correct positive log domains from zone statistics with cost proportional to chunks, not points."
+    },
+    {
+      "id": "polar_coordinate_system",
+      "name": "Polar coordinate system",
+      "why": "Radar, wind rose, pie/donut and gauge views are a whole chart family, and a polar wedge is the most expensive mark in the engine \u2014 one annular sector per bar instead of one quad.",
+      "metrics": "payload-prep time, wedge flattening cost, SVG/PNG export latency, inverse-raster latency",
+      "harness": "benchmarks/test_codspeed_polar.py",
+      "status": "tracked",
+      "goal": "Keep polar payload prep bounded by composition size rather than observation count, and keep wedge subdivision proportional to each wedge's own angular span."
+    },
+    {
+      "id": "static_export",
+      "name": "Static export",
+      "why": "HTML, SVG, and PNG export are common notebook, documentation, and reporting paths with different bottlenecks.",
+      "metrics": "export latency, output bytes, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py export rows; benchmarks/bench_pyplot_vs_matplotlib.py matched PNG rows",
+      "status": "tracked",
+      "goal": "Track each export target independently without mixing payload preparation and browser startup."
+    }
+  ],
+  "tracked_categories": [
+    {
+      "id": "small_data_startup",
+      "name": "Small-data startup",
+      "why": "Everyday charts should feel instant; a performance library cannot only win at 10M rows.",
+      "metrics": "TTFR, JS/payload size, Python overhead",
+      "harness": "benchmarks/bench_vs.py --ttfr at 1k-100k; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_small",
+      "status": "tracked",
+      "goal": "Beat Plotly/Bokeh/Altair on first interactive paint for common charts."
+    },
+    {
+      "id": "core_2d_chart_breadth",
+      "name": "Core 2D chart breadth",
+      "why": "The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads.",
+      "metrics": "payload-prep time, payload bytes, standalone HTML bytes, TTFR",
+      "harness": "benchmarks/bench_2d_charts.py vs Plotly/Seaborn; benchmarks/bench_pyplot_vs_matplotlib.py; benchmarks/bench_interaction.py; CodSpeed core_2d rows",
+      "status": "tracked",
+      "goal": "Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable."
+    },
+    {
+      "id": "static_export",
+      "name": "Static export",
+      "why": "HTML, SVG, and PNG export are common notebook, documentation, and reporting paths with different bottlenecks.",
+      "metrics": "export latency, output bytes, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py export rows; benchmarks/bench_pyplot_vs_matplotlib.py matched PNG rows",
+      "status": "tracked",
+      "goal": "Track each export target independently without mixing payload preparation and browser startup."
+    }
+  ],
+  "profile": "standard",
+  "reps": 21,
+  "warmups": 3,
+  "pixel_target": {
+    "width": 1800,
+    "height": 840,
+    "format": "png"
+  },
+  "measurement_scope": "warmed-api-build-through-static-png",
+  "rows": [
+    {
+      "family": "line",
+      "case": "200,000 samples",
+      "work_units": 200000,
+      "unit": "samples",
+      "library": "xy.pyplot",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "native-raster",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 46338,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 1.226917,
+          "render_ms": 16.816545,
+          "total_ms": 18.043462,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.214568,
+          "render_ms": 17.278556,
+          "total_ms": 18.493123999999998,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.214564,
+          "render_ms": 16.605189,
+          "total_ms": 17.819753,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.157516,
+          "render_ms": 16.323454,
+          "total_ms": 17.480970000000003,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 3.503683,
+          "render_ms": 29.600927,
+          "total_ms": 33.10461,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.159742,
+          "render_ms": 18.066865,
+          "total_ms": 19.226607,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.160068,
+          "render_ms": 18.305266,
+          "total_ms": 19.465334,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.644264,
+          "render_ms": 21.827375,
+          "total_ms": 23.471639,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.145552,
+          "render_ms": 17.306314,
+          "total_ms": 18.451866,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.18335,
+          "render_ms": 18.745583,
+          "total_ms": 19.928933,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.165683,
+          "render_ms": 21.693828,
+          "total_ms": 22.859511,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.525962,
+          "render_ms": 18.032778,
+          "total_ms": 19.55874,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.143495,
+          "render_ms": 16.884285,
+          "total_ms": 18.02778,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.113671,
+          "render_ms": 19.068066,
+          "total_ms": 20.181737000000002,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.207998,
+          "render_ms": 17.463531,
+          "total_ms": 18.671529,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.181344,
+          "render_ms": 16.906587,
+          "total_ms": 18.087930999999998,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.2548,
+          "render_ms": 21.060482,
+          "total_ms": 22.315282,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.885579,
+          "render_ms": 18.731442,
+          "total_ms": 20.617021,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.612726,
+          "render_ms": 25.057237,
+          "total_ms": 26.669963,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.302651,
+          "render_ms": 18.063459,
+          "total_ms": 19.366110000000003,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.109287,
+          "render_ms": 17.416967,
+          "total_ms": 18.526253999999998,
+          "output_bytes": 150167
+        }
+      ],
+      "build_median_ms": 1.207998,
+      "render_median_ms": 18.063459,
+      "total_median_ms": 19.366110000000003,
+      "total_p95_ms": 26.669963,
+      "output_bytes_median": 150167,
+      "render_tier": "decimated"
+    },
+    {
+      "family": "line",
+      "case": "200,000 samples",
+      "work_units": 200000,
+      "unit": "samples",
+      "library": "matplotlib",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "agg",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 57850,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 10.077525,
+          "render_ms": 111.420894,
+          "total_ms": 121.498419,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.726231,
+          "render_ms": 110.09189,
+          "total_ms": 119.818121,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.027955,
+          "render_ms": 114.22033,
+          "total_ms": 124.24828500000001,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.544894,
+          "render_ms": 112.797764,
+          "total_ms": 123.342658,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.677949,
+          "render_ms": 118.159136,
+          "total_ms": 128.837085,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.269269,
+          "render_ms": 115.161483,
+          "total_ms": 125.430752,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.747126,
+          "render_ms": 135.999242,
+          "total_ms": 146.74636800000002,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.292731,
+          "render_ms": 114.733585,
+          "total_ms": 125.02631600000001,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.974667,
+          "render_ms": 121.510534,
+          "total_ms": 132.48520100000002,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 41.193023,
+          "render_ms": 147.999789,
+          "total_ms": 189.192812,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.605397,
+          "render_ms": 140.917283,
+          "total_ms": 151.52268,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 15.014841,
+          "render_ms": 179.665469,
+          "total_ms": 194.68031,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.703599,
+          "render_ms": 112.69632,
+          "total_ms": 122.399919,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.597276,
+          "render_ms": 112.691554,
+          "total_ms": 122.28882999999999,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.682844,
+          "render_ms": 123.423545,
+          "total_ms": 133.106389,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 10.017143,
+          "render_ms": 118.819925,
+          "total_ms": 128.837068,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 16.25461,
+          "render_ms": 169.4376,
+          "total_ms": 185.69221,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 11.061047,
+          "render_ms": 119.10736,
+          "total_ms": 130.168407,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 13.534774,
+          "render_ms": 139.267173,
+          "total_ms": 152.801947,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.481843,
+          "render_ms": 110.733081,
+          "total_ms": 120.214924,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.786726,
+          "render_ms": 113.276958,
+          "total_ms": 123.063684,
+          "output_bytes": 93800
+        }
+      ],
+      "build_median_ms": 10.292731,
+      "render_median_ms": 118.159136,
+      "total_median_ms": 128.837068,
+      "total_p95_ms": 189.192812,
+      "output_bytes_median": 93800
+    },
+    {
+      "family": "scatter",
+      "case": "200,000 points",
+      "work_units": 200000,
+      "unit": "points",
+      "library": "xy.pyplot",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "native-raster",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 193601,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 0.654113,
+          "render_ms": 52.410921,
+          "total_ms": 53.065034000000004,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.691211,
+          "render_ms": 42.461326,
+          "total_ms": 43.152537,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.84049,
+          "render_ms": 61.99345,
+          "total_ms": 62.833940000000005,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.594748,
+          "render_ms": 51.292119,
+          "total_ms": 51.886867,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.660366,
+          "render_ms": 53.222369,
+          "total_ms": 53.882735000000004,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.573261,
+          "render_ms": 45.298257,
+          "total_ms": 45.871518,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.570565,
+          "render_ms": 48.500091,
+          "total_ms": 49.070656,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.561139,
+          "render_ms": 44.72096,
+          "total_ms": 45.282098999999995,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.535539,
+          "render_ms": 46.858571,
+          "total_ms": 47.39411,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.568946,
+          "render_ms": 49.554937,
+          "total_ms": 50.123883,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.50959,
+          "render_ms": 53.019228,
+          "total_ms": 53.528818,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.569698,
+          "render_ms": 60.95404,
+          "total_ms": 61.523738,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.73252,
+          "render_ms": 51.909422,
+          "total_ms": 52.641942,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 1.330502,
+          "render_ms": 74.460213,
+          "total_ms": 75.79071499999999,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.70366,
+          "render_ms": 56.124562,
+          "total_ms": 56.828222,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.66741,
+          "render_ms": 41.550792,
+          "total_ms": 42.218202,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.56819,
+          "render_ms": 52.090047,
+          "total_ms": 52.658237,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.640429,
+          "render_ms": 44.048096,
+          "total_ms": 44.688525,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.635298,
+          "render_ms": 44.098816,
+          "total_ms": 44.734114,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.680696,
+          "render_ms": 43.789276,
+          "total_ms": 44.469972,
+          "output_bytes": 387961
+        },
+        {
+          "build_ms": 0.58888,
+          "render_ms": 45.496386,
+          "total_ms": 46.085266000000004,
+          "output_bytes": 387961
+        }
+      ],
+      "build_median_ms": 0.635298,
+      "render_median_ms": 49.554937,
+      "total_median_ms": 50.123883,
+      "total_p95_ms": 62.833940000000005,
+      "output_bytes_median": 387961,
+      "render_tier": "direct"
+    },
+    {
+      "family": "scatter",
+      "case": "200,000 points",
+      "work_units": 200000,
+      "unit": "points",
+      "library": "matplotlib",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "agg",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 247464,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 14.516366,
+          "render_ms": 1102.035663,
+          "total_ms": 1116.5520290000002,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 15.985902,
+          "render_ms": 1120.012987,
+          "total_ms": 1135.998889,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 20.733372,
+          "render_ms": 1246.32326,
+          "total_ms": 1267.0566319999998,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 13.733884,
+          "render_ms": 1096.242304,
+          "total_ms": 1109.976188,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 20.283677,
+          "render_ms": 1120.476224,
+          "total_ms": 1140.759901,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 14.085257,
+          "render_ms": 1103.723054,
+          "total_ms": 1117.808311,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 14.355645,
+          "render_ms": 1106.614507,
+          "total_ms": 1120.970152,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 14.539679,
+          "render_ms": 1171.218176,
+          "total_ms": 1185.757855,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 13.910925,
+          "render_ms": 1170.513469,
+          "total_ms": 1184.424394,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 16.695301,
+          "render_ms": 1096.508505,
+          "total_ms": 1113.203806,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 18.239655,
+          "render_ms": 1160.554085,
+          "total_ms": 1178.79374,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 14.781588,
+          "render_ms": 1105.029378,
+          "total_ms": 1119.810966,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 16.299875,
+          "render_ms": 1158.240927,
+          "total_ms": 1174.540802,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 17.6547,
+          "render_ms": 1382.508225,
+          "total_ms": 1400.162925,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 16.408477,
+          "render_ms": 1128.813038,
+          "total_ms": 1145.221515,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 17.274536,
+          "render_ms": 1145.532654,
+          "total_ms": 1162.80719,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 15.570782,
+          "render_ms": 1307.329718,
+          "total_ms": 1322.9005,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 13.661943,
+          "render_ms": 1208.712692,
+          "total_ms": 1222.3746350000001,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 14.095588,
+          "render_ms": 1163.875051,
+          "total_ms": 1177.970639,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 13.101417,
+          "render_ms": 1131.813275,
+          "total_ms": 1144.914692,
+          "output_bytes": 261448
+        },
+        {
+          "build_ms": 14.57387,
+          "render_ms": 1163.932187,
+          "total_ms": 1178.506057,
+          "output_bytes": 261448
+        }
+      ],
+      "build_median_ms": 14.781588,
+      "render_median_ms": 1145.532654,
+      "total_median_ms": 1162.80719,
+      "total_p95_ms": 1322.9005,
+      "output_bytes_median": 261448
+    },
+    {
+      "family": "histogram",
+      "case": "1,000,000 values / 200 bins",
+      "work_units": 1000000,
+      "unit": "values",
+      "library": "xy.pyplot",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "native-raster",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 268380,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 9.988846,
+          "render_ms": 18.328647,
+          "total_ms": 28.317493,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.736824,
+          "render_ms": 16.879927,
+          "total_ms": 26.616751,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 13.400206,
+          "render_ms": 27.720105,
+          "total_ms": 41.120311,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.731546,
+          "render_ms": 16.639037,
+          "total_ms": 26.370582999999996,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.175073,
+          "render_ms": 16.929818,
+          "total_ms": 27.104891000000002,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.334886,
+          "render_ms": 16.929604,
+          "total_ms": 27.264490000000002,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.338741,
+          "render_ms": 17.466329,
+          "total_ms": 26.80507,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.47297,
+          "render_ms": 16.571534,
+          "total_ms": 26.044504,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.202628,
+          "render_ms": 16.629338,
+          "total_ms": 25.831966,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.773973,
+          "render_ms": 16.876367,
+          "total_ms": 26.65034,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.580652,
+          "render_ms": 16.495716,
+          "total_ms": 26.076368000000002,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.633419,
+          "render_ms": 17.09882,
+          "total_ms": 26.732239,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.658443,
+          "render_ms": 24.348762,
+          "total_ms": 34.007205,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.570297,
+          "render_ms": 17.917878,
+          "total_ms": 28.488175000000002,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.086477,
+          "render_ms": 18.021689,
+          "total_ms": 28.108165999999997,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.88376,
+          "render_ms": 16.73013,
+          "total_ms": 26.613889999999998,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 9.765668,
+          "render_ms": 17.022162,
+          "total_ms": 26.78783,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.444143,
+          "render_ms": 17.058656,
+          "total_ms": 27.502799,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.916316,
+          "render_ms": 17.284731,
+          "total_ms": 28.201047000000003,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.270844,
+          "render_ms": 18.373218,
+          "total_ms": 28.644062,
+          "output_bytes": 86320
+        },
+        {
+          "build_ms": 10.079717,
+          "render_ms": 18.234571,
+          "total_ms": 28.314287999999998,
+          "output_bytes": 86320
+        }
+      ],
+      "build_median_ms": 9.88376,
+      "render_median_ms": 17.058656,
+      "total_median_ms": 27.104891000000002,
+      "total_p95_ms": 34.007205,
+      "output_bytes_median": 86320,
+      "render_tier": "direct"
+    },
+    {
+      "family": "histogram",
+      "case": "1,000,000 values / 200 bins",
+      "work_units": 1000000,
+      "unit": "values",
+      "library": "matplotlib",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "agg",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 278893,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 93.643807,
+          "render_ms": 115.477886,
+          "total_ms": 209.121693,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 95.824645,
+          "render_ms": 128.748145,
+          "total_ms": 224.57279,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 95.829231,
+          "render_ms": 121.957936,
+          "total_ms": 217.787167,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 94.689928,
+          "render_ms": 114.863943,
+          "total_ms": 209.55387100000002,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 94.864582,
+          "render_ms": 117.616226,
+          "total_ms": 212.480808,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 99.730934,
+          "render_ms": 132.439443,
+          "total_ms": 232.17037700000003,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 95.698257,
+          "render_ms": 116.794203,
+          "total_ms": 212.49246,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 99.585826,
+          "render_ms": 116.402033,
+          "total_ms": 215.98785900000001,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 104.268411,
+          "render_ms": 119.826958,
+          "total_ms": 224.095369,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 92.258287,
+          "render_ms": 116.297323,
+          "total_ms": 208.55561,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 94.772416,
+          "render_ms": 115.78942,
+          "total_ms": 210.56183600000003,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 92.91118,
+          "render_ms": 115.305536,
+          "total_ms": 208.21671600000002,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 97.479179,
+          "render_ms": 125.576045,
+          "total_ms": 223.055224,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 102.69152,
+          "render_ms": 157.027282,
+          "total_ms": 259.718802,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 106.406809,
+          "render_ms": 123.689209,
+          "total_ms": 230.09601800000002,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 98.3032,
+          "render_ms": 118.319253,
+          "total_ms": 216.622453,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 92.468747,
+          "render_ms": 116.051858,
+          "total_ms": 208.520605,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 106.327816,
+          "render_ms": 129.081804,
+          "total_ms": 235.40962000000002,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 98.283107,
+          "render_ms": 118.035226,
+          "total_ms": 216.318333,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 100.192622,
+          "render_ms": 124.840531,
+          "total_ms": 225.033153,
+          "output_bytes": 37962
+        },
+        {
+          "build_ms": 100.234843,
+          "render_ms": 131.813192,
+          "total_ms": 232.04803499999997,
+          "output_bytes": 37962
+        }
+      ],
+      "build_median_ms": 97.479179,
+      "render_median_ms": 118.319253,
+      "total_median_ms": 216.622453,
+      "total_p95_ms": 235.40962000000002,
+      "output_bytes_median": 37962
+    },
+    {
+      "family": "bar",
+      "case": "1,000 bars",
+      "work_units": 1000,
+      "unit": "bars",
+      "library": "xy.pyplot",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "native-raster",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 571026,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 0.680794,
+          "render_ms": 27.235864,
+          "total_ms": 27.916657999999998,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.620335,
+          "render_ms": 27.399684,
+          "total_ms": 28.020019,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.484484,
+          "render_ms": 26.469199,
+          "total_ms": 26.953682999999998,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.660774,
+          "render_ms": 25.255075,
+          "total_ms": 25.915849,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.466515,
+          "render_ms": 25.88482,
+          "total_ms": 26.351335000000002,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.598856,
+          "render_ms": 29.331148,
+          "total_ms": 29.930004,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.445626,
+          "render_ms": 26.499944,
+          "total_ms": 26.94557,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.701732,
+          "render_ms": 30.742826,
+          "total_ms": 31.444558,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.568227,
+          "render_ms": 35.885864,
+          "total_ms": 36.454091,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 1.699681,
+          "render_ms": 24.809144,
+          "total_ms": 26.508825,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.422096,
+          "render_ms": 24.742445,
+          "total_ms": 25.164541,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 1.5753,
+          "render_ms": 25.041429,
+          "total_ms": 26.616729,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.520743,
+          "render_ms": 25.214885,
+          "total_ms": 25.735628,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 1.436378,
+          "render_ms": 24.677041,
+          "total_ms": 26.113419,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.403143,
+          "render_ms": 24.633013,
+          "total_ms": 25.036156,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 1.444009,
+          "render_ms": 25.031488,
+          "total_ms": 26.475497,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.461768,
+          "render_ms": 24.61403,
+          "total_ms": 25.075798,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 1.512666,
+          "render_ms": 25.978367,
+          "total_ms": 27.491032999999998,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.463165,
+          "render_ms": 27.443942,
+          "total_ms": 27.907107,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 1.526441,
+          "render_ms": 24.82586,
+          "total_ms": 26.352300999999997,
+          "output_bytes": 87165
+        },
+        {
+          "build_ms": 0.435401,
+          "render_ms": 24.432592,
+          "total_ms": 24.867993,
+          "output_bytes": 87165
+        }
+      ],
+      "build_median_ms": 0.598856,
+      "render_median_ms": 25.255075,
+      "total_median_ms": 26.508825,
+      "total_p95_ms": 31.444558,
+      "output_bytes_median": 87165,
+      "render_tier": "direct"
+    },
+    {
+      "family": "bar",
+      "case": "1,000 bars",
+      "work_units": 1000,
+      "unit": "bars",
+      "library": "matplotlib",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "agg",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 476815,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 426.185763,
+          "render_ms": 240.725068,
+          "total_ms": 666.910831,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 408.685515,
+          "render_ms": 264.478817,
+          "total_ms": 673.1643320000001,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 407.951305,
+          "render_ms": 234.297168,
+          "total_ms": 642.248473,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 378.987502,
+          "render_ms": 234.992243,
+          "total_ms": 613.979745,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 413.186701,
+          "render_ms": 243.152125,
+          "total_ms": 656.338826,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 437.184982,
+          "render_ms": 262.434342,
+          "total_ms": 699.619324,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 403.612656,
+          "render_ms": 283.422836,
+          "total_ms": 687.035492,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 420.374443,
+          "render_ms": 305.588923,
+          "total_ms": 725.963366,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 394.75887,
+          "render_ms": 235.818565,
+          "total_ms": 630.577435,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 404.638731,
+          "render_ms": 232.447979,
+          "total_ms": 637.08671,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 376.896822,
+          "render_ms": 308.571638,
+          "total_ms": 685.46846,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 427.235577,
+          "render_ms": 225.884373,
+          "total_ms": 653.11995,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 376.289531,
+          "render_ms": 244.092398,
+          "total_ms": 620.381929,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 364.851614,
+          "render_ms": 239.495269,
+          "total_ms": 604.3468829999999,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 368.9187,
+          "render_ms": 228.512362,
+          "total_ms": 597.431062,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 370.328047,
+          "render_ms": 227.083101,
+          "total_ms": 597.411148,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 362.013836,
+          "render_ms": 225.916734,
+          "total_ms": 587.93057,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 366.599996,
+          "render_ms": 226.765479,
+          "total_ms": 593.365475,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 432.341695,
+          "render_ms": 226.779858,
+          "total_ms": 659.121553,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 368.227053,
+          "render_ms": 221.959526,
+          "total_ms": 590.186579,
+          "output_bytes": 30396
+        },
+        {
+          "build_ms": 369.703125,
+          "render_ms": 224.404725,
+          "total_ms": 594.10785,
+          "output_bytes": 30396
+        }
+      ],
+      "build_median_ms": 394.75887,
+      "render_median_ms": 234.992243,
+      "total_median_ms": 637.08671,
+      "total_p95_ms": 699.619324,
+      "output_bytes_median": 30396
+    },
+    {
+      "family": "pcolormesh",
+      "case": "200 x 300 cells",
+      "work_units": 60000,
+      "unit": "cells",
+      "library": "xy.pyplot",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "native-raster",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 909291,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 0.739849,
+          "render_ms": 34.236274,
+          "total_ms": 34.976123,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.749697,
+          "render_ms": 36.328969,
+          "total_ms": 37.078666,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.987993,
+          "render_ms": 41.164705,
+          "total_ms": 42.152698,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.723536,
+          "render_ms": 34.832614,
+          "total_ms": 35.55615,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.746883,
+          "render_ms": 35.162214,
+          "total_ms": 35.909096999999996,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.761383,
+          "render_ms": 34.605369,
+          "total_ms": 35.366752000000005,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.751105,
+          "render_ms": 34.901591,
+          "total_ms": 35.652696000000006,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.833807,
+          "render_ms": 30.723473,
+          "total_ms": 31.55728,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.761677,
+          "render_ms": 30.990993,
+          "total_ms": 31.75267,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.763601,
+          "render_ms": 34.449203,
+          "total_ms": 35.212804,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.794308,
+          "render_ms": 32.778636,
+          "total_ms": 33.572944,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.997393,
+          "render_ms": 40.571115,
+          "total_ms": 41.568508,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 1.038065,
+          "render_ms": 43.515227,
+          "total_ms": 44.553292000000006,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.80066,
+          "render_ms": 36.945545,
+          "total_ms": 37.746205,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 1.002282,
+          "render_ms": 36.43104,
+          "total_ms": 37.433322000000004,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.821611,
+          "render_ms": 34.054551,
+          "total_ms": 34.876161999999994,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 1.09916,
+          "render_ms": 45.312599,
+          "total_ms": 46.411758999999996,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.780441,
+          "render_ms": 48.233778,
+          "total_ms": 49.014219000000004,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.775286,
+          "render_ms": 30.470992,
+          "total_ms": 31.246278,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 0.753252,
+          "render_ms": 34.825311,
+          "total_ms": 35.578563,
+          "output_bytes": 439185
+        },
+        {
+          "build_ms": 1.116429,
+          "render_ms": 49.2033,
+          "total_ms": 50.319728999999995,
+          "output_bytes": 439185
+        }
+      ],
+      "build_median_ms": 0.780441,
+      "render_median_ms": 34.901591,
+      "total_median_ms": 35.652696000000006,
+      "total_p95_ms": 49.014219000000004,
+      "output_bytes_median": 439185,
+      "render_tier": "direct"
+    },
+    {
+      "family": "pcolormesh",
+      "case": "200 x 300 cells",
+      "work_units": 60000,
+      "unit": "cells",
+      "library": "matplotlib",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "agg",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 917293,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 13.725789,
+          "render_ms": 129.122,
+          "total_ms": 142.847789,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.247157,
+          "render_ms": 132.327792,
+          "total_ms": 145.57494899999998,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 15.457365,
+          "render_ms": 130.78537,
+          "total_ms": 146.242735,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.87314,
+          "render_ms": 131.345765,
+          "total_ms": 145.218905,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.593218,
+          "render_ms": 132.024908,
+          "total_ms": 145.61812600000002,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 14.086227,
+          "render_ms": 129.930649,
+          "total_ms": 144.016876,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.991927,
+          "render_ms": 134.621453,
+          "total_ms": 148.61338,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 14.939746,
+          "render_ms": 140.573663,
+          "total_ms": 155.51340900000002,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 14.329082,
+          "render_ms": 184.086273,
+          "total_ms": 198.415355,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.673254,
+          "render_ms": 145.197307,
+          "total_ms": 158.870561,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 15.817456,
+          "render_ms": 131.448792,
+          "total_ms": 147.266248,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.55556,
+          "render_ms": 129.472021,
+          "total_ms": 143.027581,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.855623,
+          "render_ms": 132.25224,
+          "total_ms": 146.107863,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 14.381647,
+          "render_ms": 137.187244,
+          "total_ms": 151.56889099999998,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 13.901533,
+          "render_ms": 131.803246,
+          "total_ms": 145.704779,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 27.691934,
+          "render_ms": 149.163061,
+          "total_ms": 176.854995,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 20.943225,
+          "render_ms": 173.30412,
+          "total_ms": 194.24734500000002,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 14.955325,
+          "render_ms": 136.035556,
+          "total_ms": 150.990881,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 14.437566,
+          "render_ms": 164.971781,
+          "total_ms": 179.409347,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 15.185416,
+          "render_ms": 140.822985,
+          "total_ms": 156.008401,
+          "output_bytes": 103356
+        },
+        {
+          "build_ms": 22.317207,
+          "render_ms": 182.592566,
+          "total_ms": 204.909773,
+          "output_bytes": 103356
+        }
+      ],
+      "build_median_ms": 14.329082,
+      "render_median_ms": 134.621453,
+      "total_median_ms": 148.61338,
+      "total_p95_ms": 198.415355,
+      "output_bytes_median": 103356
+    },
+    {
+      "family": "contour",
+      "case": "150 x 200 / 12 levels",
+      "work_units": 30000,
+      "unit": "cells",
+      "library": "xy.pyplot",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "native-raster",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 73894,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 0.702481,
+          "render_ms": 19.642398,
+          "total_ms": 20.344879,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.677003,
+          "render_ms": 20.220312,
+          "total_ms": 20.897315,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.707852,
+          "render_ms": 21.660394,
+          "total_ms": 22.368246,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.731712,
+          "render_ms": 18.288005,
+          "total_ms": 19.019717,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.665836,
+          "render_ms": 19.286411,
+          "total_ms": 19.952247,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.727691,
+          "render_ms": 19.684475,
+          "total_ms": 20.412166,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.718429,
+          "render_ms": 19.951161,
+          "total_ms": 20.66959,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.680548,
+          "render_ms": 18.861794,
+          "total_ms": 19.542342,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.945141,
+          "render_ms": 19.834255,
+          "total_ms": 20.779396,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.654759,
+          "render_ms": 19.941908,
+          "total_ms": 20.596667,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.676668,
+          "render_ms": 18.478482,
+          "total_ms": 19.15515,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.695315,
+          "render_ms": 21.13687,
+          "total_ms": 21.832185,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.941549,
+          "render_ms": 28.748559,
+          "total_ms": 29.690108,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.646207,
+          "render_ms": 18.530917,
+          "total_ms": 19.177124,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.665791,
+          "render_ms": 18.458806,
+          "total_ms": 19.124596999999998,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.713758,
+          "render_ms": 18.411621,
+          "total_ms": 19.125379,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.720646,
+          "render_ms": 18.807498,
+          "total_ms": 19.528143999999998,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.937991,
+          "render_ms": 29.3879,
+          "total_ms": 30.325891,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.938375,
+          "render_ms": 28.187191,
+          "total_ms": 29.125566,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.708301,
+          "render_ms": 18.671985,
+          "total_ms": 19.380285999999998,
+          "output_bytes": 377687
+        },
+        {
+          "build_ms": 0.719892,
+          "render_ms": 19.919573,
+          "total_ms": 20.639465,
+          "output_bytes": 377687
+        }
+      ],
+      "build_median_ms": 0.708301,
+      "render_median_ms": 19.684475,
+      "total_median_ms": 20.412166,
+      "total_p95_ms": 29.690108,
+      "output_bytes_median": 377687,
+      "render_tier": "direct"
+    },
+    {
+      "family": "contour",
+      "case": "150 x 200 / 12 levels",
+      "work_units": 30000,
+      "unit": "cells",
+      "library": "matplotlib",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "agg",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 130163,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 14.933101,
+          "render_ms": 127.195201,
+          "total_ms": 142.128302,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.456925,
+          "render_ms": 130.521917,
+          "total_ms": 141.97884200000001,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 10.9706,
+          "render_ms": 124.569628,
+          "total_ms": 135.54022799999998,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.332121,
+          "render_ms": 123.972614,
+          "total_ms": 135.304735,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.281913,
+          "render_ms": 123.95159,
+          "total_ms": 135.23350299999998,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 12.092469,
+          "render_ms": 124.566732,
+          "total_ms": 136.659201,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 19.467712,
+          "render_ms": 139.150745,
+          "total_ms": 158.618457,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 12.379186,
+          "render_ms": 127.547697,
+          "total_ms": 139.926883,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.699272,
+          "render_ms": 123.529177,
+          "total_ms": 135.228449,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.749992,
+          "render_ms": 125.311819,
+          "total_ms": 137.061811,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 15.597431,
+          "render_ms": 123.74875,
+          "total_ms": 139.346181,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.239227,
+          "render_ms": 123.641693,
+          "total_ms": 134.88092,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 12.89174,
+          "render_ms": 121.22877,
+          "total_ms": 134.12051,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 15.253317,
+          "render_ms": 130.701229,
+          "total_ms": 145.95454600000002,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.010092,
+          "render_ms": 123.490203,
+          "total_ms": 134.500295,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.997177,
+          "render_ms": 121.520057,
+          "total_ms": 133.517234,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.33394,
+          "render_ms": 123.224866,
+          "total_ms": 134.558806,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.378482,
+          "render_ms": 156.937432,
+          "total_ms": 168.315914,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 14.354056,
+          "render_ms": 128.60924,
+          "total_ms": 142.963296,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 13.137463,
+          "render_ms": 144.407749,
+          "total_ms": 157.545212,
+          "output_bytes": 294213
+        },
+        {
+          "build_ms": 11.463775,
+          "render_ms": 124.594654,
+          "total_ms": 136.05842900000002,
+          "output_bytes": 294213
+        }
+      ],
+      "build_median_ms": 11.749992,
+      "render_median_ms": 124.569628,
+      "total_median_ms": 136.659201,
+      "total_p95_ms": 158.618457,
+      "output_bytes_median": 294213
+    }
+  ],
+  "comparisons": [
+    {
+      "family": "line",
+      "case": "200,000 samples",
+      "work_units": 200000,
+      "unit": "samples",
+      "xy_speedup_total": 6.65270764237113,
+      "target_xy_speedup_total": 10.0,
+      "meets_target": false,
+      "xy_speedup_build": 8.520486788885412,
+      "xy_speedup_render": 6.541334968014708,
+      "png_size_ratio_matplotlib_over_xy": 0.6246379031345103,
+      "winner_total": "xy.pyplot",
+      "xy_render_tier": "decimated"
+    },
+    {
+      "family": "scatter",
+      "case": "200,000 points",
+      "work_units": 200000,
+      "unit": "points",
+      "xy_speedup_total": 23.19866539469817,
+      "target_xy_speedup_total": 10.0,
+      "meets_target": true,
+      "xy_speedup_build": 23.267172256169545,
+      "xy_speedup_render": 23.116418329822515,
+      "png_size_ratio_matplotlib_over_xy": 0.6739027891978833,
+      "winner_total": "xy.pyplot",
+      "xy_render_tier": "direct"
+    },
+    {
+      "family": "histogram",
+      "case": "1,000,000 values / 200 bins",
+      "work_units": 1000000,
+      "unit": "values",
+      "xy_speedup_total": 7.992006055290906,
+      "target_xy_speedup_total": 10.0,
+      "meets_target": false,
+      "xy_speedup_build": 9.862560300938105,
+      "xy_speedup_render": 6.936024326887183,
+      "png_size_ratio_matplotlib_over_xy": 0.4397822057460612,
+      "winner_total": "xy.pyplot",
+      "xy_render_tier": "direct"
+    },
+    {
+      "family": "bar",
+      "case": "1,000 bars",
+      "work_units": 1000,
+      "unit": "bars",
+      "xy_speedup_total": 24.033004480583354,
+      "target_xy_speedup_total": 10.0,
+      "meets_target": true,
+      "xy_speedup_build": 659.1883023631724,
+      "xy_speedup_render": 9.304753321857092,
+      "png_size_ratio_matplotlib_over_xy": 0.3487179487179487,
+      "winner_total": "xy.pyplot",
+      "xy_render_tier": "direct"
+    },
+    {
+      "family": "pcolormesh",
+      "case": "200 x 300 cells",
+      "work_units": 60000,
+      "unit": "cells",
+      "xy_speedup_total": 4.168363032069159,
+      "target_xy_speedup_total": 10.0,
+      "meets_target": false,
+      "xy_speedup_build": 18.36023735298376,
+      "xy_speedup_render": 3.8571723850640502,
+      "png_size_ratio_matplotlib_over_xy": 0.23533590628095222,
+      "winner_total": "xy.pyplot",
+      "xy_render_tier": "direct"
+    },
+    {
+      "family": "contour",
+      "case": "150 x 200 / 12 levels",
+      "work_units": 30000,
+      "unit": "cells",
+      "xy_speedup_total": 6.694987734275726,
+      "target_xy_speedup_total": 10.0,
+      "meets_target": false,
+      "xy_speedup_build": 16.588981238202404,
+      "xy_speedup_render": 6.328318535292407,
+      "png_size_ratio_matplotlib_over_xy": 0.7789863034735112,
+      "winner_total": "xy.pyplot",
+      "xy_render_tier": "direct"
+    }
+  ],
+  "target_xy_speedup_total": 10.0,
+  "all_targets_met": false,
+  "geometric_mean_xy_speedup_total": 9.688876914111853
+}

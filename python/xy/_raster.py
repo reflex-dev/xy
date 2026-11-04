@@ -245,7 +245,10 @@ class _Cmd:
         *,
         offset: tuple[float, float] = (0.0, 0.0),
     ) -> None:
-        if len(pts) < 3:
+        # Alpha 0 cannot change a pixel (the native blend skips it), so a
+        # transparent paint is dropped here rather than packed and
+        # rasterized for nothing (issue #552).
+        if len(pts) < 3 or color[3] == 0:
             return
         self.buf.append(_FILL)
         self._u32(len(pts))
@@ -289,7 +292,7 @@ class _Cmd:
         cap: str = "round",
         offset: tuple[float, float] = (0.0, 0.0),
     ) -> None:
-        if len(pts) < 2 or width <= 0:
+        if len(pts) < 2 or width <= 0 or color[3] == 0:
             return
         phased = bool(dash) and math.isfinite(dash_offset) and dash_offset != 0
         self.buf.append(_PHASED_STROKE if phased else _STROKE)
@@ -1029,50 +1032,37 @@ def render_raster(
     cmd.clip(px0, py0, plot["w"], plot["h"])
     if polar is not None:
         _emit_polar_grid(cmd, polar, xt, yt, xstyle, ystyle, default_grid, hide_x, hide_y)
-    for v in [] if hide_x or polar is not None else xmt:
-        gx = float(sx(v))
-        cmd.stroke(
-            [(gx, py0), (gx, py1)],
-            float(xmstyle.get("grid_width", 1)),
-            _parse_color(
-                _css(xmstyle.get("grid_color"), "transparent"),
-                float(xmstyle.get("grid_opacity", 1.0)),
-            ),
-            dash=_AXIS_GRID_DASHES.get(str(xmstyle.get("grid_dash", "solid"))),
-        )
-    for v in [] if hide_y or polar is not None else ymt:
-        gy = float(sy(v))
-        cmd.stroke(
-            [(px0, gy), (px1, gy)],
-            float(ymstyle.get("grid_width", 1)),
-            _parse_color(
-                _css(ymstyle.get("grid_color"), "transparent"),
-                float(ymstyle.get("grid_opacity", 1.0)),
-            ),
-            dash=_AXIS_GRID_DASHES.get(str(ymstyle.get("grid_dash", "solid"))),
-        )
-    for v in [] if hide_x or polar is not None else xt:
-        gx = float(sx(v))
-        cmd.stroke(
-            [(gx, py0), (gx, py1)],
-            float(xstyle.get("grid_width", 1)),
-            _parse_color(
-                _css(xstyle.get("grid_color"), default_grid),
-                float(xstyle.get("grid_opacity", 1.0)),
-            ),
-            dash=_AXIS_GRID_DASHES.get(str(xstyle.get("grid_dash", "solid"))),
-        )
-    for v in [] if hide_y or polar is not None else yt:
-        gy = float(sy(v))
-        cmd.stroke(
-            [(px0, gy), (px1, gy)],
-            float(ystyle.get("grid_width", 1)),
-            _parse_color(
-                _css(ystyle.get("grid_color"), default_grid),
-                float(ystyle.get("grid_opacity", 1.0)),
-            ),
-            dash=_AXIS_GRID_DASHES.get(str(ystyle.get("grid_dash", "solid"))),
-        )
+    if polar is None:
+        # One color/width/dash resolution per grid family, not per tick, and
+        # a fully transparent family (Matplotlib's default ``axes.grid=False``
+        # lowers to alpha 0) emits nothing: an alpha-0 stroke cannot change a
+        # pixel, but rasterizing it still cost a full-length distance-field
+        # pass per tick line (issue #552).
+        for ticks, style, fallback, vertical in (
+            ([] if hide_x else xmt, xmstyle, "transparent", True),
+            ([] if hide_y else ymt, ymstyle, "transparent", False),
+            ([] if hide_x else xt, xstyle, default_grid, True),
+            ([] if hide_y else yt, ystyle, default_grid, False),
+        ):
+            if not len(ticks):
+                continue
+            grid_color = _parse_color(
+                _css(style.get("grid_color"), fallback),
+                float(style.get("grid_opacity", 1.0)),
+            )
+            if grid_color[3] == 0:
+                continue
+            grid_width = float(style.get("grid_width", 1))
+            grid_dash = _AXIS_GRID_DASHES.get(str(style.get("grid_dash", "solid")))
+            grid_scale = sx if vertical else sy
+            for v in ticks:
+                g = float(grid_scale(v))
+                cmd.stroke(
+                    [(g, py0), (g, py1)] if vertical else [(px0, g), (px1, g)],
+                    grid_width,
+                    grid_color,
+                    dash=grid_dash,
+                )
 
     # Grid/frame chrome is drawn before the shaped clip. Marks then share one
     # analytic annular-sector clip in the native painter, matching SVG's

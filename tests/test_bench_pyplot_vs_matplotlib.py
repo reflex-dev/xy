@@ -81,3 +81,26 @@ def test_png_dimension_oracle_reads_ihdr() -> None:
     )
 
     assert bench._png_dimensions(png) == (1800, 840)
+
+
+def test_both_adapters_export_at_the_shared_export_dpi() -> None:
+    """Both arms build at BUILD_DPI and must *export* at EXPORT_DPI.
+
+    The xy adapter used to call ``savefig`` without ``dpi``, so it exported at
+    its 100-DPI build size (900 x 420) and the harness failed its 1800 x 840
+    dimension oracle before producing a comparison (issue #552).
+    """
+    calls: list[dict[str, object]] = []
+
+    class _Figure:
+        def savefig(self, out, **kwargs) -> None:  # noqa: ANN001
+            calls.append(kwargs)
+            out.write(b"png")
+
+    assert bench._xy_render(_Figure()) == b"png"
+    assert bench._matplotlib_render(_Figure()) == b"png"
+    assert calls == [
+        {"format": "png", "dpi": bench.EXPORT_DPI},
+        {"format": "png", "dpi": bench.EXPORT_DPI},
+    ]
+    assert (bench.PNG_W, bench.PNG_H) == (1800, 840)

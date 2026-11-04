@@ -245,7 +245,7 @@ it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 The glob collects six modules — `test_codspeed_animation.py`,
 `test_codspeed_kernels.py`, `test_codspeed_polar.py`,
 `test_codspeed_pyplot.py`, `test_codspeed_selection.py`, and
-`test_codspeed_transport.py` — for **109 rows** total, counting parametrized
+`test_codspeed_transport.py` — for **111 rows** total, counting parametrized
 expansion. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
 
@@ -259,7 +259,7 @@ no longer exists. Removing one is allowed; removing one silently is not. Stale
 rows already in the dashboard have to be archived there by hand; this gate stops
 new ones appearing.
 
-**`benchmarks/test_codspeed_pyplot.py` — 14 rows, seven paired arms.** Each pair
+**`benchmarks/test_codspeed_pyplot.py` — 16 rows, eight paired arms.** Each pair
 expresses one chart twice over the same input arrays: once through the
 declarative API (`xy.chart` + marks) and once through the identical
 matplotlib-style calls in `xy.pyplot`. Both arms end at the same terminal work —
@@ -270,8 +270,12 @@ bookkeeping. The pyplot arm includes `plt.close("all")` because figure-registry
 bookkeeping is part of the shim's per-figure cost. The pairs are a 10k line, a
 1M line, a 100k scatter, a 100k-value/200-bin histogram, a 1k-category bar, a
 5k-point three-series styled panel (title, axis labels, legend — the shim's
-worst honest case, where translation is largest relative to data), and a
-100k-point PNG export.
+worst honest case, where translation is largest relative to data), a
+100k-point PNG export, and the release harness's smoke contour export (80x100
+grid, eight levels, 1800x840 PNG; issue #552). The contour pair sits last in
+the module and warms its own lazy imports untimed, so adding it left every
+pre-existing row's fixture and import order — and so its CodSpeed baseline —
+unchanged.
 
 Fairness pins, all asserted in the module rather than assumed:
 
@@ -280,8 +284,16 @@ Fairness pins, all asserted in the module rather than assumed:
   so chrome layout work is identical on both sides.
 - The export pair uses `scale=2.0` to match `savefig`'s fixed 2x supersampling —
   both emit a 1280x960 canvas. A smaller raw canvas would overstate the gap.
-- Every pair except the histogram asserts byte-identical payload sizes across
-  arms, so a row cannot get faster by shipping a different chart. This is §2's
+- The contour export pair builds 900x420 logical px on both arms; the raw arm
+  exports at `scale=2.0` and the pyplot arm at `savefig(dpi=200)` from a
+  100-DPI figure, so both emit the 1800x840 PNG the Matplotlib comparison
+  targets (the pyplot arm asserts the IHDR size). The pyplot arm includes
+  figure construction, matching that harness's total-time metric.
+- Every payload pair except the histogram asserts byte-identical payload sizes
+  across arms, so a row cannot get faster by shipping a different chart. The
+  two export pairs end in PNG bytes instead and assert a valid PNG (the
+  contour pyplot arm also its 1800x840 IHDR); their arms differ in pyplot
+  chrome, so byte equality is not the oracle there. This is §2's
   oracle discipline applied to a shim-overhead measurement.
 - The histogram pair is exempt and documents why: `ax.hist` pre-bins with NumPy
   because it must return matplotlib's `(n, bins, patches)` tuple and then ships
@@ -382,7 +394,12 @@ in the focused-gate table of `spec/process/production-readiness.md`.
   side: figure construction through a completed, compressed PNG at a shared
   1800x840 target against
   matplotlib/Agg, reported per family — line, scatter, histogram, bar,
-  pcolormesh, contour. `--require-target` exits nonzero unless every family
+  pcolormesh, contour. Both adapters build a 9x4.2in figure at 100 DPI and
+  export with `savefig(format="png", dpi=200)`; the xy adapter once omitted
+  the export DPI and failed the 1800x840 dimension oracle before producing a
+  comparison (issue #552), so
+  `tests/test_bench_pyplot_vs_matplotlib.py::test_both_adapters_export_at_the_shared_export_dpi`
+  pins the call. `--require-target` exits nonzero unless every family
   reaches the 10x total-time target. The run alternates library order to reduce
   drift bias, excludes data generation, imports, and the first warm-up render,
   retains raw timing samples in its JSON artifact, and fails a case whose PNG

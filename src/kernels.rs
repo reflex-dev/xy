@@ -2853,7 +2853,42 @@ where
     assert_eq!(y_coords.len(), rows);
     let mut count = 0usize;
     let sorted_levels = levels.windows(2).all(|pair| pair[0] <= pair[1]);
+    // Per-vertex level bands for the sorted fast path: `below[c]` counts the
+    // levels `< z` and `upto[c]` the levels `<= z`. Both are monotone in `z`,
+    // so a finite cell's `levels.partition_point(< local_min)` is exactly the
+    // minimum of its four corners' `below`, and `partition_point(<= local_max)`
+    // the maximum of their `upto`. Computing the bands once per vertex (two
+    // rolling rows) instead of two branchy binary searches per cell keeps the
+    // traversal and emission order identical while the common no-crossing
+    // cell is rejected with a handful of integer min/max ops (issue #552).
+    let bands = sorted_levels && levels.iter().all(|level| level.is_finite());
+    let band_of = |value: f64| -> (u32, u32) {
+        if levels.len() <= 64 {
+            let mut below = 0u32;
+            let mut upto = 0u32;
+            for &level in levels {
+                below += u32::from(level < value);
+                upto += u32::from(level <= value);
+            }
+            (below, upto)
+        } else {
+            (
+                levels.partition_point(|level| *level < value) as u32,
+                levels.partition_point(|level| *level <= value) as u32,
+            )
+        }
+    };
+    let fill_bands = |row: usize, out: &mut Vec<(u32, u32)>| {
+        out.clear();
+        if bands {
+            out.extend(z[row * cols..(row + 1) * cols].iter().map(|&v| band_of(v)));
+        }
+    };
+    let mut band_lo: Vec<(u32, u32)> = Vec::with_capacity(if bands { cols } else { 0 });
+    let mut band_hi: Vec<(u32, u32)> = Vec::with_capacity(if bands { cols } else { 0 });
+    fill_bands(0, &mut band_lo);
     for row in 0..rows - 1 {
+        fill_bands(row + 1, &mut band_hi);
         for col in 0..cols - 1 {
             let v00 = z[row * cols + col];
             let v10 = z[row * cols + col + 1];
@@ -2861,6 +2896,22 @@ where
             let v01 = z[(row + 1) * cols + col];
             let all_finite =
                 v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite();
+            let band_range = if bands && all_finite {
+                let corners = [
+                    band_lo[col],
+                    band_lo[col + 1],
+                    band_hi[col + 1],
+                    band_hi[col],
+                ];
+                let start = corners.iter().map(|band| band.0).min().unwrap_or(0) as usize;
+                let end = corners.iter().map(|band| band.1).max().unwrap_or(0) as usize;
+                if start >= end {
+                    continue;
+                }
+                Some((start, end))
+            } else {
+                None
+            };
             let (local_min, local_max, triangle_edges): (
                 f64,
                 f64,
@@ -2973,7 +3024,11 @@ where
                     count += 1;
                 }
             };
-            if sorted_levels {
+            if let Some((start, end)) = band_range {
+                for &level in &levels[start..end] {
+                    process_level(level);
+                }
+            } else if sorted_levels {
                 let start = levels.partition_point(|level| *level < local_min);
                 let end = levels.partition_point(|level| *level <= local_max);
                 for &level in &levels[start..end] {
@@ -2987,6 +3042,7 @@ where
                 }
             }
         }
+        std::mem::swap(&mut band_lo, &mut band_hi);
     }
     count
 }
@@ -6271,6 +6327,71 @@ mod tests {
             &mut emitted_levels,
         );
         assert_eq!(written, 0);
+    }
+
+    #[test]
+    fn marching_squares_level_bands_match_the_generic_scan() {
+        // Issue #552: sorted finite levels take the per-vertex band fast path.
+        // A trailing NaN level disables it (the sortedness check fails) while
+        // emitting nothing itself, so the generic per-level scan is the
+        // reference. Both must agree segment for segment, in order.
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let scan = |z: &[f64], rows, cols, xs: &[f64], ys: &[f64], levels: &[f64], mask| {
+            let mut out = Vec::new();
+            marching_squares_scan(z, rows, cols, xs, ys, levels, mask, |a, b, c, d, e| {
+                out.push([a, b, c, d, e].map(f64::to_bits));
+            });
+            out
+        };
+        for case in 0..48 {
+            let rows = 2 + (next() * 30.0) as usize;
+            let cols = 2 + (next() * 30.0) as usize;
+            let xs: Vec<f64> = (0..cols).map(|i| i as f64 * 0.7).collect();
+            let ys: Vec<f64> = (0..rows).map(|i| i as f64 * 1.3).collect();
+            let mut z: Vec<f64> = (0..rows * cols)
+                .map(|_| {
+                    let v = next() * 4.0 - 2.0;
+                    // Coarse values collide exactly with the coarse levels.
+                    if case % 2 == 0 {
+                        (v * 4.0).round() / 4.0
+                    } else {
+                        v
+                    }
+                })
+                .collect();
+            let cells = z.len() as f64;
+            if case % 3 == 0 {
+                z[(next() * cells) as usize] = f64::NAN;
+            }
+            if case % 5 == 0 {
+                z[(next() * cells) as usize] = f64::INFINITY;
+            }
+            let n_levels = [1usize, 4, 13, 64, 65, 150][case % 6];
+            let mut levels: Vec<f64> = (0..n_levels)
+                .map(|_| {
+                    let v = next() * 4.0 - 2.0;
+                    if case % 2 == 0 {
+                        (v * 4.0).round() / 4.0
+                    } else {
+                        v
+                    }
+                })
+                .collect();
+            levels.sort_by(f64::total_cmp);
+            let mut generic_levels = levels.clone();
+            generic_levels.push(f64::NAN);
+            for mask in [false, true] {
+                let fast = scan(&z, rows, cols, &xs, &ys, &levels, mask);
+                let generic = scan(&z, rows, cols, &xs, &ys, &generic_levels, mask);
+                assert_eq!(fast, generic, "case={case} levels={n_levels} mask={mask}");
+            }
+        }
     }
 
     #[test]

@@ -306,14 +306,14 @@ fn blend_px(px: &mut [u8], o: usize, opaque: bool, rgba: [u8; 4]) {
     }
     let src = [rgba[0] as u32, rgba[1] as u32, rgba[2] as u32];
     if opaque {
+        // One bounds check per pixel instead of one per channel.
+        let dst = &mut px[o..o + 3];
         if sa == 255 {
-            px[o] = src[0] as u8;
-            px[o + 1] = src[1] as u8;
-            px[o + 2] = src[2] as u8;
+            dst.copy_from_slice(&rgba[..3]);
         } else {
             let inv = 255 - sa;
-            for (k, source) in src.iter().enumerate() {
-                px[o + k] = ((*source * sa + px[o + k] as u32 * inv + 127) / 255) as u8;
+            for (d, source) in dst.iter_mut().zip(src) {
+                *d = ((source * sa + *d as u32 * inv + 127) / 255) as u8;
             }
         }
         return;
@@ -415,7 +415,7 @@ fn stroke_segment_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f32,
 }
 
 fn stroke_segment_u8_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f32, rgba: [u8; 4]) {
-    if width <= 0.0 {
+    if width <= 0.0 || rgba[3] == 0 {
         return;
     }
     let hw = width * 0.5;
@@ -423,18 +423,42 @@ fn stroke_segment_u8_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f
     let outer2 = outer * outer;
     let inner = (hw - 0.5).max(0.0);
     let inner2 = inner * inner;
-    let rgb = [rgba[0], rgba[1], rgba[2]];
     let alpha = rgba[3] as f32 / 255.0;
-    let paint = |cv: &mut Surface, x: usize, y: usize, p: (f32, f32)| {
-        let distance2 = seg_dist2(p, a, b);
+    let (ax, ay) = a;
+    let (dx, dy) = (b.0 - ax, b.1 - ay);
+    // `seg_dist2` with its per-segment terms hoisted. Every per-pixel
+    // operation keeps the same operands and order, so coverage is bit-for-bit
+    // what `seg_dist2` yields; only loop-invariant work moves out of the
+    // pixel loop.
+    let len2 = dx * dx + dy * dy;
+    let degenerate = len2 <= 1e-12;
+    // Coverage byte for one pixel centre: 0 outside the capsule, the stroke's
+    // own alpha byte in its solid core, and the 1px analytic ramp between —
+    // exactly the bytes the old inner/edge branches handed `blend_u8` and
+    // `blend_prepared`, now through one blend call.
+    let alpha8_at = |px: f32, py: f32| -> u8 {
+        let t = if degenerate {
+            0.0
+        } else {
+            (((px - ax) * dx + (py - ay) * dy) / len2).clamp(0.0, 1.0)
+        };
+        let (cx, cy) = (ax + t * dx, ay + t * dy);
+        let distance2 = (px - cx).powi(2) + (py - cy).powi(2);
         if distance2 >= outer2 {
-            return;
+            0
+        } else if distance2 <= inner2 {
+            rgba[3]
+        } else {
+            to_u8(alpha * (outer - distance2.sqrt()))
         }
-        if distance2 <= inner2 {
-            cv.blend_u8(x, y, rgba);
-            return;
+    };
+    let paint = |cv: &mut Surface, x: usize, y: usize| {
+        // Canvas coordinates are far below 2^24, so the u32 hop is exact and
+        // avoids the branchy u64 -> f32 conversion x86-64 emits for usize.
+        let alpha8 = alpha8_at(x as u32 as f32 + 0.5, y as u32 as f32 + 0.5);
+        if alpha8 != 0 {
+            cv.blend_u8(x, y, [rgba[0], rgba[1], rgba[2], alpha8]);
         }
-        cv.blend_prepared(x, y, rgb, alpha, outer - distance2.sqrt());
     };
     let (bx0, by0, bx1, by1) = cv.bbox(
         a.0.min(b.0) - hw - 1.0,
@@ -442,31 +466,30 @@ fn stroke_segment_u8_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f
         a.0.max(b.0) + hw + 1.0,
         a.1.max(b.1) + hw + 1.0,
     );
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     if dx.abs() >= dy.abs() && dx.abs() > 1e-6 {
         for x in bx0..bx1 {
-            let t = ((x as f32 + 0.5 - a.0) / dx).clamp(0.0, 1.0);
+            let t = ((x as u32 as f32 + 0.5 - a.0) / dx).clamp(0.0, 1.0);
             let center = a.1 + t * dy;
             let sy0 = ((center - hw - 1.0).floor() as usize).max(by0);
             let sy1 = ((center + hw + 1.0).ceil() as usize).min(by1);
             for y in sy0..sy1 {
-                paint(cv, x, y, (x as f32 + 0.5, y as f32 + 0.5));
+                paint(cv, x, y);
             }
         }
     } else if dy.abs() > 1e-6 {
         for y in by0..by1 {
-            let t = ((y as f32 + 0.5 - a.1) / dy).clamp(0.0, 1.0);
+            let t = ((y as u32 as f32 + 0.5 - a.1) / dy).clamp(0.0, 1.0);
             let center = a.0 + t * dx;
             let sx0 = ((center - hw - 1.0).floor() as usize).max(bx0);
             let sx1 = ((center + hw + 1.0).ceil() as usize).min(bx1);
             for x in sx0..sx1 {
-                paint(cv, x, y, (x as f32 + 0.5, y as f32 + 0.5));
+                paint(cv, x, y);
             }
         }
     } else {
         for y in by0..by1 {
             for x in bx0..bx1 {
-                paint(cv, x, y, (x as f32 + 0.5, y as f32 + 0.5));
+                paint(cv, x, y);
             }
         }
     }
@@ -503,32 +526,45 @@ fn fill_rect(cv: &mut Canvas<'_>, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
     if bx1 <= bx0 || by1 <= by0 {
         return true;
     }
-    if rgba[3] >= 1.0
-        && x0 <= bx0 as f32
-        && y0 <= by0 as f32
-        && x1 >= bx1 as f32
-        && y1 >= by1 as f32
-    {
-        let rgba8 = [to_u8(rgba[0]), to_u8(rgba[1]), to_u8(rgba[2]), 255];
-        let channels = cv.channels();
-        let color = &rgba8[..channels];
-        for y in by0..by1 {
-            let row = &mut cv.px[(y * cv.w + bx0) * channels..(y * cv.w + bx1) * channels];
-            if color.iter().all(|channel| *channel == color[0]) {
+    // Columns whose pixel lies entirely inside [x0, x1] have horizontal
+    // coverage exactly 1 (`(x + 1) - x` is exact in f32 for any canvas width),
+    // so for an opaque fill on a fully covered row their blend reduces to a
+    // plain store. Only the fractional edge pixels need the coverage blend.
+    // Fractional rect edges are the norm, not the exception: a Matplotlib
+    // subplot frame at export DPI lands its top edge at e.g. y = 100.8, and
+    // blending the whole plot-area background per pixel instead of storing it
+    // was the dominant cost of contour PNG export (issue #552).
+    let (ix0, ix1) = if rgba[3] >= 1.0 {
+        let ix0 = (x0.max(bx0 as f32).ceil() as usize).clamp(bx0, bx1);
+        let ix1 = (x1.min(bx1 as f32).floor() as usize).clamp(ix0, bx1);
+        (ix0, ix1)
+    } else {
+        (bx0, bx0)
+    };
+    let rgba8 = [to_u8(rgba[0]), to_u8(rgba[1]), to_u8(rgba[2]), 255];
+    let channels = cv.channels();
+    let color = &rgba8[..channels];
+    let uniform = color.iter().all(|channel| *channel == color[0]);
+    for y in by0..by1 {
+        let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
+        let (store0, store1) = if ix1 > ix0 && cy >= 1.0 {
+            (ix0, ix1)
+        } else {
+            (bx1, bx1)
+        };
+        for x in (bx0..store0).chain(store1..bx1) {
+            let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
+            cv.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
+        }
+        if store1 > store0 {
+            let row = &mut cv.px[(y * cv.w + store0) * channels..(y * cv.w + store1) * channels];
+            if uniform {
                 row.fill(color[0]);
             } else {
                 for pixel in row.chunks_exact_mut(channels) {
                     pixel.copy_from_slice(color);
                 }
             }
-        }
-        return true;
-    }
-    for y in by0..by1 {
-        let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
-        for x in bx0..bx1 {
-            let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
-            cv.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
         }
     }
     true
@@ -2134,8 +2170,15 @@ fn rgba_at(b: &[u8], i: usize) -> [f32; 4] {
 /// math dominates their compact wire decode, especially for thousands of
 /// short contour segments. Output is bit-identical at any fan-out: bands are
 /// disjoint and each pixel still receives blends in mark order.
+///
+/// The segment crossover is measured, not guessed (issue #552): on a 4-vCPU
+/// x86-64 VM where spawning four scoped workers costs ~0.2 ms, four bands beat
+/// the serial pass from ~20k estimated px and two bands from ~35k. 40k keeps
+/// a margin over both while catching the 8-level smoke contour (1,975
+/// segments, ~97k est px, ~2.3 ms serial), which the old 100k gate painted on
+/// one core.
 const POINTS_FANOUT_PX: f32 = 2_000_000.0;
-const SEGMENTS_FANOUT_PX: f32 = 100_000.0;
+const SEGMENTS_FANOUT_PX: f32 = 40_000.0;
 const STROKE_FANOUT_PX: f32 = 100_000.0;
 const MIN_BAND_ROWS: usize = 64;
 
@@ -2575,7 +2618,8 @@ fn rasterize_with_spans<'a>(
                     let n = r.u32()? as usize;
                     let pts = r.pts(n)?;
                     let c = r.rgba()?;
-                    if !fill_rect(&mut cv, &pts, c) {
+                    // Alpha 0 cannot change a pixel; don't scan its coverage.
+                    if c[3] > 0.0 && !fill_rect(&mut cv, &pts, c) {
                         fill_poly(&mut cv, &pts, |_, _| c);
                     }
                 }
@@ -2608,7 +2652,11 @@ fn rasterize_with_spans<'a>(
                     }
                     let dash_offset = if op == OP_PHASED_STROKE { r.f32()? } else { 0.0 };
                     let cap = r.u8()?;
-                    stroke_shaped(&mut cv, &pts, width, c, closed, (&dash, dash_offset), cap);
+                    // A transparent stroke (e.g. Matplotlib's hidden default
+                    // grid) blends nothing; skip its distance-field pass.
+                    if c[3] > 0.0 {
+                        stroke_shaped(&mut cv, &pts, width, c, closed, (&dash, dash_offset), cap);
+                    }
                 }
                 OP_POINT => {
                     let (cx, cy, rr) = (r.f32()?, r.f32()?, r.f32()?);
@@ -4473,5 +4521,245 @@ mod tests {
         short.extend([0, 0, 0, 0]);
         short.extend(f32le(1.0)); // far too few bytes for 1000 marks
         assert!(!rasterize_into(&short, 10, 10, &mut out));
+    }
+
+    /// The pre-#552 `fill_rect` body: every pixel in the clipped bbox blended
+    /// with its exact `cx * cy` coverage.
+    fn fill_rect_reference(
+        cv: &mut Canvas<'_>,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        rgba: [f32; 4],
+    ) {
+        let (bx0, by0, bx1, by1) = cv.bbox(x0, y0, x1, y1);
+        for y in by0..by1 {
+            let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
+            for x in bx0..bx1 {
+                let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
+                cv.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
+            }
+        }
+    }
+
+    #[test]
+    fn fill_rect_fractional_edges_match_per_pixel_coverage() {
+        // Issue #552: a plot-area background whose edge lands on a fractional
+        // device pixel (y = 100.8 at export DPI) must keep the contiguous
+        // interior store while painting exactly what per-pixel coverage did.
+        let (w, h) = (41, 29);
+        let rects = [
+            (3.0, 2.0, 37.0, 25.0),
+            (2.25, 4.8, 36.6, 23.4),
+            (-3.5, -1.2, 44.7, 30.9),
+            (5.4, 6.6, 6.2, 7.9),
+            (10.0, 3.5, 10.9, 20.0),
+            (0.5, 0.5, 40.5, 28.5),
+        ];
+        let colors = [
+            [1.0, 1.0, 1.0, 1.0],
+            [0.2, 0.4, 0.9, 1.0],
+            [0.9, 0.1, 0.3, 0.55],
+        ];
+        for opaque in [true, false] {
+            for &(x0, y0, x1, y1) in &rects {
+                for &rgba in &colors {
+                    for clip in [None, Some([4.0, 3.0, 30.0, 20.0])] {
+                        let mut expected_px = canvas_px(w, h, opaque);
+                        let mut expected = Canvas::wrap(w, h, opaque, &mut expected_px);
+                        let mut actual_px = canvas_px(w, h, opaque);
+                        let mut actual = Canvas::wrap(w, h, opaque, &mut actual_px);
+                        if let Some(clip) = clip {
+                            expected.clip = clip;
+                            actual.clip = clip;
+                        }
+                        // Paint over a non-uniform underlay so a skipped or
+                        // double-applied edge blend cannot hide.
+                        for cv in [&mut expected, &mut actual] {
+                            for (i, byte) in cv.px.iter_mut().enumerate() {
+                                *byte = (i * 31 % 251) as u8;
+                            }
+                        }
+                        fill_rect_reference(&mut expected, x0, y0, x1, y1, rgba);
+                        let pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                        assert!(fill_rect(&mut actual, &pts, rgba));
+                        assert_eq!(
+                            expected.px,
+                            actual.px,
+                            "opaque={opaque} rect={:?} rgba={rgba:?} clip={clip:?}",
+                            (x0, y0, x1, y1)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transparent_paint_commands_change_no_pixels() {
+        // Matplotlib's default hidden grid lowers to alpha-0 strokes. They
+        // are skipped before rasterization, which must be invisible.
+        let (w, h) = (24, 16);
+        let mut cmd = Vec::new();
+        cmd.push(OP_FILL_POLY);
+        cmd.extend(4u32.to_le_bytes());
+        for (x, y) in [(1.3f32, 1.7f32), (20.2, 1.7), (20.2, 13.4), (1.3, 13.4)] {
+            cmd.extend(f32le(x));
+            cmd.extend(f32le(y));
+        }
+        cmd.extend([200, 30, 40, 0]);
+        for op in [OP_STROKE, OP_PHASED_STROKE] {
+            cmd.push(op);
+            cmd.extend(2u32.to_le_bytes());
+            for v in [0.5f32, 8.0, 23.0, 8.0] {
+                cmd.extend(f32le(v));
+            }
+            cmd.extend(f32le(3.0));
+            cmd.extend([10, 20, 30, 0]);
+            cmd.push(0);
+            cmd.extend(2u32.to_le_bytes());
+            cmd.extend(f32le(2.0));
+            cmd.extend(f32le(1.0));
+            if op == OP_PHASED_STROKE {
+                cmd.extend(f32le(0.5));
+            }
+            cmd.push(CAP_BUTT);
+        }
+        for opaque in [true, false] {
+            let mut blank_px = canvas_px(w, h, opaque);
+            let blank = Canvas::wrap(w, h, opaque, &mut blank_px);
+            let blank = blank.px.to_vec();
+            let mut px = canvas_px(w, h, opaque);
+            let painted = rasterize_with_spans(&cmd, &[], w, h, opaque, &mut px)
+                .expect("well-formed transparent commands parse");
+            assert_eq!(painted.px, &blank[..], "opaque={opaque}");
+        }
+    }
+
+    /// The pre-#552 single-segment painter: `seg_dist2` per pixel and the
+    /// inner/edge branches into `blend_u8` / `blend_prepared`.
+    fn stroke_segment_reference(
+        cv: &mut Surface,
+        a: (f32, f32),
+        b: (f32, f32),
+        width: f32,
+        rgba: [u8; 4],
+    ) {
+        if width <= 0.0 {
+            return;
+        }
+        let hw = width * 0.5;
+        let outer = hw + 0.5;
+        let inner = (hw - 0.5).max(0.0);
+        let rgb = [rgba[0], rgba[1], rgba[2]];
+        let alpha = rgba[3] as f32 / 255.0;
+        let paint = |cv: &mut Surface, x: usize, y: usize| {
+            let distance2 = seg_dist2((x as f32 + 0.5, y as f32 + 0.5), a, b);
+            if distance2 >= outer * outer {
+                return;
+            }
+            if distance2 <= inner * inner {
+                cv.blend_u8(x, y, rgba);
+                return;
+            }
+            cv.blend_prepared(x, y, rgb, alpha, outer - distance2.sqrt());
+        };
+        let (bx0, by0, bx1, by1) = cv.bbox(
+            a.0.min(b.0) - hw - 1.0,
+            a.1.min(b.1) - hw - 1.0,
+            a.0.max(b.0) + hw + 1.0,
+            a.1.max(b.1) + hw + 1.0,
+        );
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        if dx.abs() >= dy.abs() && dx.abs() > 1e-6 {
+            for x in bx0..bx1 {
+                let t = ((x as f32 + 0.5 - a.0) / dx).clamp(0.0, 1.0);
+                let center = a.1 + t * dy;
+                let sy0 = ((center - hw - 1.0).floor() as usize).max(by0);
+                let sy1 = ((center + hw + 1.0).ceil() as usize).min(by1);
+                for y in sy0..sy1 {
+                    paint(cv, x, y);
+                }
+            }
+        } else if dy.abs() > 1e-6 {
+            for y in by0..by1 {
+                let t = ((y as f32 + 0.5 - a.1) / dy).clamp(0.0, 1.0);
+                let center = a.0 + t * dx;
+                let sx0 = ((center - hw - 1.0).floor() as usize).max(bx0);
+                let sx1 = ((center + hw + 1.0).ceil() as usize).min(bx1);
+                for x in sx0..sx1 {
+                    paint(cv, x, y);
+                }
+            }
+        } else {
+            for y in by0..by1 {
+                for x in bx0..bx1 {
+                    paint(cv, x, y);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hoisted_segment_painter_matches_seg_dist2_reference() {
+        let (w, h) = (73, 51);
+        let mut s = 0x9e3779b97f4a7c15u64;
+        let mut rnd = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 40) as f32 / 16777216.0
+        };
+        for opaque in [true, false] {
+            for i in 0..600 {
+                let a = (rnd() * 90.0 - 8.0, rnd() * 66.0 - 8.0);
+                let b = match i % 5 {
+                    0 => a,                                // degenerate dot
+                    1 => (a.0 + rnd() * 30.0 - 15.0, a.1), // horizontal
+                    2 => (a.0, a.1 + rnd() * 30.0 - 15.0), // vertical
+                    _ => (rnd() * 90.0 - 8.0, rnd() * 66.0 - 8.0),
+                };
+                let width = [0.4, 1.0, 1.1111112, 2.0833333, 3.7][i % 5];
+                let rgba = [
+                    (i * 37 % 256) as u8,
+                    (i * 11 % 256) as u8,
+                    200,
+                    [255, 180, 1, 0][i % 4],
+                ];
+                let mut expected_px = canvas_px(w, h, opaque);
+                let mut expected = Canvas::wrap(w, h, opaque, &mut expected_px);
+                let mut actual_px = canvas_px(w, h, opaque);
+                let mut actual = Canvas::wrap(w, h, opaque, &mut actual_px);
+                for cv in [&mut expected, &mut actual] {
+                    cv.clip = [1.5, 2.0, 70.0, 49.5];
+                    for (k, byte) in cv.px.iter_mut().enumerate() {
+                        *byte = (k * 17 % 253) as u8;
+                    }
+                }
+                stroke_segment_reference(&mut expected.surface(), a, b, width, rgba);
+                stroke_segment_u8_at(&mut actual.surface(), a, b, width, rgba);
+                assert_eq!(
+                    expected.px, actual.px,
+                    "opaque={opaque} a={a:?} b={b:?} width={width} rgba={rgba:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn contour_sized_segment_batches_fan_out() {
+        // Issue #552: the 8-level smoke contour batch (1,975 segments,
+        // ~97k estimated px) painted serially behind the old 100k gate.
+        if std::env::var_os("CODSPEED_ENV").is_some() {
+            return;
+        }
+        let cores = std::thread::available_parallelism().map_or(1, |p| p.get().min(12));
+        let expected = cores.clamp(1, 840 / MIN_BAND_ROWS);
+        assert_eq!(raster_fanout(97_435.0, SEGMENTS_FANOUT_PX, 840), expected);
+        assert_eq!(
+            raster_fanout(SEGMENTS_FANOUT_PX - 1.0, SEGMENTS_FANOUT_PX, 840),
+            1
+        );
     }
 }

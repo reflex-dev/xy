@@ -435,6 +435,85 @@ measured ~13% slower than `main` before the row-band parallel rasterizer now
 measures 14.5–15.1 ms on this branch versus 19.9–20.1 ms on `main` (about 27%
 faster), byte-identical output. CodSpeed continues to track the direct tier.
 
+### Contour PNG export (issue #552)
+
+The 2026-11-05 release audit measured contour at **8.50×**, under the
+per-family 10× goal (`make check-pyplot-speed`, `methodology.md`). The
+audit also found that the harness's xy adapter had stopped passing the export
+DPI to `savefig`. pyplot now rasterizes at physical pixels (scale 1), so that
+adapter emitted 900×420 and failed the 1800×840 dimension oracle. The table
+above predates that change. Both adapters now export with `dpi=EXPORT_DPI`,
+and `tests/test_bench_pyplot_vs_matplotlib.py` pins it.
+
+**Where the time went.** The 8-level smoke contour took 13.0 ms in the native
+raster+encode step. Per-command timing on the captured display list showed
+that most of it changed no pixels or was serialized:
+
+| cost (native, smoke contour) | before | cause |
+|---|---:|---|
+| plot-area background fill | 5.8 ms | `fill_rect`'s store path required pixel-aligned edges. At export DPI the subplot frame's top edge sits at y = 100.8, so ~0.9M interior pixels were coverage-blended one by one. |
+| 16 grid strokes | 1.5–2.5 ms | Matplotlib's default `axes.grid=False` lowers to alpha-0 grid lines. Each was still emitted, packed, and distance-field rasterized across the plot. |
+| contour segment batch | 2.3–2.8 ms | 1,975 segments estimated at ~97k px, just under the 100k fan-out gate, so they painted on one core. |
+| PNG encode | ~1.8 ms | unchanged (`Up` filter + fdeflate; `Sub` measured smaller only for contour and 2–5× slower for bars/histograms) |
+
+**Fix.** Each change is general to every static export. None is special-cased
+for the benchmark:
+
+1. `fill_rect` stores the fully covered interior of an opaque axis-aligned rect
+   contiguously for any edge position. Only fractional edge pixels blend.
+   Full-coverage blending of an opaque color is already a plain store, so the
+   output is the same. A Rust test checks it against the old per-pixel loop
+   on fractional, clipped, translucent, RGB, and RGBA cases.
+2. Alpha-0 strokes and fills are dropped when the display list is written
+   (`_Cmd.stroke`/`fill`). The grid loop resolves each family's color once and
+   skips a transparent family. The native painter also skips alpha-0 commands.
+   A Rust test checks that such commands change no pixels.
+3. `SEGMENTS_FANOUT_PX` drops from 100k to the measured 40k crossover. On this
+   4-vCPU VM, spawning four scoped workers costs ~0.2 ms; four bands beat
+   serial from ~20k estimated px and two bands from ~35k. Banded paint was
+   already byte-identical to serial.
+4. The single-segment painter hoists `seg_dist2`'s per-segment terms and
+   blends one coverage byte per pixel. Per-pixel float operations keep their
+   order, and a test compares it with the old painter on 1,200 random
+   segments.
+5. Marching squares rejects no-crossing cells from per-vertex level bands
+   instead of two binary searches per cell. The traversal and emission order
+   are unchanged. A Rust test compares it with the generic per-level scan, and
+   61 randomized fields, including NaN/±inf, ties, unsorted levels, and >64
+   levels, emitted the same 1.88M segments as `main`. 150×200×12 dropped from
+   0.87 to ~0.6 ms.
+
+**Output is unchanged.** All 18 family×profile harness PNGs are byte-identical
+to `main`'s. The native RGBA for the same 18 captured display lists is also
+identical. The harness reports the same PNG byte counts and lit-pixel counts.
+
+**Before/after.** Same machine, same harness, `main` and branch interleaved
+(4-vCPU Linux x86_64 VM, CPython 3.13.18, NumPy 2.5.1, Matplotlib 3.11.1).
+Raw reports, environment, and commands are in
+[`evidence/2026-11-04-contour-export-552/`](evidence/2026-11-04-contour-export-552/README.md):
+
+| profile | contour workload | xy total, main → branch | Matplotlib total | speedup, main → branch |
+|---|---|---:|---:|---:|
+| smoke (9 reps) | 80×100 / 8 levels | 18.32 → **10.61 ms** | 128.5–130.9 ms | 7.15× → **12.11×** |
+| standard (21 reps) | 150×200 / 12 levels | 20.41 → **12.84 ms** | 136.7–139.8 ms | 6.69× → **10.88×** |
+| huge (11 reps) | 250×320 / 12 levels | 22.71 → **15.35 ms** | 143.1–145.0 ms | 6.38× → 9.32× |
+
+The standard-profile contour gate now passes on this VM, which is slower for
+xy than the issue's 12-CPU workstation (`main` smoke: 7.15× here, 8.50× there).
+Huge is recorded, not gated. Its remaining cost is spread across Python
+layout and segment plumbing (~7 ms), the PNG encode (~2 ms), and the
+latency-bound contour stroke paint.
+
+The same fixes speed up every family because every pyplot export paints the
+plot background and the hidden grid. Standard `main` → branch: line
+6.65× → 10.83×, histogram 7.99× → 10.38× (both now pass), scatter
+23.2× → 28.9×, bar 24.0× → 30.5×. pcolormesh improves from 4.17× to 5.30× but
+still misses 10× in every profile. That gap is separate from #552.
+
+CodSpeed tracks the contour export as the `test_png_export_contour_{raw,pyplot}`
+pair in `benchmarks/test_codspeed_pyplot.py`, at the harness's smoke geometry
+and 1800×840 target.
+
 Reproduce and retain the raw samples with:
 
 ```bash

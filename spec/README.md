@@ -90,6 +90,10 @@ Measured numbers and the rules that make them defensible.
   Emitted by `scripts/check_regressions.py --emit-md` in CI; do not hand-edit.
 - [`methodology.md`](benchmarks/methodology.md) — how numbers are produced:
   mode-scoped, reproducible, oracle-checked, and publishing the cases we lose.
+- [`evidence/`](benchmarks/evidence/) — dated raw reports (JSON + rendered
+  Markdown) behind specific claims in `results.md`, each with its environment
+  and reproduction commands; for example
+  [`2026-11-04-contour-export-552/`](benchmarks/evidence/2026-11-04-contour-export-552/README.md).
 
 ## process/
 

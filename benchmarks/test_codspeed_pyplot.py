@@ -398,3 +398,65 @@ def test_png_export_line_pyplot(benchmark, export_data):
     png = benchmark(export)
     assert png.startswith(b"\x89PNG")
     plt.close("all")
+
+
+# -- contour export pair (issue #552) -------------------------------------------
+#
+# The matched-output release harness's contour row: an 80 x 100 grid, eight
+# levels, built at 900 x 420 logical px and exported at 2x to the 1800 x 840
+# PNG the Matplotlib/Agg comparison targets. At that size the export used to be
+# dominated by per-pixel work that changed nothing — the plot background's
+# fractional edge pushed the whole fill off its store path and the hidden
+# default grid was distance-field rasterized at alpha 0. Kept last in the
+# module so the pre-existing rows' fixture/import order (and CodSpeed
+# baselines) is untouched; each arm warms its own lazy imports untimed.
+CONTOUR_ROWS, CONTOUR_COLS, CONTOUR_LEVELS = 80, 100, 8
+CONTOUR_W, CONTOUR_H, CONTOUR_BUILD_DPI, CONTOUR_EXPORT_DPI = 900, 420, 100, 200
+
+
+@pytest.fixture(scope="module")
+def contour_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    x = np.linspace(-3.0, 3.0, CONTOUR_COLS)
+    y = np.linspace(-2.0, 2.0, CONTOUR_ROWS)
+    z = np.sin(x[None, :] * 1.7) + np.cos(y[:, None] * 2.1)
+    return x, y, z
+
+
+def test_png_export_contour_raw(benchmark, contour_data):
+    """Raw-API contour PNG at the release harness's 1800 x 840 target."""
+    x, y, z = contour_data
+
+    def export() -> bytes:
+        chart = xy.chart(
+            xy.contour(z, x=x, y=y, levels=CONTOUR_LEVELS, colormap="plasma"),
+            width=CONTOUR_W,
+            height=CONTOUR_H,
+        )
+        return chart.figure().to_png(engine=xy.Engine.default, scale=2.0)
+
+    export()
+    png = benchmark(export)
+    assert png.startswith(b"\x89PNG")
+
+
+def test_png_export_contour_pyplot(benchmark, contour_data):
+    """Same chart through ``ax.contour`` + ``savefig(dpi=200)``: the shim path
+    the matched-output Matplotlib comparison times (figure build included)."""
+    x, y, z = contour_data
+
+    def export() -> bytes:
+        plt.close("all")
+        fig, ax = plt.subplots(
+            figsize=(CONTOUR_W / CONTOUR_BUILD_DPI, CONTOUR_H / CONTOUR_BUILD_DPI),
+            dpi=CONTOUR_BUILD_DPI,
+        )
+        ax.contour(x, y, z, levels=CONTOUR_LEVELS, cmap="plasma")
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="png", dpi=CONTOUR_EXPORT_DPI)
+        return buffer.getvalue()
+
+    export()
+    png = benchmark(export)
+    assert png.startswith(b"\x89PNG")
+    assert png[16:24] == (1800).to_bytes(4, "big") + (840).to_bytes(4, "big")
+    plt.close("all")

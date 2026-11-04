@@ -749,6 +749,70 @@ def test_native_smooth_stroke_matches_reference_polyline() -> None:
     )
 
 
+def test_transparent_paint_commands_are_not_emitted() -> None:
+    """Alpha 0 cannot change a pixel, so the display list drops it (#552)."""
+    cmd = _raster._Cmd(1)
+    cmd.stroke([(0.0, 5.0), (40.0, 5.0)], 1.0, (0, 0, 0, 0))
+    cmd.fill([(1.0, 1.0), (9.0, 1.0), (9.0, 9.0)], (255, 0, 0, 0))
+    assert bytes(cmd.buf) == b""
+    cmd.stroke([(0.0, 5.0), (40.0, 5.0)], 1.0, (0, 0, 0, 1))
+    assert bytes(cmd.buf) != b""
+
+
+def _record_strokes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, ...]]:
+    colors: list[tuple[int, ...]] = []
+    original = _raster._Cmd.stroke
+
+    def record(self, pts, width, color, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        colors.append(tuple(color))
+        return original(self, pts, width, color, *args, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "stroke", record)
+    return colors
+
+
+def test_hidden_matplotlib_grid_emits_no_strokes_and_keeps_pixels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Matplotlib's default ``axes.grid=False`` lowers to a transparent grid.
+
+    Issue #552: those alpha-0 lines used to be packed and rasterized (a full
+    distance-field pass per tick at export DPI) without changing a pixel. They
+    are now skipped at emission (the native pixel invariance is pinned by
+    ``transparent_paint_commands_change_no_pixels`` in ``src/raster.rs``), and
+    a visible grid must still be emitted and drawn.
+    """
+    import io
+
+    import xy.pyplot as plt
+
+    x = np.linspace(-3.0, 3.0, 40)
+    y = np.linspace(-2.0, 2.0, 30)
+    z = np.sin(x[None, :] * 1.7) + np.cos(y[:, None] * 2.1)
+
+    def export(grid: bool) -> bytes:
+        plt.close("all")
+        fig, ax = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        ax.contour(x, y, z, levels=6, cmap="plasma")
+        if grid:
+            ax.grid(True)
+        out = io.BytesIO()
+        fig.savefig(out, format="png", dpi=200)
+        plt.close("all")
+        return out.getvalue()
+
+    colors = _record_strokes(monkeypatch)
+    hidden = export(False)
+    assert colors, "axis spines and ticks are still stroked"
+    assert all(color[3] > 0 for color in colors)
+    hidden_strokes = len(colors)
+
+    colors.clear()
+    shown = export(True)
+    assert len(colors) > hidden_strokes, "a visible grid is still emitted"
+    assert not np.array_equal(_decode_rgba(hidden), _decode_rgba(shown))
+
+
 def test_native_shape_batches_match_individual_commands() -> None:
     from xy import kernels
 
