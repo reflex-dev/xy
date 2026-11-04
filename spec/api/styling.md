@@ -699,7 +699,11 @@ Vega-Lite (right) also keep their default legends outside it.
   legend and lays out again when the main legend crosses between in-plot and
   `"outside top"` (`_syncOutsideLegendPlacement`, called from `_applyAppend`),
   matching a fresh render of the same data. A move between in-plot corners
-  stays on the live best-placement path.
+  stays on the live best-placement path. While the WebGL context is lost, the
+  move waits: re-laying out resizes, and so clears, the canvases that still
+  show the last frame. The next drawable frame applies it
+  (`_flushOutsideLegendSync` in `_drawNow`), compared against the spec still
+  mounted.
 - **Title.** The band counts toward the room the title is lifted over
   (`top_axis_room` / `_topAxisRoom`), exactly as the polar angular-label room
   does, so the title sits above the band in every renderer.

@@ -2728,6 +2728,15 @@ export class ChartView {
   // changes the plot rect, so the mounted legend chrome is rebuilt and laid
   // out again; a move between in-plot corners stays on the live best path.
   // Mirrors what a fresh render of the same spec mounts.
+  // A move deferred while the context was lost (`_applyAppend`); `_drawNow`
+  // applies it on the first frame that can draw.
+  _flushOutsideLegendSync() {
+    const from = this._outsideLegendSyncFrom;
+    if (from == null || this._glLost || !this.gl) return;
+    this._outsideLegendSyncFrom = null;
+    this._syncOutsideLegendPlacement(from);
+  }
+
   _syncOutsideLegendPlacement(prevSpec) {
     const outside = (spec) => String(spec?.legend?.loc || "") === OUTSIDE_TOP_LEGEND;
     if (outside(prevSpec) === outside(this.spec) || !this.root) return false;
@@ -6793,7 +6802,9 @@ export class ChartView {
     // legend band, which resizes the canvas. Healing inside `_renderGlFrame`
     // drew at the new size but presented at the old one, shifting the marks
     // against the axes. The later call inside the frame is then a no-op.
+    // A band move deferred while the context was lost resizes it the same way.
     this._healStaleTheme();
+    this._flushOutsideLegendSync();
     let rendered;
     if (this._glHost) {
       rendered = this._glHost.render(

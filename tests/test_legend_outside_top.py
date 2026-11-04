@@ -844,3 +844,71 @@ def test_browser_band_never_pushes_the_plot_off_a_short_chart(loc: str) -> None:
             label="short-chart outside-top legend probe",
         )
     assert payload["canvasBottomToRootBottom"] >= -0.5, payload
+
+
+_LOST_APPEND_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    const sizes = () => [view.canvas.width, view.canvas.height, view.chrome.width, view.chrome.height];
+    const before = sizes();
+    const buffers = window.__xyAppendBuffers.map((b64) => {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+      return out.buffer;
+    });
+    // A lost context keeps its last frame on screen: the append must not
+    // resize (and so clear) the canvases until the context can draw again.
+    view._glLost = true;
+    view._applyAppend(window.__xyAppendMsg, buffers);
+    const whileLost = { sizes: sizes(), band: !!view._legendBand };
+    view._glLost = false;
+    view._drawNow();
+    view._raf = null;
+    document.body.setAttribute("data-xy-lost-append", JSON.stringify({
+      before, whileLost, band: !!view._legendBand,
+      mounted: !!view.root.querySelector('[data-xy-legend-band="top"]'),
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-lost-append-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_append_while_context_lost_defers_the_band_until_it_can_draw() -> None:
+    import base64
+    import json
+
+    from conftest import probe_document
+    from xy.interaction import append_data
+
+    fig = _streamed_points().figure()
+    document = probe_document(fig, _LOST_APPEND_PROBE)
+    grid = np.linspace(0.0, 1.0, 30)
+    gx, gy = np.meshgrid(grid, grid)
+    msg, buffers = append_data(fig, fig.traces[0].id, gx.ravel(), gy.ravel())
+    payload_js = (
+        "<script>window.__xyAppendMsg = "
+        + json.dumps(msg)
+        + "; window.__xyAppendBuffers = "
+        + json.dumps([base64.b64encode(bytes(b)).decode() for b in buffers])
+        + ";</script>"
+    )
+    document = document.replace("<script", payload_js + "<script", 1)
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            _chromium(),
+            document,
+            Path(td) / "lost_append.html",
+            "data-xy-lost-append",
+            label="lost-context append probe",
+        )
+    assert payload["whileLost"]["sizes"] == payload["before"], payload
+    assert payload["whileLost"]["band"] is False, payload
+    assert payload["band"] and payload["mounted"], payload
