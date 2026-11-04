@@ -390,7 +390,7 @@ in (itself a stylable slot), once that layer exists; every other slot probes in
 the chart root. Results are cached by host and value, and the cache is cleared
 on every `_layout` and `refreshTheme`, because a relative size follows a context that a resize or
 theme change can move. The static exporters accept px only. Any other unit
-falls back to the axis size there, which is also the size they paint.
+falls back to the axis size there, which is also the size they paint. The first `_layout` runs before the chart root exists, so a relative slot size falls back to its default there. `_needsMountedLayout` (a relative `title` or `tick_label` font, or an outside-top legend) makes `_buildDom`, or the first connected frame (`_healStaleTheme`), lay out again before painting. Without that, a `300%` title painted 36 px tall into the 14 px band the provisional layout reserved and lost its top above the canvas.
 
 **Time.** Time axes carry epoch milliseconds. `timeTicks` picks the first
 member of `TIME_STEPS` — a fixed ladder of 1/2/5/10/20/50/100/200/500 ms, then

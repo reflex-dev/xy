@@ -481,3 +481,19 @@ def test_browser_relative_slot_font_is_remeasured_on_theme_refresh() -> None:
     chart = _stores_chart(height=300, styles={"tick_label": {"font_size": "1.5em"}})
     payload = _probe(chart, _THEME_FONT_PROBE, "data-xy-theme-font", "theme_font")
     assert payload["after"] == pytest.approx(2 * payload["before"]), payload
+
+
+def test_browser_relative_title_font_reserves_its_painted_band() -> None:
+    # `300%` resolves only once the chart root exists; the first layout ran
+    # before that, so the band must be laid out again before painting.
+    months = np.arange(12)
+    chart = xy.line_chart(
+        xy.line(months, 40 + 9 * months, name="Signups"),
+        title="Relative title",
+        width=420,
+        height=260,
+        styles={"title": {"font_size": "300%"}},
+    )
+    payload = _probe(chart, _TITLE_PROBE, "data-xy-compact-title", "relative_title")
+    assert payload["titleTopToRootTop"] >= -0.5, payload
+    assert payload["titleBottomToCanvasTop"] >= -0.5, payload

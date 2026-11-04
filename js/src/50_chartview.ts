@@ -2845,6 +2845,21 @@ export class ChartView {
     this._pickDirty = true;
   }
 
+  // Whether the first layout guessed at something only the mounted DOM can
+  // measure: an outside-top legend box, or a chrome slot whose font size is
+  // relative (`300%`, `2em`, `1.5rem`), which `_cssFontPx` can only resolve
+  // once the chart root is connected.
+  _needsMountedLayout() {
+    if (this._outsideLegend) return true;
+    const styles = this.spec?.dom?.styles;
+    for (const slot of ["title", "tick_label"]) {
+      const decls = styles && styles[slot];
+      const value = decls && (decls["font-size"] ?? decls.font_size ?? decls.fontSize);
+      if (typeof value === "string" && !/^-?[\d.]+(px)?$/i.test(value.trim())) return true;
+    }
+    return false;
+  }
+
   // A data update re-resolves `loc="best"`, and its payload can move the main
   // legend between an in-plot corner and the outside-top band. The band
   // changes the plot rect, so the mounted legend chrome is rebuilt and laid
@@ -2974,11 +2989,12 @@ export class ChartView {
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
-    if (this._outsideLegend) {
-      // The first `_layout` ran before this box existed and reserved no band.
-      // Lay out again now that it can be measured, and move what was already
-      // placed from the band-less rect. Backing stores are sized later, from
-      // this final rect, by GL init.
+    if (this._needsMountedLayout()) {
+      // The first `_layout` ran before this DOM existed: it reserved no band
+      // for an outside-top legend, and a relative slot font size (`300%`,
+      // `2em`) fell back to its default. Lay out again now that both can be
+      // measured, and move what was already placed from the provisional rect.
+      // Backing stores are sized later, from this final rect, by GL init.
       this._layout();
       const p = this.plot;
       this.canvas.style.left = p.x + "px";
@@ -9507,7 +9523,7 @@ export class ChartView {
   _healStaleTheme() {
     if (!this._themeStale || !this.root.isConnected) return false;
     this._applyTheme();
-    if (this._outsideLegend) {
+    if (this._needsMountedLayout()) {
       // Built detached, the band was the formula estimate (and capped the box
       // to it). Now that the legend has geometry, measure it and lay out again
       // before this frame paints.
