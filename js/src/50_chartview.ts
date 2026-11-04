@@ -9734,6 +9734,10 @@ export class ChartView {
 
   refreshTheme() {
     if (this._destroyed) return;
+    if (this._glLost || this.gl?.isContextLost()) {
+      this._themeStale = true;
+      return;
+    }
     const previousPlot = this.plot;
     this._applyTheme();
     // A theme can move the font a relative slot size resolves against; the
@@ -9750,7 +9754,10 @@ export class ChartView {
   // Once a stale-themed root is connected, refresh paints and the layout that
   // depends on them. Returns true when callers outside a frame should redraw.
   _healStaleTheme() {
-    if (!this._themeStale || !this.root.isConnected) return false;
+    if (
+      !this._themeStale || !this.root.isConnected ||
+      this._glLost || this.gl?.isContextLost()
+    ) return false;
     this._applyTheme();
     this._applyLayout();
     this._scheduleViewRequest();

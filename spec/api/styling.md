@@ -362,7 +362,10 @@ charts also remeasure these gutters on `refreshTheme()` and automatic theme
 changes: revealing an axis title or tick paint reserves its room, and hiding
 it releases that room before the refreshed frame is drawn. Relative slot font
 sizes are resolved again before this measurement, so a theme font change and
-a paint-visibility change share the same refreshed layout.
+a paint-visibility change share the same refreshed layout. During WebGL context
+loss, theme refreshes leave the retained frame and canvas dimensions untouched.
+The pending theme and its gutter measurements are applied on the first drawable
+frame, before the shared host selects its presentation extent.
 
 ### Plot rectangle and chrome reservations
 

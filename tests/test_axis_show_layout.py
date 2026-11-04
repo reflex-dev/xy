@@ -1026,3 +1026,90 @@ try {
     assert payload["stable"], "the refreshed frame must use the new plot geometry"
     assert payload["afterRecolor"] == 1, "a color-only change needs no data refinement"
     assert payload["refinements"] == 2, "both geometry changes must refine at the new size"
+
+
+@pytest.mark.parametrize("paint", ["transparent", "#111111"])
+def test_theme_refresh_during_context_loss_keeps_the_last_frame(paint, tmp_path) -> None:
+    chromium = find_chromium()
+    if not chromium:
+        if os.environ.get("XY_REQUIRE_BROWSER"):
+            pytest.fail("XY_REQUIRE_BROWSER is set but no chromium was found")
+        pytest.skip("no chromium available for the lost-context theme probe")
+
+    def chart(color):
+        return xy.line_chart(
+            xy.line([0.0, 1.0], [0.0, 1.0]),
+            xy.x_axis(show=False, label="Time", style={"label_color": color}),
+            xy.y_axis(show=False),
+            width=WIDTH,
+            height=HEIGHT,
+            padding=(0, 0, 0, 0),
+            style={"--axis-title": "transparent"},
+        )
+
+    probe = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    await document.fonts.ready;
+    view._drawNow();
+    const rect = () => [view.plot.x, view.plot.y, view.plot.w, view.plot.h];
+    const frames = () => [view.canvas, view.chrome, view.overlay].map(c => c.toDataURL());
+    const before = frames();
+    const beforePlot = rect();
+    const rgba = view.canvas.getContext("2d").getImageData(
+      0, 0, view.canvas.width, view.canvas.height).data;
+    const painted = rgba.some((value, index) => index % 4 === 3 && value > 0);
+    const lost = new Promise(resolve => view.canvas.addEventListener(
+      "webglcontextlost", resolve, { once: true }));
+    view._glHost.gl.getExtension("WEBGL_lose_context").loseContext();
+    await lost;
+    const driverLost = view.gl.isContextLost() && view._glLost;
+    const keptAtLoss = JSON.stringify(frames()) === JSON.stringify(before);
+    view.root.style.setProperty("--axis-title", PAINT);
+    view.refreshTheme();
+    view.refreshTheme();
+    // Visibility callbacks may attempt healing before a drawable frame exists.
+    view._healStaleTheme();
+    view._drawNow();
+    const whileLost = {
+      kept: JSON.stringify(frames()) === JSON.stringify(before),
+      plot: rect(), pendingTheme: view._themeStale,
+    };
+    // The shared host replaces the lost surface and submits the restored frame.
+    let restoredFrame;
+    await new Promise(resolve => view.canvas.addEventListener(
+      "webglcontextrestored", () => {
+        restoredFrame = view.canvas.toDataURL();
+        resolve();
+      }, { once: true }));
+    const afterPlot = rect();
+    view._drawNow();
+    document.body.setAttribute("data-xy-lost-theme", JSON.stringify({
+      painted, driverLost, keptAtLoss, beforePlot, whileLost, afterPlot,
+      recovered: !view._glLost && !view._themeStale,
+      stable: restoredFrame === view.canvas.toDataURL(),
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-lost-theme-error", String(err.stack || err));
+  }
+})();
+</script>
+""".replace("PAINT", f'"{paint}"')
+    payload = run_browser_probe(
+        chromium,
+        probe_document(chart("var(--axis-title)"), probe),
+        tmp_path / "lost-theme.html",
+        "data-xy-lost-theme",
+        label="theme refresh during context loss",
+    )
+    assert payload["painted"] and payload["driverLost"], payload
+    assert payload["keptAtLoss"], payload
+    assert payload["whileLost"]["kept"], payload
+    assert payload["whileLost"]["plot"] == payload["beforePlot"], payload
+    assert payload["whileLost"]["pendingTheme"], payload
+    assert payload["recovered"] and payload["stable"], payload
+    _assert_parity(
+        "restored title gutter", tuple(payload["afterPlot"]), _svg_plot_rect(chart(paint))
+    )
