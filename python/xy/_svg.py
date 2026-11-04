@@ -2660,6 +2660,23 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         bottom = max(bottom, final_measured_bottom)
         measured_bottom_room = final_measured_bottom
     bottom_axis_room = max(bottom_axis_room, measured_bottom)
+    if legend_band:
+        # The band was budgeted against the provisional axis rooms; the measured
+        # pass can grow them (a narrower plot rotates or staggers its x labels).
+        # Shrink the band by what the 40 px plot floor now lacks, so the plot
+        # and its bottom axis stay on the canvas. Mirrored in ChartView._layout.
+        excess = top + bottom + _PLOT_MIN_PX - height
+        if excess > 1e-9:
+            shrunk = _outside_top_legend_band(
+                spec,
+                title_wrap_width,
+                legend_band["cap"],
+                max(0.0, float(legend_band["box_h"]) - excess),
+            )
+            if shrunk:
+                top -= band_room - shrunk["room"]
+                band_room = shrunk["room"]
+                legend_band = shrunk
     plot = {
         "x": left,
         "y": top,

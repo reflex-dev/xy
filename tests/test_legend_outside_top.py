@@ -912,3 +912,68 @@ def test_append_while_context_lost_defers_the_band_until_it_can_draw() -> None:
     assert payload["whileLost"]["sizes"] == payload["before"], payload
     assert payload["whileLost"]["band"] is False, payload
     assert payload["band"] and payload["mounted"], payload
+
+
+def _rotating_bars(width: int = 260, height: int = 180, n: int = 4, label: str = "Store"):
+    """A y title narrows the plot on the measured pass, so the x labels rotate
+    and the bottom axis grows after the band was first sized."""
+    stores = [f"{label} {i} branch" for i in range(n)]
+    return xy.chart(
+        *[
+            xy.bar(stores, np.arange(n) * 1000.0 + i * 1e5, name=name)
+            for i, name in enumerate(REGIONS)
+        ],
+        xy.y_axis(label="Revenue in thousands of dollars"),
+        xy.legend(loc="outside top"),
+        title="Chart",
+        width=width,
+        height=height,
+    )
+
+
+def test_static_band_rebudgets_after_the_measured_axis_pass() -> None:
+    _spec, plot = _layout(_rotating_bars())
+    assert plot["legend_band_h"] > 0, plot
+    assert plot["h"] >= 40 - 1e-6, plot
+    assert plot["y"] + plot["h"] + plot["bottom_axis_room"] <= 180 + 0.5, plot
+
+
+_AXIS_FIT_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    document.body.setAttribute("data-xy-axis-fit", JSON.stringify({
+      band: view._legendBand ? view._legendBand.h : 0,
+      plot: [view.plot.y, view.plot.h],
+      bottomAxisRoom: view._bottomAxisRoom,
+      height: view.size.h,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-axis-fit-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_band_rebudgets_after_the_measured_axis_pass() -> None:
+    from conftest import probe_document
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            _chromium(),
+            # Eight long names rotate in the browser once the plot narrows.
+            probe_document(
+                _rotating_bars(320, 220, n=8, label="Distribution centre"), _AXIS_FIT_PROBE
+            ),
+            Path(td) / "axis_fit.html",
+            "data-xy-axis-fit",
+            label="measured-axis band budget probe",
+        )
+    y, h = payload["plot"]
+    assert payload["band"] > 0, payload
+    assert h >= 40 - 1e-6, payload
+    assert y + h + payload["bottomAxisRoom"] <= payload["height"] + 0.5, payload

@@ -683,7 +683,12 @@ Vega-Lite (right) also keep their default legends outside it.
   legend is clipped (static) or scrolls (browser) rather than pushing the plot
   off the canvas: a 320×100 chart used to reserve a 30 px band and end its
   plot 10 px below the canvas. The 30 % cap ignored the chrome that also
-  claims the height.
+  claims the height. The budget is first taken against the provisional axis
+  rooms. If the measured pass then grows them (a y title narrows the plot, so
+  the x labels rotate or stagger), the band shrinks by the shortfall before the
+  plot rect is fixed (`layout` / `_layout`). A chart too short for its own
+  title and axes even without a legend still overflows, as it does without
+  the band.
 - **Height.** Static export reserves the formula height of the laid-out box (all
   rows up to the cap). The browser reserves the **measured** height of the
   live box, because the legend slot is author-stylable and a formula would

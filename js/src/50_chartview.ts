@@ -960,10 +960,26 @@ export class ChartView {
       ? Math.max(provisionalBottomAxisRoom, measuredBottomAxisRoom)
       : 0;
     this._bottomAxisRoom = bottomAxisRoom;
-    const top = marginTop + titleRoom + bandRoom + topAxisRoom;
+    let top = marginTop + titleRoom + bandRoom + topAxisRoom;
     const marginBottom =
       (measuredBottomAxisRoom ? Math.max(baseBottom, measuredBottomAxisRoom) : baseBottom)
       + colorbarBottomRoom;
+    // The band was budgeted against the provisional axis rooms; the measured
+    // ones can be larger (a narrower plot rotates or staggers its x labels).
+    // Shrink the band by what the 40 px plot floor now lacks, so the plot and
+    // its bottom axis stay on the canvas. Mirrors `layout` in _svg.py.
+    if (band) {
+      const excess = top + marginBottom + PLOT_MIN_PX - this.size.h;
+      if (excess > 1e-6) {
+        const shrunk = this._outsideLegendBand(this._titleWrapWidth, Math.max(0, band.h - excess));
+        if (shrunk) {
+          const room = shrunk.h + OUTSIDE_LEGEND_GAP;
+          top -= bandRoom - room;
+          this._topAxisRoom = topAxisRoom + room;
+          this._legendBand.h = shrunk.h;
+        }
+      }
+    }
     this.plot = {
       x: marginLeft,
       y: top,
