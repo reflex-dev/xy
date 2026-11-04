@@ -519,8 +519,17 @@ def _ms(stamp: str) -> float:
     return float(np.datetime64(stamp, "ms").astype(np.int64))
 
 
+def _pandas_plotting():
+    """pandas, skipping where its plotting backend (matplotlib) is absent.
+
+    ``Series.plot`` imports matplotlib before it calls into the xy axes; the
+    shim itself never does, so this path is optional in dev environments."""
+    pytest.importorskip("matplotlib")
+    return pytest.importorskip("pandas")
+
+
 def test_pandas_datetime_series_plot_completes():
-    pd = pytest.importorskip("pandas")
+    pd = _pandas_plotting()
     index = pd.date_range("2012-01-01", periods=120, freq="D")
     series = pd.Series(np.linspace(4000.0, 5000.0, 120), index=index)
     fig, ax = plt.subplots()
@@ -539,7 +548,7 @@ def test_pandas_datetime_series_plot_completes():
 def test_pandas_period_index_plots_keep_calendar_coordinates(freq, periods, container):
     # pandas >= 3.1 hands ax.plot() PeriodIndex.asi8 ordinals instead of Period
     # objects (#549); they must still land on the native ms-since-epoch axis.
-    pd = pytest.importorskip("pandas")
+    pd = _pandas_plotting()
     index = pd.date_range("2012-01-01", periods=periods, freq=freq)
     values = np.linspace(4000.0, 5000.0, periods)
     if container == "series":
@@ -548,19 +557,18 @@ def test_pandas_period_index_plots_keep_calendar_coordinates(freq, periods, cont
         data = pd.DataFrame({"a": values, "b": values[::-1]}, index=index)
     fig, ax = plt.subplots()
     data.plot(ax=ax)
-    first, last = _ms(str(index[0].to_datetime64())), _ms(str(index[-1].to_datetime64()))
+    expected = index.values.astype("datetime64[ms]").astype(np.int64).astype(np.float64)
     for line in ax.lines:
         assert np.issubdtype(np.asarray(line.get_xdata()).dtype, np.datetime64)
-        xdata = np.asarray(line.get_xdata(orig=False))
-        assert xdata[0] == first and xdata[-1] == last
-    assert ax.get_xlim() == (first, last)
+        np.testing.assert_array_equal(np.asarray(line.get_xdata(orig=False)), expected)
+    assert ax.get_xlim() == (expected[0], expected[-1])
     _png(fig)
 
 
 def test_numeric_overlay_after_pandas_period_plot_keeps_its_units():
     # [0, 1, 2] equal the leading daily ordinals of a 1970-01-01 index, but they
     # are the user's own numbers, not pandas' index storage: leave them alone.
-    pd = pytest.importorskip("pandas")
+    pd = _pandas_plotting()
     index = pd.date_range("1970-01-01", periods=3, freq="D")
     fig, ax = plt.subplots()
     pd.Series([1.0, 2.0, 3.0], index=index).plot(ax=ax)
