@@ -951,3 +951,78 @@ def test_marks_with_no_label_reserve_the_marks_and_not_a_label() -> None:
             browser,
             export,
         )
+
+
+@pytest.mark.parametrize(
+    "dimension, side", [("x", "bottom"), ("x", "top"), ("y", "left"), ("y", "right")]
+)
+def test_theme_refresh_remeasures_axis_title_gutters(dimension, side, tmp_path) -> None:
+    chromium = find_chromium()
+    if not chromium:
+        if os.environ.get("XY_REQUIRE_BROWSER"):
+            pytest.fail("XY_REQUIRE_BROWSER is set but no chromium was found")
+        pytest.skip("no chromium available for the axis theme refresh probe")
+
+    def chart(paint):
+        axes = {"x": xy.x_axis(show=False), "y": xy.y_axis(show=False)}
+        factory = xy.x_axis if dimension == "x" else xy.y_axis
+        axes[dimension] = factory(
+            show=False, side=side, label="Axis title", style={"label_color": paint}
+        )
+        return xy.line_chart(
+            xy.line([0.0, 1.0], [0.0, 1.0]),
+            axes["x"],
+            axes["y"],
+            width=WIDTH,
+            height=HEIGHT,
+            padding=(0, 0, 0, 0),
+            style={"--axis-title": "transparent"},
+        )
+
+    probe = """
+<script>
+try {
+  const view = window.__fcProbeView;
+  const rect = () => [view.plot.x, view.plot.y, view.plot.w, view.plot.h];
+  const hidden = rect();
+  let refinements = 0;
+  view._scheduleViewRequest = () => { refinements += 1; };
+  view.root.style.setProperty("--axis-title", "#111111");
+  view.refreshTheme();
+  view._drawNow();
+  const revealed = rect();
+  view.root.style.setProperty("--axis-title", "#222222");
+  view.refreshTheme();
+  const afterRecolor = refinements;
+  view._drawNow();
+  const canvas = [view.canvas.style.left, view.canvas.style.top,
+                  view.canvas.style.width, view.canvas.style.height].map(parseFloat);
+  const firstFrame = view.canvas.toDataURL();
+  view._drawNow();
+  const stable = firstFrame === view.canvas.toDataURL();
+  view.root.style.setProperty("--axis-title", "transparent");
+  view.refreshTheme();
+  view._drawNow();
+  document.body.setAttribute("data-xy-axis-theme", JSON.stringify({
+    hidden, revealed, canvas, stable, hiddenAgain: rect(), afterRecolor, refinements,
+  }));
+} catch (err) {
+  document.body.setAttribute("data-xy-axis-theme-error", String(err.stack || err));
+}
+</script>
+"""
+    payload = run_browser_probe(
+        chromium,
+        probe_document(chart("var(--axis-title)"), probe),
+        tmp_path / "axis-theme.html",
+        "data-xy-axis-theme",
+        label="axis theme refresh",
+    )
+    assert payload["hidden"] == [0, 0, WIDTH, HEIGHT], payload
+    expected = _svg_plot_rect(chart("#111111"))
+    _assert_parity("revealed axis title", tuple(payload["revealed"]), expected)
+    assert payload["canvas"] == payload["revealed"], payload
+    assert payload["hiddenAgain"] == payload["hidden"], payload
+    assert payload["stable"], "the refreshed frame must use the new plot geometry"
+    assert payload["afterRecolor"] == 1, "a color-only change needs no data refinement"
+    assert payload["refinements"] == 2, "both geometry changes must refine at the new size"

@@ -357,7 +357,10 @@ before rendering, including before the shared GL host chooses its presentation
 extent. This also applies to fixed-size charts, which need no resize event to
 finish connection-time layout. The shared `_applyLayout` routine handles this
 remeasurement, resize, and streaming changes to outside-legend placement, so
-all three paths update the canvas and positioned chrome together.
+all three paths update the canvas and positioned chrome together. Connected
+charts also remeasure these gutters on `refreshTheme()` and automatic theme
+changes: revealing an axis title or tick paint reserves its room, and hiding
+it releases that room before the refreshed frame is drawn.
 
 ### Plot rectangle and chrome reservations
 

@@ -9624,7 +9624,12 @@ export class ChartView {
 
   refreshTheme() {
     if (this._destroyed) return;
+    const previousPlot = this.plot;
     this._applyTheme();
+    this._applyLayout();
+    if (this.plot.w !== previousPlot.w || this.plot.h !== previousPlot.h) {
+      this._scheduleViewRequest();
+    }
     this._markBestLegendsDirty();
     this.draw();
   }
