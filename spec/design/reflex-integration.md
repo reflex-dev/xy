@@ -128,8 +128,12 @@ would fall back to the mount id and leave the destroyed, id-keyed view behind
 (issue #548). Cleanup deletes the entry only while it still holds that
 mount's view, so a newer mount reusing the id is never evicted. The socket
 gate detaches every ref before running cleanup — matching React's order — and
-asserts the registry is empty after the last unmount, for both named and
-anonymous mounts, while the shared app transport stays connected.
+asserts the registry is empty after the last unmount, for named and
+anonymous live mounts and for static `src` mounts, while the shared app
+transport stays connected; a same-key case pins that an older mount's
+cleanup leaves the newer view registered. The browser smoke settles the
+registry before the cond toggle, then requires exact counts both ways with the
+board released.
 
 Reflex owns reconnection: its `reconnect()` reopens the shared manager, our
 namespace socket re-CONNECTs automatically, and every mounted chart re-`sub`s

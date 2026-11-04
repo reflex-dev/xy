@@ -51,9 +51,14 @@ function loadWrapper(endpoint) {
     if (props.ref) attachedRefs.push(props.ref);
     return el;
   }
+  // Static (`src`) mode: a fetched payload asset rendered kernel-less.
+  const fetchStub = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) });
+  const decodeFrame = () => ({ message: { traces: [] }, buffers: [null] });
+  const renderStandalone = (el, spec, blob) => new ChartView(el, spec, blob);
   const factory = new Function(
     "io", "env", "reflexEnvironment", "getBackendURL", "getToken",
     "useEffect", "useRef", "useState", "jsx", "ChartView", "window",
+    "fetch", "decodeFrame", "renderStandalone",
     `${wrapper}\nreturn {XYChart, xySocket, getSocket: () => sharedSocket};`,
   );
   const loaded = factory(
@@ -61,6 +66,7 @@ function loadWrapper(endpoint) {
     (url) => new URL(url), () => "session-token",
     (callback) => effects.push(callback), (current) => ({ current }),
     (value) => [value, () => {}], jsx, ChartView, windows,
+    fetchStub, decodeFrame, renderStandalone,
   );
   return {
     ...loaded,
@@ -221,6 +227,35 @@ test("anonymous mounts register and release their view by mount id", async () =>
     app.disconnect();
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("static src mounts release their view after React clears the DOM ref", async () => {
+  const loaded = loadWrapper("http://127.0.0.1:1/_event");
+  const named = loaded.mount("static-named", { src: "/payload.xybf" });
+  const anonymous = loaded.mount(undefined, { src: "/other.xybf" });
+  await until(() => loaded.renders.length === 2, "static payloads rendered");
+  assert.deepEqual([...loaded.windows.__xy_views.keys()].sort(),
+    ["src:/other.xybf", "static-named"]);
+  named();
+  assert.deepEqual([...loaded.windows.__xy_views.keys()], ["src:/other.xybf"]);
+  anonymous();
+  assert.equal(loaded.windows.__xy_views.size, 0);
+  assert.ok(loaded.renders.every((view) => view.destroyed), "every view destroyed");
+  assert.equal(loaded.getSocket(), null, "static mounts never open the data plane");
+});
+
+test("an older mount's cleanup never evicts a newer view under the same key", async () => {
+  const loaded = loadWrapper("http://127.0.0.1:1/_event");
+  const older = loaded.mount("shared", { src: "/old.xybf" });
+  await until(() => loaded.renders.length === 1, "older view rendered");
+  const newer = loaded.mount("shared", { src: "/new.xybf" });
+  await until(() => loaded.renders.length === 2, "newer view rendered");
+  assert.equal(loaded.windows.__xy_views.get("shared"), loaded.renders[1]);
+  older();
+  assert.equal(loaded.windows.__xy_views.get("shared"), loaded.renders[1],
+    "the newer view stays registered after the older mount unmounts");
+  newer();
+  assert.equal(loaded.windows.__xy_views.size, 0);
 });
 
 test("an unhydrated figure never creates a socket", () => {

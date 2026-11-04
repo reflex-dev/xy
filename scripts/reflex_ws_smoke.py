@@ -373,7 +373,18 @@ def main() -> None:
         #    mount and sub (net +2 views). The unmounted board must leave
         #    the view registry (issue #548: React clears DOM refs before
         #    effect cleanup), so the counts are exact, both ways.
+        #    Settle the baseline first: a chart registering late would
+        #    otherwise shift the exact count after `views_before` is read.
+        settle_deadline = time.monotonic() + 30.0
         views_before = probe.eval("window.__xy_views.size")
+        stable_since = time.monotonic()
+        while time.monotonic() - stable_since < 1.5:
+            if time.monotonic() > settle_deadline:
+                raise SystemExit("timeout waiting for the view registry to settle")
+            time.sleep(0.25)
+            size = probe.eval("window.__xy_views.size")
+            if size != views_before:
+                views_before, stable_since = size, time.monotonic()
         assert probe.eval("window.__xy_views.has('board')"), "board view not mounted"
 
         def click_split() -> None:
