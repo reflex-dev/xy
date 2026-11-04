@@ -3140,7 +3140,17 @@ def legend(
         show: Whether to display the legend.
         loc: Legend placement within or around the plot. ``"best"`` selects
             automatic least-overlap placement for an unanchored Cartesian
-            chart; concrete names and ``None`` remain fixed.
+            chart, and moves the legend to the ``"outside top"`` band when
+            every in-plot position would cover data. That inside-or-outside
+            choice is made when the chart is built (and again by a static
+            export at another size); the live renderer's later re-scoring
+            after a pan, zoom or resize only moves an inside legend between
+            inside positions. Concrete names and ``None`` remain fixed.
+            ``"outside top"`` puts the legend in a band above the plot that
+            the plot shrinks to make room for, so it never covers data;
+            entries use as many columns as fit and wrap into rows (``ncols``
+            is ignored). Matplotlib's ``"outside upper center"`` is accepted
+            as the same placement.
         anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.
@@ -4014,6 +4024,12 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.loc == "best" and node.anchor is None:
+                # The composition API's `best` may leave the plot: when every
+                # in-plot position covers marks, `_legendfit` resolves to the
+                # outside-top band instead. pyplot never sets this, so its
+                # `best` keeps Matplotlib's in-plot-only semantics.
+                fig.legend_options["auto_outside"] = "top"
             if node.anchor is not None:
                 fig.legend_options["anchor"] = list(node.anchor)
             if node.title is not None:

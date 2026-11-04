@@ -142,7 +142,8 @@ def optional_text(value: Any, label: str) -> Optional[str]:
 
 
 #: Legend placements, in Matplotlib's vocabulary. `best` is resolved to one of
-#: the others at payload-build time (`xy._legendfit`).
+#: the others at payload-build time (`xy._legendfit`) — or, in the composition
+#: API, to `LEGEND_OUTSIDE_TOP` when every in-plot position covers marks.
 LEGEND_LOCATIONS: tuple[str, ...] = (
     "best",
     "upper right",
@@ -155,6 +156,25 @@ LEGEND_LOCATIONS: tuple[str, ...] = (
     "center right",
     "center",
 )
+
+
+#: The one placement OUTSIDE the plot: a horizontal legend band above the axes
+#: that the plot shrinks to make room for, so it can never cover data. Every
+#: in-plot location — `best` included — covers marks when no corner is empty
+#: (stacked areas, many series, bars that reach the axis maximum).
+LEGEND_OUTSIDE_TOP = "outside top"
+
+#: Spellings of `LEGEND_OUTSIDE_TOP`, after `top`→`upper` folding: XY's own
+#: `outside top`, and Matplotlib's figure-legend `outside upper center` in
+#: either word order for the trailing pair.
+_LEGEND_OUTSIDE_TOP_FORMS = frozenset(
+    {"outside upper", "outside upper center", "outside center upper"}
+)
+
+
+def is_outside_top_legend(loc: Any) -> bool:
+    """Whether a validated legend ``loc`` is the outside-top band."""
+    return isinstance(loc, str) and loc.strip().lower() == LEGEND_OUTSIDE_TOP
 
 
 #: Unambiguous synonyms for the vertical band. Matplotlib says `upper`/`lower`;
@@ -171,11 +191,16 @@ def legend_loc(value: Any, label: str) -> Optional[str]:
     `"northeast"` and `"best"` parked the legend dead center, on top of the
     data. Close the vocabulary instead: refuse what is genuinely a guess.
 
-    The caller's **spelling is preserved** (lowercased, so `_legend_layout`'s
-    token match sees it). `top`/`bottom` are public core aliases for
-    `upper`/`lower` that `_svg._legend_layout` resolves to the same geometry;
-    rewriting them here would change a value the pyplot compatibility suite
-    pins as passthrough.
+    For the in-plot names the caller's **spelling is preserved** (lowercased,
+    so `_legend_layout`'s token match sees it). `top`/`bottom` are public core
+    aliases for `upper`/`lower` that `_svg._legend_layout` resolves to the same
+    geometry; rewriting them here would change a value the pyplot compatibility
+    suite pins as passthrough.
+
+    The outside-top forms are the exception: every spelling of them
+    (`outside top`, Matplotlib's `outside upper center`, ...) is returned as
+    the canonical `LEGEND_OUTSIDE_TOP`, so no token match can read one as the
+    in-plot `upper center`.
     """
     if value is None:
         return None
@@ -185,6 +210,11 @@ def legend_loc(value: Any, label: str) -> Optional[str]:
     tokens = [token for token in re.split(r"[\s_-]+", normalized) if token]
     # Aliases are folded for the CHECK only, never in what is returned.
     canonical = " ".join(_LEGEND_LOC_SYNONYMS.get(token, token) for token in tokens)
+    if canonical in _LEGEND_OUTSIDE_TOP_FORMS:
+        # Canonicalized, unlike the in-plot names: every renderer matches
+        # locations by token, and `outside upper center` must never be read
+        # as the in-plot `upper center`.
+        return LEGEND_OUTSIDE_TOP
     recognized = (
         canonical in LEGEND_LOCATIONS
         # Matplotlib takes either word order for the two-word forms.
@@ -194,7 +224,7 @@ def legend_loc(value: Any, label: str) -> Optional[str]:
     )
     if recognized:
         return normalized
-    options = ", ".join(repr(name) for name in LEGEND_LOCATIONS)
+    options = ", ".join(repr(name) for name in (*LEGEND_LOCATIONS, LEGEND_OUTSIDE_TOP))
     raise ValueError(f"{label} {value!r} is not a legend location; expected one of: {options}")
 
 

@@ -84,7 +84,8 @@ def positioned_legend_demo():
 ## Automatically Avoid Plotted Data
 
 Use `loc="best"` for an unanchored Cartesian legend that should choose the
-least-overlapping standard in-plot position. The browser scores the marks and
+least-overlapping standard in-plot position, or move above the plot when every
+inside position would cover data (see *Legend Above the Plot*). The browser scores the marks and
 important annotations it actually rendered, then rechecks the choice after a
 responsive resize or a settled pan/zoom. A concrete location such as
 `"upper left"`, an explicit `anchor=`, and polar legend placement remain fixed.
@@ -118,6 +119,47 @@ automatic_legend_chart = xy.line_chart(
 
 def automatic_legend_demo():
     return reflex_xy.chart(automatic_legend_chart, height="320px")
+~~~
+
+## Legend Above the Plot
+
+`loc="outside top"` moves the legend into a band of its own between the title
+and the plot. The plot shrinks to make room, so the legend never covers a mark.
+Entries use as many columns as fit the width available to the title and wrap
+into more rows as it narrows; `ncols` is ignored. A very long legend is capped
+at 30% of the chart's height and scrolls past that. Matplotlib's `"outside upper center"` is
+accepted as the same placement.
+
+`loc="best"` uses this band on its own when no position inside the plot is
+free: stacked bars or areas, many series, or bars that reach the axis maximum.
+It stays inside whenever a corner is empty. The inside-or-outside choice is
+made when the chart is built; later pans, zooms and resizes only move an inside
+legend between inside positions, so the plot never jumps. Use
+`loc="outside top"` to always get the band, or a concrete location such as
+`"upper right"` to always stay inside.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+outside_legend_chart = xy.chart(
+    xy.bar(
+        ["Bismarck", "Fargo", "Grand Forks", "Jamestown", "Minot", "West Fargo"],
+        [[4, 4, 4, 8]] * 6,
+        series=["Waiting Parts", "In Progress", "Waiting Approval", "Complete"],
+        colors=["#f2c12e", "#7a8899", "#ddd8d6", "#2e8b57"],
+        mode="stacked",
+        orientation="horizontal",
+    ),
+    xy.x_axis(label="Work orders"),
+    xy.y_axis(label="Store"),
+    xy.legend(loc="outside top"),
+    title="Work orders by store",
+)
+
+
+def outside_legend_demo():
+    return reflex_xy.chart(outside_legend_chart, height="360px")
 ~~~
 
 ## Multi-Column Layout and Unnamed Series
@@ -204,7 +246,9 @@ you want to configure placement, columns, title, visibility, or styling.
 
 Pass `loc=` to `xy.legend()`, e.g. `xy.legend(loc="upper right")`, or use
 `xy.legend(loc="best")` for content-aware automatic placement. The compatible
-`loc=None` default and every concrete location stay fixed. If more than one
+`loc=None` default and every concrete location stay fixed. Use
+`xy.legend(loc="outside top")` when the legend must never cover data: it sits
+in its own band above the plot. If more than one
 `legend()` component is present, the last one supplies the effective
 configuration.
 

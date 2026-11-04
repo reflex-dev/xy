@@ -43,7 +43,10 @@ import warnings
 # v13 adds the `funnel` trace kind. `markOf()` falls back to scatter for
 # unknown kinds, so a v12 client would silently render funnel quads as a point
 # cloud.
-PROTOCOL_VERSION = 13
+# v14 adds `legend.loc = "outside top"`: a legend band the plot shrinks to make
+# room for. A v13 client token-matches `top` and draws an in-plot `upper center`
+# legend over the marks the band exists to keep clear.
+PROTOCOL_VERSION = 14
 
 # Mark kinds the polar transform renders correctly today. Everything else is
 # refused by Figure._validate_coords rather than approximated: the rect, area,
