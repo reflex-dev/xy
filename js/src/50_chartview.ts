@@ -1036,16 +1036,27 @@ export class ChartView {
     const measured = lg.isConnected ? lg.offsetHeight : 0;
     if (measured > 0) {
       let h = measured;
+      const cs = getComputedStyle(lg);
+      const padV = (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.paddingBottom) || 0);
       if (measured > cap) {
         // Too tall: cap it (the box scrolls, as in-plot legends do), but never
         // below the title and one full row.
-        const cs = getComputedStyle(lg);
-        const padV = (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.paddingBottom) || 0);
         const titleH = lg._xyLegendTitle ? lg._xyLegendTitle.offsetHeight + (Number.parseFloat(cs.rowGap) || 0) : 0;
         const firstRow = (lg._xyItemRows && lg._xyItemRows[0] && lg._xyItemRows[0].row.offsetHeight) || 0;
         h = Math.min(measured, Math.max(cap, padV + titleH + firstRow));
       }
       h = Math.min(h, limit);
+      // A border-box never renders below its own padding and borders, so a
+      // budget smaller than that would leave the box painted over the plot.
+      // Hide it instead (it stays measurable, so a later layout with room
+      // shows it again) and reserve nothing.
+      const frameV = padV + (Number.parseFloat(cs.borderTopWidth) || 0)
+        + (Number.parseFloat(cs.borderBottomWidth) || 0);
+      if (h < frameV) {
+        lg.style.visibility = "hidden";
+        return { h: 0, ncols };
+      }
+      lg.style.visibility = "";
       if (h < measured) lg.style.setProperty("--xy-legend-max-height", `${h}px`);
       return { h, ncols };
     }

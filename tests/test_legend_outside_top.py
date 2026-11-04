@@ -977,3 +977,46 @@ def test_browser_band_rebudgets_after_the_measured_axis_pass() -> None:
     assert payload["band"] > 0, payload
     assert h >= 40 - 1e-6, payload
     assert y + h + payload["bottomAxisRoom"] <= payload["height"] + 0.5, payload
+
+
+_PADDED_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    const legend = view.root.querySelector('[data-xy-legend-band="top"]');
+    const shown = !!legend && getComputedStyle(legend).visibility !== "hidden"
+      && getComputedStyle(legend).display !== "none";
+    document.body.setAttribute("data-xy-padded-band", JSON.stringify({
+      shown,
+      band: view._legendBand ? view._legendBand.h : 0,
+      boxHeight: legend ? legend.offsetHeight : 0,
+      legendBottomToCanvasTop: legend
+        ? view.canvas.getBoundingClientRect().top - legend.getBoundingClientRect().bottom
+        : null,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-padded-band-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_padded_band_never_overlaps_a_short_plot() -> None:
+    # The budget leaves less than the box's own padding: a border-box cannot
+    # render that small, so the box must not paint over the plot.
+    from conftest import probe_document
+
+    chart = _lines(REGIONS, width=320, height=100, style={"padding": "2em"})
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            _chromium(),
+            probe_document(chart, _PADDED_PROBE),
+            Path(td) / "padded_band.html",
+            "data-xy-padded-band",
+            label="padded outside-top legend probe",
+        )
+    assert (not payload["shown"]) or payload["legendBottomToCanvasTop"] >= -0.5, payload
