@@ -148,6 +148,81 @@ function xyTextAdvance(text, fontSize) {
   return Number(fontSize) * units / XY_FONT_BASE_PX;
 }
 
+// Gap between an outside-top legend band and the top of the plot (or the
+// top-axis tick labels). Mirrored by `_OUTSIDE_LEGEND_GAP` in python/xy/_svg.py.
+const OUTSIDE_LEGEND_GAP = 8;
+// The canonical spelling `xy._validate.legend_loc` returns for every
+// outside-top form, so the client never token-matches it as an in-plot `upper`.
+const OUTSIDE_TOP_LEGEND = "outside top";
+// Tallest an outside-top legend box may be, as a fraction of the chart height;
+// rows past it scroll. One row always shows. Mirrored by
+// `_OUTSIDE_LEGEND_MAX_FRACTION` in python/xy/_svg.py.
+const OUTSIDE_LEGEND_MAX_FRACTION = 0.3;
+// The plot rect's height floor (`Math.max(40, ...)` in `_layout`); an
+// outside-top band's budget leaves it intact. `_PLOT_MIN_PX` in _svg.py.
+const PLOT_MIN_PX = 40;
+// Legend style keys the exporters canonicalize (`_LEGEND_SLOT_ALIASES` in
+// python/xy/_svg.py), so both renderers read padding/row gap from one spelling.
+const XY_LEGEND_STYLE_ALIASES = {
+  "background-color": "background",
+  "box-shadow": "boxShadow",
+  "border-radius": "borderRadius",
+  "row-gap": "rowGap",
+  "font-size": "fontSize",
+  "font_size": "fontSize",
+};
+
+// The legend style the band's column count is computed from: the
+// `styles={"legend": ...}` slot, then `xy.legend(style=...)` on top. Mirrors
+// `legend_options_with_slot` in python/xy/_svg.py — without the slot, a slot
+// padding the exporters honored chose one column more here than in a file.
+function xyLegendBandStyle(slotStyle, ownStyle) {
+  const out = {};
+  for (const [key, value] of Object.entries(slotStyle || {})) {
+    const kebab = key.startsWith("--") ? key : key.replace(/_/g, "-");
+    out[XY_LEGEND_STYLE_ALIASES[kebab] || kebab] = value;
+  }
+  for (const [key, value] of Object.entries(ownStyle || {})) {
+    out[XY_LEGEND_STYLE_ALIASES[key] || key] = value;
+  }
+  return out;
+}
+
+function xyLegendEm(style, key, fallback) {
+  const raw = String((style && style[key]) ?? "").trim();
+  if (!raw.endsWith("em")) return fallback;
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
+// Most columns an outside-top legend can use without ellipsizing a label.
+// Entries fill row-major, as in the in-plot grid, so a column is as wide as its
+// widest label. Same metrics and glyph advances as `_legend_band_columns` in
+// python/xy/_svg.py, so the browser and every export wrap the same entries
+// into the same rows; only the measured row HEIGHT is the browser's own.
+function xyLegendBandColumns(names, options, bandW, fontSize = 11) {
+  const count = names.length;
+  if (count <= 1) return 1;
+  const style = (options && options.style) || {};
+  const pad = 2 * xyLegendEm(style, "padding", 0.4) * fontSize;
+  const handle = Math.max(0, Number(options?.handlelength ?? 2)) * fontSize;
+  const gap = Math.max(0, Number(options?.handletextpad ?? 0.8)) * fontSize;
+  const columnGap = 2 * fontSize;
+  const widths = names.map((name) => xyTextAdvance(String(name ?? ""), fontSize));
+  for (let ncols = count; ncols > 1; ncols--) {
+    let total = pad + (ncols - 1) * columnGap;
+    for (let column = 0; column < ncols; column++) {
+      let widest = 0;
+      for (let index = column; index < count; index += ncols) {
+        widest = Math.max(widest, widths[index]);
+      }
+      total += handle + gap + widest;
+    }
+    if (total <= bandW + 1e-9) return ncols;
+  }
+  return 1;
+}
+
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
@@ -830,11 +905,29 @@ export class ChartView {
       return Math.max(room, candidate);
     }, 0);
     this._titleRoom = titleRoom;
+    // An outside-top legend is a band between the title and the plot, sized at
+    // the title's wrap width for the same reason the title is (the final plot
+    // width depends on the plot height, which depends on this band). Mirrors
+    // `_outside_top_legend_band` in python/xy/_svg.py.
+    // Its height is budgeted against what the title, the axes, and the 40 px
+    // plot floor leave (`_outside_legend_budget`), so on a short card the box
+    // shrinks and scrolls rather than pushing the plot off the canvas.
     const provisionalTopAxisRoom = hasTopAxis ? (compact ? 26 : 32) : 0;
     const provisionalBottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
-    const provisionalTop = marginTop + titleRoom + provisionalTopAxisRoom;
     const provisionalBottom =
       Math.max(baseBottom, provisionalBottomAxisRoom) + colorbarBottomRoom;
+    const bandBudget = Math.max(
+      0,
+      this.size.h - marginTop - titleRoom - provisionalTopAxisRoom - provisionalBottom
+        - PLOT_MIN_PX - OUTSIDE_LEGEND_GAP,
+    );
+    const band = this._outsideLegendBand(this._titleWrapWidth, bandBudget);
+    // A band cut to nothing (its box hidden) reserves no gap either.
+    const bandRoom = band && band.h > 0 ? band.h + OUTSIDE_LEGEND_GAP : 0;
+    this._legendBand = band
+      ? { x: authoredLeft, y: marginTop + titleRoom, w: this._titleWrapWidth, h: band.h }
+      : null;
+    const provisionalTop = marginTop + titleRoom + bandRoom + provisionalTopAxisRoom;
     const plotHeight = Math.max(40, this.size.h - provisionalTop - provisionalBottom);
     // Explicit padding is a floor, not permission to clip. Long numeric or
     // categorical ticks and an outside y title reserve the room their actual
@@ -860,15 +953,34 @@ export class ChartView {
     const topAxisRoom = hasTopAxis
       ? Math.max(provisionalTopAxisRoom, measuredTopAxisRoom)
       : 0;
-    this._topAxisRoom = topAxisRoom;
+    // The band counts toward the room `_positionTitles` lifts the title over,
+    // as `_recutPolarPlot` does with its angular-label room, so the title sits
+    // above the legend rather than on it.
+    this._topAxisRoom = topAxisRoom + bandRoom;
     const bottomAxisRoom = hasBottomAxis
       ? Math.max(provisionalBottomAxisRoom, measuredBottomAxisRoom)
       : 0;
     this._bottomAxisRoom = bottomAxisRoom;
-    const top = marginTop + titleRoom + topAxisRoom;
+    let top = marginTop + titleRoom + bandRoom + topAxisRoom;
     const marginBottom =
       (measuredBottomAxisRoom ? Math.max(baseBottom, measuredBottomAxisRoom) : baseBottom)
       + colorbarBottomRoom;
+    // The band was budgeted against the provisional axis rooms; the measured
+    // ones can be larger (a narrower plot rotates or staggers its x labels).
+    // Shrink the band by what the 40 px plot floor now lacks, so the plot and
+    // its bottom axis stay on the canvas. Mirrors `layout` in _svg.py.
+    if (band) {
+      const excess = top + marginBottom + PLOT_MIN_PX - this.size.h;
+      if (excess > 1e-6) {
+        const shrunk = this._outsideLegendBand(this._titleWrapWidth, Math.max(0, band.h - excess));
+        if (shrunk) {
+          const room = shrunk.h > 0 ? shrunk.h + OUTSIDE_LEGEND_GAP : 0;
+          top -= bandRoom - room;
+          this._topAxisRoom = topAxisRoom + room;
+          this._legendBand.h = shrunk.h;
+        }
+      }
+    }
     this.plot = {
       x: marginLeft,
       y: top,
@@ -881,6 +993,88 @@ export class ChartView {
     // that object and an alias would freeze the pre-recut geometry.
     this._legendRect = null;
     this._recutPolarPlot(compact);
+  }
+
+  // Height an outside-top legend claims above the plot at band width `bandW`,
+  // or null when there is none. The column count comes from the shared glyph
+  // metrics (so it matches every export); the HEIGHT is measured from the live
+  // box, because the legend slot is author-stylable (padding, gaps, font) and a
+  // formula would under-reserve a restyled legend and let it cover the plot.
+  // A box that cannot be measured yet (the first layout runs before the DOM
+  // exists; a detached chart has no geometry) falls back to the exporters'
+  // formula, and `_buildDom` re-lays out once the box exists.
+  _outsideLegendBand(bandW, budget = Infinity) {
+    const lg = this._outsideLegend;
+    if (!lg) return null;
+    const names = lg._xyLegendNames || [];
+    if (!names.length) return null;
+    const own = lg._xyLegendOptions || {};
+    const style = xyLegendBandStyle(this.spec?.dom?.styles?.legend, own.style);
+    const options = { ...own, style };
+    const computedSize = lg.isConnected
+      ? Number.parseFloat(getComputedStyle(lg).fontSize)
+      : NaN;
+    const fontSize = Number.isFinite(computedSize) && computedSize > 0 ? computedSize : 11;
+    const ncols = xyLegendBandColumns(names, options, bandW, fontSize);
+    lg.style.gridTemplateColumns = `repeat(${ncols},minmax(0,max-content))`;
+    if (lg._xyLegendTitle) lg._xyLegendTitle.style.gridColumn = `1 / span ${ncols}`;
+    // The band, not the plot, bounds this box. Border-box so the height cap
+    // below includes the box's own padding.
+    lg.style.boxSizing = "border-box";
+    lg.style.setProperty("--xy-legend-max-width", `${Math.max(40, bandW)}px`);
+    lg.style.setProperty("--xy-legend-max-height", "none");
+    // Measure from the root's left edge. An absolutely positioned box shrinks
+    // to fit the room right of its `left`, so measuring it where it last sat
+    // (centred, or at an in-plot corner) squeezed the grid and wrapped labels
+    // under their swatches. `_positionLegend` moves it into place afterwards.
+    lg.style.setProperty("--xy-legend-left", "0px");
+    lg.style.setProperty("--xy-legend-right", "auto");
+    lg.style.setProperty("--xy-legend-transform", "none");
+    lg.dataset.xyLegendColumns = String(ncols);
+    const cap = OUTSIDE_LEGEND_MAX_FRACTION * this.size.h;
+    // The 30 % cap is soft (one full row always shows); the budget is hard.
+    const limit = Math.max(0, budget);
+    const measured = lg.isConnected ? lg.offsetHeight : 0;
+    if (measured > 0) {
+      let h = measured;
+      const cs = getComputedStyle(lg);
+      const padV = (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.paddingBottom) || 0);
+      if (measured > cap) {
+        // Too tall: cap it (the box scrolls, as in-plot legends do), but never
+        // below the title and one full row.
+        const titleH = lg._xyLegendTitle ? lg._xyLegendTitle.offsetHeight + (Number.parseFloat(cs.rowGap) || 0) : 0;
+        const firstRow = (lg._xyItemRows && lg._xyItemRows[0] && lg._xyItemRows[0].row.offsetHeight) || 0;
+        h = Math.min(measured, Math.max(cap, padV + titleH + firstRow));
+      }
+      h = Math.min(h, limit);
+      // A border-box never renders below its own padding and borders, so a
+      // budget smaller than that would leave the box painted over the plot.
+      // Hide it instead (it stays measurable, so a later layout with room
+      // shows it again) and reserve nothing.
+      const frameV = padV + (Number.parseFloat(cs.borderTopWidth) || 0)
+        + (Number.parseFloat(cs.borderBottomWidth) || 0);
+      if (h < frameV) {
+        // Remember the author's own value so showing it again restores that,
+        // not the default (an authored `visibility: hidden` must stay hidden).
+        if (!lg._xyBandHidden) lg._xyBandHidden = { visibility: lg.style.visibility };
+        lg.style.visibility = "hidden";
+        return { h: 0, ncols };
+      }
+      if (lg._xyBandHidden) {
+        lg.style.visibility = lg._xyBandHidden.visibility;
+        lg._xyBandHidden = null;
+      }
+      if (h < measured) lg.style.setProperty("--xy-legend-max-height", `${h}px`);
+      return { h, ncols };
+    }
+    const rows = Math.ceil(names.length / ncols) + (options.title ? 1 : 0);
+    const rowGap = xyLegendEm(style, "rowGap", 0.5) * fontSize;
+    const pad = 2 * xyLegendEm(style, "padding", 0.4) * fontSize;
+    const oneRow = (options.title ? 2 : 1) * fontSize * 1.03 + (options.title ? rowGap : 0) + pad;
+    const estimate = rows * fontSize * 1.03 + Math.max(0, rows - 1) * rowGap + pad;
+    const h = Math.min(estimate, Math.max(cap, oneRow), limit);
+    lg.style.setProperty("--xy-legend-max-height", `${h}px`);
+    return { h, ncols };
   }
 
   // Side and px a polar legend gutter claims, or null when nothing is reserved:
@@ -2513,6 +2707,21 @@ export class ChartView {
     this.size.h = h;
     // Before the layout/paint below, so this frame draws at the new scale.
     this._rescaleDprBakedBuffers();
+    this._applyLayout();
+    // Changing a canvas backing-store dimension clears it immediately. Resize
+    // work is already coalesced into one animation frame, so paint in that same
+    // frame instead of exposing cleared canvases until a second rAF callback.
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    this._drawNow();
+    this._scheduleViewRequest();
+  }
+
+  // Lay out the plot rect at the current size and move every positioned layer
+  // to it. Shared by `_resize` and by the first connected frame of a chart that
+  // was built detached (`_healStaleTheme`), whose outside-top legend could only
+  // be estimated until it had geometry.
+  _applyLayout() {
     this._layout();
     const p = this.plot;
     // Legends are bounded by the box they place in, which under polar is the
@@ -2546,13 +2755,30 @@ export class ChartView {
     this._fitModebar();
     this._layoutAxisBands();
     this._pickDirty = true;
-    // Changing a canvas backing-store dimension clears it immediately. Resize
-    // work is already coalesced into one animation frame, so paint in that same
-    // frame instead of exposing cleared canvases until a second rAF callback.
-    if (this._raf) cancelAnimationFrame(this._raf);
-    this._raf = null;
-    this._drawNow();
+  }
+
+  // A data update re-resolves `loc="best"`, and its payload can move the main
+  // legend between an in-plot corner and the outside-top band. The band
+  // changes the plot rect, so the mounted legend chrome is rebuilt and laid
+  // out again; a move between in-plot corners stays on the live best path.
+  // Mirrors what a fresh render of the same spec mounts.
+  // A move deferred while the context was lost (`_applyAppend`); `_drawNow`
+  // applies it on the first frame that can draw.
+  _flushOutsideLegendSync() {
+    const from = this._outsideLegendSyncFrom;
+    if (from == null || this._glLost || !this.gl) return;
+    this._outsideLegendSyncFrom = null;
+    this._syncOutsideLegendPlacement(from);
+  }
+
+  _syncOutsideLegendPlacement(prevSpec) {
+    const outside = (spec) => String(spec?.legend?.loc || "") === OUTSIDE_TOP_LEGEND;
+    if (outside(prevSpec) === outside(this.spec) || !this.root) return false;
+    for (const lg of this._legends || []) lg.remove();
+    this._buildLegend(this.root);
+    this._applyLayout();
     this._scheduleViewRequest();
+    return true;
   }
 
   _buildDom(el) {
@@ -2660,6 +2886,25 @@ export class ChartView {
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
+    if (this._outsideLegend) {
+      // The first `_layout` ran before this box existed and reserved no band.
+      // Lay out again now that it can be measured, and move what was already
+      // placed from the band-less rect. Backing stores are sized later, from
+      // this final rect, by GL init.
+      this._layout();
+      const p = this.plot;
+      this.canvas.style.left = p.x + "px";
+      this.canvas.style.top = p.y + "px";
+      this.canvas.style.width = p.w + "px";
+      this.canvas.style.height = p.h + "px";
+      root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
+      root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+      this._positionTitles();
+      for (const lg of this._legends) {
+        const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
+        this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
+      }
+    }
     this._buildColorbar(root);
     this._buildReductionBadges(root);
   }
@@ -2783,6 +3028,7 @@ export class ChartView {
     this._legendBestMutationObserver?.disconnect();
     this._legendBestMutationObserver = null;
     this._legends = [];
+    this._outsideLegend = null;
     this._legendBestDirty = false;
     // Toggle state survives chrome/GPU rebuilds: it lives on the view keyed
     // by spec-trace index, and freshly built rows re-adopt it below.
@@ -2908,8 +3154,12 @@ export class ChartView {
     // ships the separate intent bit only when the author requested automatic
     // placement. Anchors are authored geometry and polar legends own a gutter,
     // so neither is ever reconsidered here.
+    // A band legend is never handed to the in-plot best pass: Python only
+    // resolves `best` to the band when no in-plot position was empty, and
+    // moving it back inside would shrink and regrow the plot mid-interaction.
     if (
       String(options.auto_loc || "").trim().toLowerCase() === "best" &&
+      loc !== OUTSIDE_TOP_LEGEND &&
       !Array.isArray(options.anchor) &&
       this.spec?.coords !== "polar"
     ) {
@@ -2928,6 +3178,7 @@ export class ChartView {
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
       this._applySlot(title, "legend_title");
       lg.appendChild(title);
+      lg._xyLegendTitle = title;
     }
     const rows = [];
     for (const it of items) {
@@ -3088,6 +3339,20 @@ export class ChartView {
       lg.appendChild(row);
     }
     lg._xyItemRows = rows;
+    // Only the main, unanchored legend of a Cartesian chart claims the band
+    // above the plot (`_outsideLegendBand`); an anchor is authored geometry and
+    // a polar legend keeps its gutter. Mirrors `_outside_top_legend_band`.
+    if (
+      source === "main" &&
+      loc === OUTSIDE_TOP_LEGEND &&
+      !Array.isArray(options.anchor) &&
+      this.spec?.coords !== "polar"
+    ) {
+      lg.dataset.xyLegendBand = "top";
+      lg._xyLegendNames = items.map((it) => String(it.name ?? ""));
+      lg._xyLegendOptions = options;
+      this._outsideLegend = lg;
+    }
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
     if (this._legends.some((item) => item.dataset.xyLegendAutoLoc === "best")) {
@@ -4067,6 +4332,25 @@ export class ChartView {
 
   _positionLegend(lg, loc, anchor = null) {
     if (!lg) return;
+    if (lg === this._outsideLegend && this._legendBand) {
+      // Centered over the plot like the title, kept inside the band: the band
+      // spans the authored gutters, which a measured y-axis gutter may have
+      // pushed the plot's left edge past. Mirrors the band branch of
+      // `_legend_layout` in python/xy/_svg.py.
+      const band = this._legendBand;
+      const boxW = lg.isConnected ? lg.offsetWidth : 0;
+      const centre = this.plot.x + this.plot.w / 2;
+      const centred = boxW > 0;
+      const left = centred
+        ? Math.min(Math.max(centre - boxW / 2, band.x), band.x + Math.max(0, band.w - boxW))
+        : centre;
+      lg.style.setProperty("--xy-legend-left", `${left}px`);
+      lg.style.setProperty("--xy-legend-right", "auto");
+      lg.style.setProperty("--xy-legend-top", `${band.y}px`);
+      lg.style.setProperty("--xy-legend-bottom", "auto");
+      lg.style.setProperty("--xy-legend-transform", centred ? "none" : "translate(-50%,0)");
+      return;
+    }
     // Responsive anchors flow through private custom properties consumed by a
     // zero-specificity rule. Author classes or component styles can still set
     // real left/right/top/bottom/transform declarations and win normally.
@@ -6547,6 +6831,14 @@ export class ChartView {
 
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
+    // Heal before the shared host reads the canvas size below: on a chart
+    // built detached, the first connected heal re-lays out an outside-top
+    // legend band, which resizes the canvas. Healing inside `_renderGlFrame`
+    // drew at the new size but presented at the old one, shifting the marks
+    // against the axes. The later call inside the frame is then a no-op.
+    // A band move deferred while the context was lost resizes it the same way.
+    this._healStaleTheme();
+    this._flushOutsideLegendSync();
     let rendered;
     if (this._glHost) {
       rendered = this._glHost.render(
@@ -9121,6 +9413,13 @@ export class ChartView {
   _healStaleTheme() {
     if (!this._themeStale || !this.root.isConnected) return false;
     this._applyTheme();
+    if (this._outsideLegend) {
+      // Built detached, the band was the formula estimate (and capped the box
+      // to it). Now that the legend has geometry, measure it and lay out again
+      // before this frame paints.
+      this._applyLayout();
+      this._scheduleViewRequest();
+    }
     return true;
   }
 

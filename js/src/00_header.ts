@@ -48,7 +48,10 @@
 // full circular, centre-origin geometry.
 // v13: the `funnel` trace kind. markOf() falls back to scatter for unknown
 // kinds, so a v12 client would silently render funnel quads as a point cloud.
-export const PROTOCOL = 13;
+// v14: `legend.loc = "outside top"`, a legend band the plot shrinks for. A v13
+// client token-matches `top` and draws an in-plot `upper center` legend over
+// the marks the band exists to keep clear.
+export const PROTOCOL = 14;
 
 // One wire-column -> generic GL-slot contract for funnel geometry. Object
 // insertion order is also the instance-attribute order used by build, filter,
