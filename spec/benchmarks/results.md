@@ -462,7 +462,12 @@ medians on this VM vary by ±10% between runs. On the 1M-sample huge row,
 `zone_maps_pair` ingest is a further ~4 ms. That cost is bound by its ordered
 f64 sum, which stays as is to keep zone maps bit-identical. A branch-free
 positive-range fold was measured there and gave no gain, so it was not kept.
-Raw reports, including the full six-family standard run, are in
+A full six-family standard gate run (21 reps / 3 warm-ups) on this branch
+and host measured line at **11.00×** (10.95 vs 120.4 ms) and a geometric mean
+of 12.84×. Histogram (10.46×) and contour (10.36×) passed, and pcolormesh
+missed at 5.11×. The pcolormesh gap is separate from #550 and already shows
+on the base commit on this host, so it is not attributed to this change.
+Raw reports, including that run, are in
 `spec/benchmarks/evidence/issue-550/`. Reproduce with:
 
 ```bash
