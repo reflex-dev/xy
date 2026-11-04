@@ -97,3 +97,13 @@ def test_both_adapters_export_at_the_same_dpi() -> None:
     assert bench._matplotlib_render(_Figure()) == b"png"
     assert seen[0] == seen[1] == {"format": "png", "dpi": bench.EXPORT_DPI}
     assert (bench.PNG_W, bench.PNG_H) == (1800, 840)
+
+
+def test_family_filter_rejects_unknown_or_empty_selection() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="families"):
+        bench.run(profile="smoke", reps=1, warmups=0, families=("lines",))
+    with pytest.raises(ValueError, match="families"):
+        bench.run(profile="smoke", reps=1, warmups=0, families=())
+    assert bench.FAMILY_NAMES[0] == "line"

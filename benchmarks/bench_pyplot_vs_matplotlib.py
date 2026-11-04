@@ -390,14 +390,32 @@ def _compare(
     }
 
 
-def run(*, profile: str, reps: int, warmups: int, target_speedup: float = 10.0) -> dict[str, Any]:
+FAMILY_NAMES = ("line", "scatter", "histogram", "bar", "pcolormesh", "contour")
+
+
+def run(
+    *,
+    profile: str,
+    reps: int,
+    warmups: int,
+    target_speedup: float = 10.0,
+    families: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     if reps < 1:
         raise ValueError("reps must be >= 1")
     if warmups < 0:
         raise ValueError("warmups must be >= 0")
     if not math.isfinite(target_speedup) or target_speedup <= 0.0:
         raise ValueError("target_speedup must be finite and > 0")
+    if families is not None:
+        unknown = sorted(set(families) - set(FAMILY_NAMES))
+        if unknown or not families:
+            raise ValueError(f"families must be a non-empty subset of {FAMILY_NAMES}")
     cases, xy_plt, matplotlib_plt = make_cases(profile)
+    if families is not None:
+        # A focused A/B (e.g. the line family for #550) runs the exact same
+        # cases, sampling and oracles; it only skips the other families.
+        cases = [case for case in cases if case.family in families]
     rows: list[dict[str, Any]] = []
     comparisons: list[dict[str, Any]] = []
 
@@ -480,6 +498,7 @@ def run(*, profile: str, reps: int, warmups: int, target_speedup: float = 10.0) 
         "benchmark_categories": list(BENCHMARK_CATEGORIES),
         "tracked_categories": categories_for(TRACKED_CATEGORY_IDS),
         "profile": profile,
+        "families": [case.family for case in cases],
         "reps": reps,
         "warmups": warmups,
         "pixel_target": {"width": PNG_W, "height": PNG_H, "format": "png"},
@@ -569,6 +588,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="exit nonzero unless every family reaches --target-speedup",
     )
+    parser.add_argument(
+        "--family",
+        action="append",
+        choices=FAMILY_NAMES,
+        help="run only this family (repeatable); default runs all six",
+    )
     parser.add_argument("--json", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
@@ -577,6 +602,7 @@ def main(argv: list[str] | None = None) -> int:
         reps=args.reps,
         warmups=args.warmups,
         target_speedup=args.target_speedup,
+        families=tuple(args.family) if args.family else None,
     )
     markdown = to_markdown(report)
     print(markdown, end="")
