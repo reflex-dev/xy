@@ -407,7 +407,7 @@ _RELATIVE_FONT_PROBE = """
     const before = view._slotFontSize("tick_label", 0);
     // A relative size follows its context: double the chart root's font.
     view.root.style.fontSize = `${2 * parseFloat(getComputedStyle(view.root).fontSize)}px`;
-    view._applyLayout();
+    view._layout();
     const after = view._slotFontSize("tick_label", 0);
     document.body.setAttribute("data-xy-relative-font", JSON.stringify({ before, after }));
   } catch (err) {
