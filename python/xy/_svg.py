@@ -29,7 +29,7 @@ from typing import Any, NamedTuple, Optional, cast
 
 import numpy as np
 
-from . import _fontmetrics, _native, _paint, _png, _textblock
+from . import _fontmetrics, _native, _paint, _png, _textblock, _validate
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE, polar_bar_segments
 
@@ -1404,6 +1404,10 @@ _LEGEND_SLOT_ALIASES: dict[str, str] = {
     "box-shadow": "boxShadow",
     "border-radius": "borderRadius",
     "row-gap": "rowGap",
+    # The browser applies every spelling; `_legend_font_size` reads `fontSize`,
+    # so the others sized and drew static legends at the 11 px default.
+    "font-size": "fontSize",
+    "font_size": "fontSize",
 }
 
 
@@ -2168,6 +2172,7 @@ def _axis_text_paint_visible(
 def _y_title_baseline(
     axis: dict[str, Any],
     plot: dict[str, float],
+    slot_font_px: Optional[float] = None,
 ) -> Optional[float]:
     """Baseline x of a quarter-turned y-axis title, or None when it has none.
 
@@ -2191,7 +2196,7 @@ def _y_title_baseline(
         shift = (ascent - descent) / 2 if abs(abs(angle) - 90.0) < 0.5 else 0.0
         return plot["x"] + plot["w"] + 40.0 - shift + float(axis.get("label_offset", 0.0))
     tick_offset, tick_room = (
-        _y_tick_label_room(axis, plot["h"])
+        _y_tick_label_room(axis, plot["h"], slot_font_px)
         if "left" in _axis_tick_label_sides(axis, is_x=False)
         else (0.0, 0.0)
     )
@@ -2202,7 +2207,9 @@ def _y_title_baseline(
     return plot["x"] - tick_offset - tick_room - gap - title_depth
 
 
-def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, float]:
+def _y_tick_label_room(
+    axis: dict[str, Any], plot_h: float, slot_font_px: Optional[float] = None
+) -> tuple[float, float]:
     """(offset from the spine, widest tick-label extent) for a y axis, in px.
 
     Measured from the advance widths of the strings that will actually be drawn,
@@ -2217,7 +2224,7 @@ def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, floa
     font_size = _axis_tick_font_size(axis)
     raw_angle = axis.get("tick_label_angle")
     angle = float(raw_angle or 0.0)
-    _values, labels, step = axis_ticks(axis, plot_h, False)
+    _values, labels, step = axis_ticks(axis, plot_h, False, slot_font_px=slot_font_px)
     room = 0.0
     for value in labels:
         block = _textblock.measure(_tick_text(axis, value, step), font_size)
@@ -2253,7 +2260,11 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
         left_title = axis.get("side", "left") != "right"
         if not left_labels and not left_title:
             continue
-        tick_offset, tick_room = _y_tick_label_room(axis, plot_h) if left_labels else (0.0, 0.0)
+        tick_offset, tick_room = (
+            _y_tick_label_room(axis, plot_h, _tick_label_slot_px(spec))
+            if left_labels
+            else (0.0, 0.0)
+        )
         title_visible = (
             left_title
             and _has_outside_y_title(axis)
@@ -2575,12 +2586,12 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     # Resolved before the title band, because the band's height now depends on
     # how many lines the title wraps into at this width.
     title_wrap_width = _title_wrap_width(width, left, right)
+    left_authored = left
     title_room = _title_room(spec, compact, title_wrap_width)
     top_axis_room, bottom_axis_room, measured_bottom_room = _x_axis_rooms(
         axes, provisional_w, compact
     )
     top += title_room
-    top += top_axis_room
     if measured_bottom_room:
         bottom = max(bottom, measured_bottom_room)
     colorbar = spec.get("colorbar") or {}
@@ -2593,6 +2604,22 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         bottom += (18 if colorbar.get("pad") == 0 else 38) + (16 if colorbar.get("label") else 0)
     elif colorbar:
         right += (62 if colorbar.get("pad") == 0 else 86) + (18 if colorbar.get("label") else 0)
+    # An outside-top legend is a band between the title and the plot. It is
+    # sized at the title's wrap width for the same reason the title is: the
+    # final plot width depends on the plot height, which depends on this band.
+    # Its height is budgeted against what the title, the axes, and the 40 px
+    # plot floor leave, so on a short card it shrinks rather than pushing the
+    # plot off the canvas.
+    band_budget = _outside_legend_budget(height, top + top_axis_room, bottom)
+    legend_band = _outside_top_legend_band(
+        spec,
+        title_wrap_width,
+        _OUTSIDE_LEGEND_MAX_FRACTION * float(height),
+        band_budget,
+    )
+    band_room = legend_band["room"] if legend_band else 0.0
+    top += band_room
+    top += top_axis_room
     if any(
         axis_id.startswith("y")
         and (
@@ -2640,6 +2667,23 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         bottom = max(bottom, final_measured_bottom)
         measured_bottom_room = final_measured_bottom
     bottom_axis_room = max(bottom_axis_room, measured_bottom)
+    if legend_band:
+        # The band was budgeted against the provisional axis rooms; the measured
+        # pass can grow them (a narrower plot rotates or staggers its x labels).
+        # Shrink the band by what the 40 px plot floor now lacks, so the plot
+        # and its bottom axis stay on the canvas. Mirrored in ChartView._layout.
+        excess = top + bottom + _PLOT_MIN_PX - height
+        if excess > 1e-9:
+            shrunk = _outside_top_legend_band(
+                spec,
+                title_wrap_width,
+                legend_band["cap"],
+                max(0.0, float(legend_band["box_h"]) - excess),
+            )
+            if shrunk:
+                top -= band_room - shrunk["room"]
+                band_room = shrunk["room"]
+                legend_band = shrunk
     plot = {
         "x": left,
         "y": top,
@@ -2651,9 +2695,21 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # The width the title band was measured at. Emitters must wrap at the
         # same width or they draw more lines than `title_room` reserved.
         "title_wrap_width": title_wrap_width,
-        "top_axis_room": top_axis_room,
+        # The legend band counts toward the room the title is lifted over, the
+        # same way `_recut_polar_plot` folds in its angular-label room: the
+        # emitters anchor the title at `plot.y - top_axis_room`, which then
+        # lands above the band instead of on it.
+        "top_axis_room": top_axis_room + band_room,
         "bottom_axis_room": bottom_axis_room,
     }
+    if legend_band:
+        plot["legend_band_x"] = left_authored
+        plot["legend_band_y"] = top - top_axis_room - band_room
+        plot["legend_band_w"] = title_wrap_width
+        plot["legend_band_h"] = legend_band["box_h"]
+        plot["legend_band_ncols"] = legend_band["ncols"]
+        plot["legend_band_cap"] = legend_band["cap"]
+        plot["legend_band_budget"] = legend_band["budget"]
     if spec.get("coords") == "polar":
         _recut_polar_plot(spec, plot, width, height, compact)
     return width, height, compact, plot
@@ -2954,8 +3010,42 @@ def _tick_window_filter(axis: dict[str, Any], lo: float, hi: float) -> Callable[
     return lambda value: bool(np.mod(value - low, turn) <= span + turn * 1e-9)
 
 
+#: Spacing, in tick-label font sizes, that one category label needs along a
+#: vertical axis: one text line plus a gap. The numeric density (one tick per
+#: 45 px) assumed tick values a few labels apart sufficed, but every category
+#: is a label someone needs, and at 45 px a six-row horizontal bar chart at a
+#: dashboard height labelled every other row. Mirrored by CATEGORY_LABEL_PITCH
+#: in js/src/50_chartview.ts.
+_CATEGORY_LABEL_PITCH = 1.6
+
+
+def _tick_label_slot_px(spec: dict[str, Any]) -> Optional[float]:
+    """The `styles={"tick_label": ...}` font size in px, when one is authored."""
+    slot = slot_styles(spec).get("tick_label") or {}
+    return slot_font_size(slot, 0.0) or None if "font-size" in slot else None
+
+
+def _is_vertical_category_axis(axis: dict[str, Any], is_x: bool) -> bool:
+    """A Cartesian vertical category axis: one-line labels at the painted size.
+
+    Polar category theta keeps one spoke per category, and a polar radial axis
+    (it always carries `hole`) keeps the numeric density: its labels ride a
+    spoke, not a vertical edge.
+    """
+    return (
+        not is_x
+        and axis.get("kind") == "category"
+        and axis.get("theta_unit") is None
+        and axis.get("hole") is None
+    )
+
+
 def axis_ticks(
-    axis: dict[str, Any], length_px: float, is_x: bool
+    axis: dict[str, Any],
+    length_px: float,
+    is_x: bool,
+    *,
+    slot_font_px: Optional[float] = None,
 ) -> tuple[list[float], list[float], float]:
     """(ticks, labeled ticks, step) for an axis at a given pixel length — shared
     tick density so SVG and PNG label the same values."""
@@ -2967,7 +3057,10 @@ def axis_ticks(
         step = abs(ticks[1] - ticks[0]) if len(ticks) > 1 else 1.0
         return ticks, ticks, step
     requested = axis.get("tick_count")
-    if isinstance(requested, (int, float)) and not isinstance(requested, bool) and requested > 0:
+    authored = (
+        isinstance(requested, (int, float)) and not isinstance(requested, bool) and requested > 0
+    )
+    if authored:
         target = max(1, min(200, int(requested)))
     else:
         target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
@@ -2981,6 +3074,16 @@ def axis_ticks(
         categories = axis.get("categories") or []
         if axis.get("theta_unit") is not None and requested is None:
             target = len(categories)
+        elif not authored and _is_vertical_category_axis(axis, is_x):
+            # Unauthored vertical category axis: label every row that fits a
+            # line of text, not one per numeric-tick spacing. The larger of the
+            # axis's own and the `tick_label` slot's font size, because the
+            # renderers resolve the two in opposite orders.
+            size = max(_axis_tick_font_size(axis), float(slot_font_px or 0.0))
+            pitch = size * _CATEGORY_LABEL_PITCH
+            # Floor of one: a row too short for three labels shows one. At
+            # most 200, so a tall axis strides its labels across every row.
+            target = max(1, min(200, int(length_px / pitch)))
         t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
         return t, t, 1.0
     if axis.get("theta_unit") is not None:
@@ -3112,6 +3215,7 @@ def _axis_tick_label_layout(
     step: float,
     scale: _Scale,
     is_x: bool,
+    painted_font_px: Optional[float] = None,
 ) -> list[dict[str, Any]]:
     """Port ChartView._layoutTickLabels for deterministic static chrome."""
     strategy = _axis_tick_label_strategy(axis)
@@ -3119,6 +3223,10 @@ def _axis_tick_label_layout(
         return []
 
     font_size = _axis_tick_font_size(axis)
+    if _is_vertical_category_axis(axis, is_x):
+        # Collide at the painted size, the size the one-line target used: a
+        # 24 px `tick_label` slot measured at 11 px let two-line labels overlap.
+        font_size = max(font_size, float(painted_font_px or 0.0))
     min_gap = float(axis.get("tick_label_min_gap", 8 if is_x else 4))
     raw_angle = axis.get("tick_label_angle")
     explicit_angle = float(raw_angle) if raw_angle is not None else None
@@ -3231,6 +3339,7 @@ def _axis_label_geometry(
     plot: dict[str, float],
     *,
     is_x: bool,
+    slot_font_px: Optional[float] = None,
 ) -> dict[str, Any]:
     """Resolve named axis-title placement shared by SVG and native output.
 
@@ -3279,7 +3388,7 @@ def _axis_label_geometry(
             # baseline. `_y_title_baseline` applies that half-line-box
             # correction and the axis's own `label_offset`, and is the same
             # function `layout()` reserves the gutter from.
-            baseline = _y_title_baseline(axis, plot)
+            baseline = _y_title_baseline(axis, plot, slot_font_px)
             x = (
                 baseline
                 if baseline is not None
@@ -3883,8 +3992,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 f'clip-rule="nonzero"/></clipPath>'
             )
 
+    tick_slot_px = _tick_label_slot_px(spec)
+
     def ticks_for(axis: dict[str, Any], length_px: float) -> tuple[list[float], list[float], float]:
-        return axis_ticks(axis, length_px, axis is xa)
+        return axis_ticks(axis, length_px, axis is xa, slot_font_px=tick_slot_px)
 
     # -- grid + tick labels + baselines ------------------------------------
     xt, xlab, xstep = ticks_for(xa, plot["w"])
@@ -3998,7 +4109,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 )
             else:
                 label_offset = _axis_tick_label_offset(axis, 8.0)
-            for item in _axis_tick_label_layout(side_axis, values, step, axis_scale, is_x):
+            for item in _axis_tick_label_layout(
+                side_axis, values, step, axis_scale, is_x, font_size
+            ):
                 angle = float(item["angle"])
                 block = _textblock.measure(item["text"], font_size)
                 if is_x:
@@ -4069,7 +4182,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         append_tick_labels(axis, tick_labels, step, axis_scale, is_x=True)
     extra_y_ticks: dict[str, tuple[list[float], list[float], float]] = {}
     for axis_id, axis, axis_scale in extra_y_axes:
-        ticks, tick_labels, step = axis_ticks(axis, plot["h"], False)
+        ticks, tick_labels, step = axis_ticks(axis, plot["h"], False, slot_font_px=tick_slot_px)
         extra_y_ticks[axis_id] = (ticks, tick_labels, step)
         append_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
 
@@ -4257,7 +4370,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             return
         axis_style = axis.get("style") or {}
         slot = slots.get("axis_title") or {}
-        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x, slot_font_px=tick_slot_px)
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
         transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
@@ -6446,12 +6559,13 @@ def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -
 
 
 def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
-    """Rect that bounds a static legend: the plot, union any polar gutter.
+    """Rect that bounds a static legend: the plot, union any reserved legend room.
 
     A polar legend lives in a `legend_box_*` gutter OUTSIDE the plot rect
-    (`_recut_polar_plot`), so clipping a legend to the plot rect alone erases it
-    entirely. Union, not replacement: the same rect still bounds in-plot chrome.
-    Shared so the SVG clipPath and the raster clip command cannot drift.
+    (`_recut_polar_plot`), and an outside-top legend in the `legend_band_*`
+    band above it (`layout`), so clipping a legend to the plot rect alone erases
+    it entirely. Union, not replacement: the same rect still bounds in-plot
+    chrome. Shared so the SVG clipPath and the raster clip command cannot drift.
     """
     x0, y0 = float(plot["x"]), float(plot["y"])
     x1, y1 = x0 + float(plot["w"]), y0 + float(plot["h"])
@@ -6460,7 +6574,119 @@ def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
         y0 = min(y0, float(plot["legend_box_y"]))
         x1 = max(x1, float(plot["legend_box_x"]) + float(plot["legend_box_w"]))
         y1 = max(y1, float(plot["legend_box_y"]) + float(plot["legend_box_h"]))
+    if "legend_band_w" in plot:
+        x0 = min(x0, float(plot["legend_band_x"]))
+        y0 = min(y0, float(plot["legend_band_y"]))
+        x1 = max(x1, float(plot["legend_band_x"]) + float(plot["legend_band_w"]))
     return x0, y0, x1 - x0, y1 - y0
+
+
+#: Gap between an outside-top legend band and the top of the plot (or the
+#: top-axis tick labels). Mirrored by OUTSIDE_LEGEND_GAP in
+#: js/src/50_chartview.ts.
+_OUTSIDE_LEGEND_GAP = 8.0
+
+#: The plot rect's height floor, shared with `max(40, ...)` in `layout` and
+#: ChartView._layout; an outside-top band's budget leaves it intact.
+_PLOT_MIN_PX = 40.0
+
+#: Tallest an outside-top legend box may be, as a fraction of the chart height.
+#: Uncapped, a dozen long one-column rows on a small card claimed more than the
+#: whole canvas and pushed the plot off its bottom edge. Rows past the cap are
+#: dropped in static files and scroll in the browser; one row always shows
+#: unless `_outside_legend_budget` (the hard limit) has no room for it.
+#: Mirrored by OUTSIDE_LEGEND_MAX_FRACTION in js/src/50_chartview.ts.
+_OUTSIDE_LEGEND_MAX_FRACTION = 0.3
+
+
+def _legend_band_columns(named: list[dict], options: dict, band_w: float) -> int:
+    """Most columns an outside-top legend can use without ellipsizing a label.
+
+    Entries fill row-major, exactly like the in-plot grid, so a column is as
+    wide as its widest label. The metrics are `_legend_layout`'s, and the
+    advances are the shared DejaVu table, so the browser
+    (`xyLegendBandColumns`) wraps the same entries into the same rows.
+    """
+    if len(named) <= 1:
+        return 1
+    style = options.get("style") or {}
+    font_size = _legend_font_size(style)
+    char_width = font_size * (_LEGEND_CHAR_WIDTH / 11.0)
+    pad = 2.0 * _legend_em(style, "padding", 0.4) * font_size
+    handle = max(0.0, float(options.get("handlelength", 2.0))) * font_size
+    gap = max(0.0, float(options.get("handletextpad", 0.8))) * font_size
+    column_gap = 2.0 * font_size
+    widths = [_legend_text_width(item.get("name", ""), char_width) for item in named]
+    for ncols in range(len(named), 1, -1):
+        total = (
+            sum(handle + gap + max(widths[column::ncols]) for column in range(ncols))
+            + (ncols - 1) * column_gap
+            + pad
+        )
+        if total <= band_w + _LEGEND_FIT_EPS:
+            return ncols
+    return 1
+
+
+def _outside_legend_budget(height: float, top: float, bottom: float) -> float:
+    """Most box height an outside-top band may take, in px.
+
+    What the chart's height leaves after the chrome above (`top`, title and top
+    axis included) and below the plot, the 40 px plot floor, and the band gap.
+    """
+    return max(0.0, float(height) - top - bottom - _PLOT_MIN_PX - _OUTSIDE_LEGEND_GAP)
+
+
+def _outside_top_legend_band(
+    spec: dict[str, Any], band_w: float, cap: float = math.inf, budget: float = math.inf
+) -> Optional[dict[str, float]]:
+    """Room an outside-top legend claims above the plot, or None.
+
+    `cap` is the soft 30 % rule (a box always keeps one full row); `budget`
+    is the hard limit from `_outside_legend_budget`, which even that one row
+    may not cross.
+
+    Only the main, unanchored legend of a Cartesian chart reserves a band: an
+    `anchor` is authored geometry the author owns (and reserves room for), and
+    a polar legend keeps its gutter beside the disc.
+    """
+    options = spec.get("legend") or {}
+    if (
+        not _validate.is_outside_top_legend(options.get("loc"))
+        or not spec.get("show_legend", True)
+        or spec.get("coords") == "polar"
+    ):
+        return None
+    anchor = options.get("anchor")
+    if anchor and len(anchor) in (2, 4):
+        return None
+    named = options.get("items") or legend_items(spec.get("traces") or [])
+    if not named:
+        return None
+    options = legend_options_with_slot(spec, options)
+    ncols = _legend_band_columns(named, options, band_w)
+    probe = {
+        "x": 0.0,
+        "y": 0.0,
+        "w": band_w,
+        "h": band_w,
+        "legend_band_x": 0.0,
+        "legend_band_y": 0.0,
+        "legend_band_w": band_w,
+        "legend_band_h": 0.0,
+        "legend_band_ncols": ncols,
+        "legend_band_cap": cap,
+        "legend_band_budget": budget,
+    }
+    box = _legend_layout(named, probe, options)
+    return {
+        "ncols": ncols,
+        "cap": cap,
+        "budget": budget,
+        "box_h": box["box_h"],
+        # A band cut to nothing reserves no gap either.
+        "room": box["box_h"] + _OUTSIDE_LEGEND_GAP if box["box_h"] > 0 else 0.0,
+    }
 
 
 def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:
@@ -6474,7 +6700,17 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     A polar chart hands over a `legend_box_*` gutter beside the disc
     (`_recut_polar_plot`); everything below then bounds and places the legend in
     that box instead of over the marks, and `loc` chooses where within it.
+
+    An outside-top legend (`loc="outside top"`) is laid into the `legend_band_*`
+    band `layout` reserved above the plot: the band's column count, the band's
+    width as the cap, every row visible (the band was sized to hold them), and
+    the box centered over the plot.
     """
+    band = (
+        "legend_band_w" in plot
+        and _validate.is_outside_top_legend(options.get("loc"))
+        and not (options.get("anchor") and len(options["anchor"]) in (2, 4))
+    )
     if "legend_box_w" in plot:
         plot = {
             **plot,
@@ -6505,6 +6741,8 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         line_h = max(line_h, swatch_h + 2.0)
 
     requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
+    if band:
+        requested_cols = min(len(named), max(1, int(plot["legend_band_ncols"])))
     title = options.get("title")
     title_h = line_h if title else 0.0
     inset = 6.0
@@ -6520,9 +6758,14 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         1.0,
         float(plot["w"]) if anchor and len(anchor) in (2, 4) else float(plot["w"]) - 2 * inset,
     )
+    if band:
+        available_w = max(1.0, float(plot["legend_band_w"]))
     ncols = requested_cols
     min_column_w = handle + gap + 4 * char_width
-    if ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
+    # A band's column count was already fitted to the labels' natural widths
+    # (`_legend_band_columns`); re-charging the in-plot minimum here dropped a
+    # column the browser keeps (four one-letter labels went 4 -> 3).
+    if not band and ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
         # A column must at least retain its handle and a visible ellipsis.
         max_fit_cols = max(
             1,
@@ -6574,6 +6817,17 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
+    if band:
+        # The band was sized from this very layout under the same cap, so the
+        # rows that fit the cap all show; at least one row always does.
+        # Rows are counted below with `line_h` (raised by a tall
+        # `handleheight` swatch), so the floor uses the same pitch.
+        title_room = text_h + row_gap if title else 0.0
+        one_row = pad + title_room + line_h - row_gap
+        available_h = max(float(plot.get("legend_band_cap", math.inf)), one_row + 1e-6)
+        # The budget is hard: on a chart too short for even one row the box
+        # is clipped rather than pushing the plot off the canvas.
+        available_h = min(available_h, float(plot.get("legend_band_budget", math.inf)))
     visible_rows = nrows
     content_rows = nrows + (1 if title else 0)
     natural_box_h = content_rows * text_h + max(0, content_rows - 1) * row_gap + pad
@@ -6592,7 +6846,16 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     loc_tokens = set(re.split(r"[\s_-]+", loc))
     loc_is_upper = "upper" in loc or "top" in loc_tokens
     loc_is_lower = "lower" in loc or "bottom" in loc_tokens
-    if anchor and len(anchor) in (2, 4):
+    if band:
+        # Centered over the plot like the title, but kept inside the band: the
+        # band spans the authored gutters, which a measured y-axis gutter may
+        # have since pushed the plot's left edge past.
+        band_x = float(plot["legend_band_x"])
+        band_w = float(plot["legend_band_w"])
+        x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
+        x = min(max(x, band_x), band_x + max(0.0, band_w - box_w))
+        y = float(plot["legend_band_y"])
+    elif anchor and len(anchor) in (2, 4):
         ax, ay = float(anchor[0]), float(anchor[1])
         aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
         hx = 0.0 if "left" in loc else 1.0 if "right" in loc else 0.5
@@ -7196,7 +7459,10 @@ def _resolve_auto_legend_locations(
     def resolved(options: Any) -> Any:
         if (
             not isinstance(options, dict)
-            or options.get("auto_loc") != "best"
+            # `auto_outside` marks a composition-API `best` even after it
+            # resolved to the band (which drops `auto_loc`), so a larger export
+            # can bring the legend back inside an empty corner.
+            or (options.get("auto_loc") != "best" and options.get("auto_outside") != "top")
             or options.get("anchor") is not None
             or spec.get("coords", "cartesian") != "cartesian"
         ):
@@ -7208,6 +7474,11 @@ def _resolve_auto_legend_locations(
             concrete,
             rendered_columns=rendered_columns,
         )
+        if concrete["loc"] == _validate.LEGEND_OUTSIDE_TOP:
+            # Same contract as the payload: a band legend is exact.
+            concrete.pop("auto_loc", None)
+        elif options.get("auto_outside") == "top":
+            concrete["auto_loc"] = "best"
         return concrete
 
     legend = spec.get("legend")

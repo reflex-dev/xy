@@ -169,6 +169,7 @@ def test_raster_best_legend_rescores_final_size_without_mutating_extras() -> Non
     assert spec["legend"] == {
         "loc": "upper left",
         "ncols": 1,
+        "auto_outside": "top",
         "auto_loc": "best",
     }
     assert spec["extra_legends"][0]["loc"] == "upper left"

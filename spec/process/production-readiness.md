@@ -57,6 +57,7 @@ and manual dispatches run all lanes, including documentation-only pushes to main
 | Only `docs/`, `spec/`, `news/`, README, changelog, contributor instructions or license | Selector and summary; the separate Docs workflow handles its matching paths |
 | `python/xy/pyplot/`, `python/xy/backends/`, their tests, gallery inputs or compatibility scripts | Runtime/Python floor, released Matplotlib reference/patch, eight standard gallery shards, extended gallery |
 | Other `tests/` or `examples/`, or `.binder/` | Runtime/Python floor; Binder separately selects its own build inputs |
+| `scripts/ci_gallery_dependencies.py`, its FFmpeg lock, or the gallery dependency restore action | Runtime/Python floor and pyplot, including the shared dependency producer and its eight consumers |
 | `benchmarks/` or `scripts/bench*` | Blocking runtime/Python-floor regression checks plus advisory cross-library/methodology benchmarks and their report merge |
 | `.github/workflows/`, `.github/actions/`, CI selector/verifier scripts | Runtime/Python floor, packaging and conformance; advisory benchmarks are skipped |
 | Shared Python, Rust, JS, dependency/build configuration, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
@@ -155,6 +156,104 @@ docs and news. CI-only PRs do not download CodSpeed tooling or run its benchmark
 Pyplot implementation changes still run its dedicated CodSpeed benchmarks.
 Published release build workflows and their full platform coverage are unchanged.
 
+### Shared standard-gallery system dependencies
+
+The eight standard gallery shards do not contact APT servers. One blocking
+`gallery_dependencies` producer starts after selection, alongside the native
+wheel build. It downloads the prebuilt Ubuntu 24.04 amd64 FFmpeg runtime packages
+in `scripts/ci_gallery_ffmpeg.lock.json`, verifies every byte against the committed
+SHA-512 digests and sizes, and uploads one `ci-gallery-ffmpeg` artifact for this run.
+The reviewed package identities come from Ubuntu's signed noble, noble-updates,
+and noble-security indexes, authenticated with `ubuntu-archive-keyring`. CI does
+not resolve floating package versions or run `apt-get update` for this bundle.
+
+Only the producer uses the package cache. Its exact key includes the runner OS,
+architecture and lockfile hash; no prefix restore or unreviewed external bundle
+is accepted. Workflow validation reads the upload step’s direct `with.name` input
+and requires exactly `ci-gallery-ffmpeg`; comments and duplicate keys cannot
+substitute for the artifact contract. On a warm cache, no package-server download
+occurs, but all digests are still checked before publishing the same-run artifact. Already compressed
+`.deb` files are uploaded without an additional compression pass. Each shard
+downloads this run's artifact, checks it against its own checked-out lockfile,
+then installs it with offline `dpkg` and proves that H.264 encoding works.
+Unexpected files, missing packages, symlinks and digest mismatches fail before
+privileged installation. The source checkout contains no downloaded packages.
+
+Download socket waits are bounded at 20 seconds, with a 40-second transfer budget
+checked between reads and one fallback between the two official Ubuntu servers,
+including for truncated or corrupt responses. Redirect destinations must remain
+on those Ubuntu HTTPS hosts. The producer's download step has a five-minute bound and its whole job ten minutes;
+consumer restoration is bounded at five minutes. Producer failure is required by
+`CI result`, and the shards depend on it rather than installing independently.
+The separate extended TeX/GTK environment retains its existing package contract.
+
+Refresh the reviewed lock on a host with APT and Ubuntu's archive keyring:
+
+```bash
+python3 scripts/ci_gallery_dependencies.py refresh-lock
+git diff -- scripts/ci_gallery_ffmpeg.lock.json
+gallery_cold=$(mktemp -d /tmp/xy-gallery-cold.XXXXXX)
+python3 scripts/ci_gallery_dependencies.py download --directory "$gallery_cold"
+python3 scripts/ci_gallery_dependencies.py download --directory "$gallery_cold"
+python3 scripts/ci_gallery_dependencies.py verify --directory "$gallery_cold"
+```
+
+The refresh command isolates its APT indexes and never installs packages or
+modifies host APT configuration. It refreshes the reviewed package-name set, not
+a newly resolved dependency closure. Treat its output as provisional: before
+committing a refreshed lock, review version/digest and dependency changes and run
+the network-disabled installation and encoding probe below. If dependencies have
+changed, re-establish and review the package-name set against the hosted baseline.
+The runtime package-name set is the standard gallery's FFmpeg dependency closure on
+the Ubuntu 24.04 hosted image; changing that baseline requires an offline install
+and encoding probe on the new image. Python development dependencies and the
+separate extended environment are not part of this FFmpeg bundle.
+
+The motivating run was [PR #494, run 40479933250](https://github.com/reflex-dev/xy/actions/runs/40479933250):
+each shard independently requested 87 packages (62,839,078 bytes, about 173 MB
+installed). Five shards completed setup in 15–27 seconds; shard 0 was still in
+that step after 17 minutes, before its gallery command started. Inspect the job
+step timestamps and completed shard 3's package log with:
+
+```bash
+gh api repos/reflex-dev/xy/actions/jobs/122108516868
+gh api repos/reflex-dev/xy/actions/jobs/122108516561/logs
+pytest -q tests/test_ci_gallery_dependencies.py tests/test_ci_scope.py tests/test_verify_ci_workflow.py
+```
+
+These are setup observations, not chart-performance measurements. The change
+removes eight independent upstream download/install resolutions; it does not
+claim that cross-run GitHub cache hits or constant network throughput are assured.
+Local raw results, lock identity and container provenance are recorded in
+`spec/benchmarks/ci-gallery-dependencies.json`: 55.05 seconds for a cold download,
+0.10 seconds for warm verification, and 4.37 seconds for offline installation plus
+an H.264 encoding probe. Network throughput is environment-dependent; no hosted
+elapsed-time speedup is asserted from these local observations.
+The first hosted [run 40485681835](https://github.com/reflex-dev/xy/actions/runs/40485681835)
+had a cold producer cache: all 87 packages were downloaded and verified in 9.65
+seconds, one artifact was published, and all eight consumer restoration steps
+succeeded in 7–17 seconds. Job IDs, artifact digest and step timings are recorded
+in the same JSON evidence file. These are individual observed runs, not a
+guarantee of future mirror or artifact-service throughput.
+
+Reproduce the offline restoration with a disposable Ubuntu fixture. Preparing
+the fixture requires network access; running the committed installer does not.
+The amd64 fixture seeds its runner-like baseline using the exact locked package
+versions, then removes all locked packages before testing restoration. It never
+provisions a floating FFmpeg candidate that could leave new dependencies:
+
+```bash
+mkdir -p /tmp/xy-gallery-fixture
+cp tests/fixtures/ci_gallery_dependencies.Dockerfile /tmp/xy-gallery-fixture/Dockerfile
+cp scripts/ci_gallery_ffmpeg.lock.json /tmp/xy-gallery-fixture/lock.json
+docker build -t xy-gallery-offline-fixture /tmp/xy-gallery-fixture
+docker run --rm --network none --security-opt no-new-privileges \
+  --mount type=bind,src="$gallery_cold",dst=/bundle,readonly \
+  --mount type=bind,src="$PWD/scripts/ci_gallery_dependencies.py",dst=/work/ci_gallery_dependencies.py,readonly \
+  --mount type=bind,src="$PWD/scripts/ci_gallery_ffmpeg.lock.json",dst=/work/ci_gallery_ffmpeg.lock.json,readonly \
+  xy-gallery-offline-fixture python3 /work/ci_gallery_dependencies.py install --directory /bundle
+```
+
 The three-engine conformance job uses the official Playwright image
 `mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48`.
 The image supplies browsers and their OS libraries in one prebuilt, digest-pinned
@@ -230,33 +329,47 @@ uses level-two section headings. Installation examples use subsections so code
 blocks cannot become invalid direct children of a list.
 The docs consume the reusable `reflex-site-shared` base theme and components
 directly. XY owns its branding, navigation, project-specific footer content,
-and the docs-only brand layer adapted from
-[Reflex PR #7549](https://github.com/reflex-dev/reflex/pull/7549). It must not
-vendor shared base CSS, search/buttons, or the navbar frame and announcement.
-The local layer uses Inter body text, Geist headings, warm neutral light/dark
-tokens, pill navigation and demo tabs, compact two-column Back/Next links, and
-the opal banner artwork without a white top-edge inset shadow. Fonts ship through
-pinned Fontsource packages; the artwork URL preserves the `/docs/xy` mount prefix.
-Banner structure and the close event remain shared. Editorial selectors target `docs-*`
-hooks, avoiding live chart typography and data-series colors. Mobile navigation,
+and the docs-only brand layer that follows the
+[docs theme contract](../../docs/app/README.md#working-on-the-shared-reflex-theme).
+It must not vendor shared base CSS, search/buttons, or the navbar frame and
+announcement.
+The local layer follows the current marketing finish: Geist 400 article text
+and headings, Inter compact navigation/internal UI, Geist 525 actions, 8px control
+corners, 12px fields, and neutral light/dark tokens. The app-owned
+`--docs-control-radius` isolates chrome from Radix live-example radius settings;
+footer actions retain 8px corners and Geist 525 in the rendered production DOM.
+The footer color-theme group and its three buttons use the same 8px radius.
+Feedback fields use a 2px `--ring` halo for keyboard focus and a system-color
+outline in forced-colors mode. Invalid fields retain the focus indicator and
+use a separate semantic border color.
+Light uses #FDFCFC canvas,
+#0A0A0A ink, #6B6B6B secondary text, #F5F5F5/#F9F9F9 quiet surfaces, #E5E5E5
+borders, and #1F1F1F primary actions (#333 hover). Preserve dark mode with neutral
+counterparts and the compact 64px docs header, reading column, sidebar, TOC, and
+two-column Back/Next links. The earlier warm tokens, capsule action styling,
+opal artwork, and overlapping announcement geometry are superseded. While the
+announcement is visible, the header uses 12px top corners against black backing
+without changing the 104px total height; opening the mobile menu below 1280px
+or dismissing the announcement restores square corners. Fonts ship
+through pinned Fontsource packages. Editorial selectors target `docs-*` hooks,
+avoiding live chart typography and data-series colors. Mobile navigation,
 the named closeable docs drawer, clipboard feedback, keyboard focus, and
 reduced-motion behavior remain required validation surfaces.
 XY's announcement matches `reflex-marketing`'s current main branch:
 "Build vs. Buy for Internal Software" links to
-`https://reflex.dev/blog/build-vs-buy-internal-software/`, with five mirrored
-opal panels with reduced-motion support, a black New
-badge, and a white text-only Read more pill hidden at 640px and below. Its visible
-contribution is 44px on desktop and 40px at 960px and below, above the fixed 64px
-docs header. A head script restores the same `reflex_announcement_dismissed_release`
-storage key and `build-vs-buy-internal-software-v1` release before paint; dismissal persists
-across reloads and same-origin marketing/docs navigation, with a working
-visit-local fallback when storage is unavailable. Header and sidebar offsets
-reserve only the visible announcement. The wrapper retains the shared native
-link and close event while adapting its destination, copy, decorative markup,
-and accessible name. The message wraps at narrow widths as it does in marketing.
-Below 1280px, opening the navigation menu removes both top header corners;
-closing it restores the announcement's rounded header. Announcement links open
-in a new tab with `noopener noreferrer`, matching their accessible name.
+`https://reflex.dev/blog/build-vs-buy-internal-software/`. It has a flat black
+background with white text in both color modes and a text-only Read more action
+hidden at 640px and below. Its visible contribution is 40px at every width,
+above the fixed 64px docs header. A head script restores the same
+`reflex_announcement_dismissed_release` storage key and
+`build-vs-buy-internal-software-v1` release before paint. When storage is
+available, dismissal persists across reloads and same-origin marketing/docs
+navigation. Without storage, dismissal applies to the current document and the
+announcement can reappear on reload or navigation. Header and sidebar offsets
+reserve only the visible announcement. The wrapper retains the shared native link and close
+event while adapting destination, copy, and accessible name. The message wraps
+at narrow widths. Announcement links open in a new tab with `noopener noreferrer`,
+matching their accessible name.
 Authored in-page links must
 resolve to rendered IDs, including the parentheses retained by the shared
 heading slug convention (lowercase text with spaces replaced by hyphens).
@@ -274,7 +387,7 @@ card in both color modes. The frontend lock must resolve the declared PostCSS
 version without an older override shadowing the framework's build dependency.
 The desktop XY docs navigation switches to a docs-specific disclosure below
 1280px, preserving Overview and Reflex Integration destinations. Desktop links
-expose the selected section through `aria-current="page"` and a neutral pill.
+expose the selected section through `aria-current="page"` and a neutral 8px control.
 Internal navbar destinations use client-side routing so page changes preserve
 announcement dismissal without a full document reload. Code blocks share
 Reflex docs' light/dark syntax themes and neutral surface tokens while retaining
@@ -710,6 +823,14 @@ approval. This path neither checks PyPI availability nor publishes a package,
 creates a release tag, or creates a GitHub release. The generated library
 release workflows and their two integration workflows keep their existing
 contracts.
+
+The shared image builder publishes each frontend/backend tag to Harbor
+(`oci.main.reflexsandbox.com/apps/xy`) and Azure Container Registry
+(`reflexdev.azurecr.io/xy`). It does not publish to AWS ECR. The Helm workflow
+changes image tags only, preserving each environment's configured registry;
+current Flux deployments pull directly from Harbor's `apps` project. Any other
+consumer still pulling from ECR or Harbor's `ecr` proxy must migrate before
+using tags built after ECR publishing stops.
 
 Deployment reuses `_build-docs-images.yml` and `_helm-docs-pr.yml`. The Helm
 workflow updates both XY image tags in `charts/internal/values-stg.yaml` and,

@@ -79,23 +79,37 @@ shell, and footer primitives come directly from `reflex-site-shared`. Do not
 copy those implementations into XY. XY owns its wordmark, navigation
 destinations, page actions, footer links, and docs-specific brand layer.
 
-The three `assets/docs-*-theme.css` / `assets/docs-theme.css` stylesheets adapt
-the docs-only styling from [Reflex PR #7549](https://github.com/reflex-dev/reflex/pull/7549):
-Inter body text, Geist headings, warm neutral light/dark palettes, compact
-controls, and the opal header artwork. They are loaded after the shared base
-theme. The header reuses the shared announcement body and close event, adapting
-its decorative markup and styling to `reflex-marketing`'s five opal panels,
-44px desktop / 40px mobile contribution, and text-only CTA. The head script in
-`xy_docs/announcement.py` uses marketing's release-scoped local-storage dismissal
-key so dismissal survives reloads and same-origin navigation without a flash
-or reserved gap. The artwork URL includes the `/docs/xy` mount prefix. Fonts are
-bundled from the pinned Fontsource frontend packages, without a font CDN.
-Announcement title, destination, and release in `xy_docs/announcement.py` follow
-marketing's main branch and must be updated together when its copy changes.
-Editorial styles use shared `docs-*` hooks and the hooks added by
-`xy_docs_layout`; keep them scoped so live chart examples retain their own
-typography and data colors. The shared Markdown layout still owns navigation
-destinations, while XY adds a two-column Back/Next treatment.
+The three `assets/docs-*-theme.css` / `assets/docs-theme.css` stylesheets are
+the local marketing brand contract. They load after the shared base theme and
+replace the earlier warm palette, capsule controls, and opal artwork. Use the
+marketing light canvas (#FDFCFC), ink (#0A0A0A), neutral gray surfaces and
+borders, and charcoal primary actions. Dark mode remains available with neutral
+dark counterparts. Chart colors and syntax themes retain their own contracts.
+Geist 400 supplies article text and headings. Inter remains the compact
+navigation and internal UI font. Actions use Geist 525 with 8px corners. The docs
+radius token keeps live example settings isolated. Feedback fields use 12px
+corners, a 2px `--ring` halo for keyboard focus, and a system-color outline in
+forced-colors mode. Preserve the docs' 64px navigation and
+compact reading, sidebar, and table of contents layout.
+
+The shared announcement keeps its native link and close event, with a flat black
+background and white text in both modes. Its visible contribution is 40px at
+every width, with no decorative artwork or overlap. The header has 12px top
+corners against black backing while the announcement is visible; opening the
+mobile menu or dismissing the announcement returns the header to square corners.
+The head script in `xy_docs/announcement.py` restores marketing's
+release-scoped local-storage dismissal before paint so dismissal survives reloads
+and same-origin navigation without a flash or reserved gap. Announcement title,
+destination, and release follow marketing and must be updated together when its
+copy changes. Fonts are bundled from pinned Fontsource frontend packages.
+
+Editorial styles target shared `docs-*` hooks and the hooks added by
+`xy_docs_layout`, preserving live chart typography, data colors, and interactions.
+The shared Markdown layout owns navigation destinations; XY adds a two-column
+Back/Next treatment. Keep native links, labelled inputs, selected states,
+visible keyboard focus, reduced motion, and both color modes when editing the
+brand layer. Check desktop, 390px and 320px reading layouts, drawers, search,
+feedback, copy actions, announcement dismissal, and long tables/code.
 
 To preview unpublished edits from a Reflex checkout, first install the locked
 XY docs environment, then install just the shared package editably (run from
