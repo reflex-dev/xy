@@ -384,7 +384,8 @@ painted size as the target (`_verticalCategoryLabelFont` /
 `_is_vertical_category_axis`), not at the axis's 11 px default. Measuring 24 px
 two-line labels at 11 px let ten of them overlap where five fit. The client
 resolves the slot size to the px it paints: `_cssFontPx` reads non-px units
-(`2rem`, `1.5em`) through a probe element in the chart root, because
+(`2rem`, `1.5em`) through a probe element in the layer the labels paint in
+(the `labels` layer, itself a stylable slot), because
 `parseFloat("2rem")` is 2. The probe result is cached per value and cleared
 on every `_layout`, because a relative size follows a context that a resize or
 theme change can move. The static exporters accept px only. Any other unit

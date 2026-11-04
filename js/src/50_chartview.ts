@@ -1166,7 +1166,10 @@ export class ChartView {
     const decls = styles && styles[slot];
     // Slot styles keep the caller's spelling (`chrome_styles`), so read each.
     const value = decls && (decls["font-size"] ?? decls.font_size ?? decls.fontSize);
-    const px = this._cssFontPx(value);
+    // Tick labels paint inside the `labels` layer (its own stylable slot), so
+    // a relative size there resolves against that layer, not the root.
+    const host = slot === "tick_label" && this.labels ? this.labels : this.root;
+    const px = this._cssFontPx(value, host);
     return Number.isFinite(px) && px > 0 ? px : fallback;
   }
 
@@ -1175,24 +1178,24 @@ export class ChartView {
   // the same way inside the chart root (em/% then resolve as they do there).
   // Cached per value between layouts (draws call it every frame); `_layout`
   // clears the cache because a relative size can change with its context.
-  _cssFontPx(value) {
+  _cssFontPx(value, host = this.root) {
     if (value === null || value === undefined || value === "") return NaN;
     if (typeof value === "number") return value;
     const text = String(value).trim();
     if (/^-?[\d.]+(px)?$/i.test(text)) return parseFloat(text);
+    if (!host || !host.isConnected) return NaN;
+    // Keyed by host as well: the same `1.5em` differs between root and labels.
     const cache = this._cssFontPxCache || (this._cssFontPxCache = new Map());
-    if (cache.has(text)) return cache.get(text);
-    let px = NaN;
-    if (this.root && this.root.isConnected) {
-      const probe = document.createElement("span");
-      probe.style.position = "absolute";
-      probe.style.visibility = "hidden";
-      probe.style.fontSize = text;
-      this.root.appendChild(probe);
-      px = parseFloat(getComputedStyle(probe).fontSize);
-      probe.remove();
-      cache.set(text, px);
-    }
+    const key = `${host === this.root ? "root" : "labels"}|${text}`;
+    if (cache.has(key)) return cache.get(key);
+    const probe = document.createElement("span");
+    probe.style.position = "absolute";
+    probe.style.visibility = "hidden";
+    probe.style.fontSize = text;
+    host.appendChild(probe);
+    const px = parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    cache.set(key, px);
     return px;
   }
 

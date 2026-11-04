@@ -422,3 +422,35 @@ def test_browser_relative_slot_font_is_remeasured_on_layout() -> None:
     chart = _stores_chart(height=300, styles={"tick_label": {"font_size": "1.5em"}})
     payload = _probe(chart, _RELATIVE_FONT_PROBE, "data-xy-relative-font", "relative_font")
     assert payload["after"] == pytest.approx(2 * payload["before"]), payload
+
+
+_LABELS_FONT_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    document.body.setAttribute("data-xy-labels-font", JSON.stringify({
+      resolved: view._slotFontSize("tick_label", 0),
+      painted: parseFloat(getComputedStyle(
+        document.querySelector('[data-xy-label-kind="tick"][data-xy-axis="y"]'),
+      ).fontSize),
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-labels-font-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_relative_tick_label_font_resolves_where_labels_paint() -> None:
+    # Tick labels paint inside the `labels` layer; an `em` size is relative to
+    # that layer's font, not the chart root's.
+    chart = _stores_chart(
+        height=300,
+        styles={"labels": {"font_size": "20px"}, "tick_label": {"font_size": "1.5em"}},
+    )
+    payload = _probe(chart, _LABELS_FONT_PROBE, "data-xy-labels-font", "labels_font")
+    assert payload["resolved"] == pytest.approx(payload["painted"]), payload
