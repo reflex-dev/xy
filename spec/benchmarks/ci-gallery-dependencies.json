@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "scope": "CI setup, not chart throughput",
+  "lock_sha256": "a465309464154e7738b7656033c8b499f89ce683a7e51896bdab165a560a25e4",
+  "packages": 87,
+  "bytes": 62839078,
+  "environment": {
+    "download_host": "Linux x86_64",
+    "ubuntu_fixture_base": "ubuntu@sha256:24737cef17f4e22b1977df7d9a05e77c4e28b7da5b8911f8d8ccda136bf3573c",
+    "fixture_recipe": "Install ffmpeg/python3/sudo on Ubuntu base, remove the 87 locked runtime packages, then run the committed installer with --network none and read-only bundle mounts."
+  },
+  "local_observations": {
+    "cold_download_seconds": 55.05,
+    "warm_verify_seconds": 0.1,
+    "offline_install_and_h264_probe_seconds": 4.37,
+    "raw_download_output": [
+      "Verified 87 pinned packages in 55.05s",
+      "Verified 87 pinned packages in 0.10s"
+    ],
+    "offline_exit_code": 0
+  },
+  "before": {
+    "run": 40479933250,
+    "job": 122108516868,
+    "completed_shard_job": 122108516561,
+    "fast_shard_setup_seconds": [
+      15,
+      27,
+      23,
+      21,
+      15
+    ],
+    "stalled_shard_setup_seconds_at_inspection": 982
+  },
+  "hosted_observations": {
+    "run_id": 40485681835,
+    "head": "398941cda70785c914c232b8cafdfa998d2d2f46",
+    "producer_job_id": 122126833318,
+    "cache_hit": false,
+    "producer_download_and_verify_seconds": 9.65,
+    "artifact_id": 12724188502,
+    "artifact_sha256": "7ac5e58bf7eb69429e893e8d851a45aeb4b45b8f7fd7de15e591076092e73f14",
+    "consumer_restores": [
+      {
+        "job_id": 122127152138,
+        "name": "Pyplot gallery ratchet (3/8)",
+        "restore_seconds": 8.0,
+        "conclusion": "success"
+      },
+      {
+        "job_id": 122127152190,
+        "name": "Pyplot gallery ratchet (5/8)",
+        "restore_seconds": 11.0,
+        "conclusion": "success"
+      },
+      {
+        "job_id": 122127152195,
+        "name": "Pyplot gallery ratchet (0/8)",
+        "restore_seconds": 8.0,
+        "conclusion": "success"
+      },
+      {
+        "job_id": 122127152219,
+        "name": "Pyplot gallery ratchet (2/8)",
+        "restore_seconds": 9.0,
+        "conclusion": "success"
+      },
+      {
+        "job_id": 122127152225,
+        "name": "Pyplot gallery ratchet (7/8)",
+        "restore_seconds": 10.0,
+        "conclusion": "success"
+      },
+      {
+        "job_id": 122127152234,
+        "name": "Pyplot gallery ratchet (1/8)",
+        "restore_seconds": 17.0,
+        "conclusion": "success"
+      },
+      {
+        "job_id": 122127152454,
+        "name": "Pyplot gallery ratchet (4/8)",
+        "restore_seconds": 7.0,
+        "conclusion": "success"
+      },
+      {
+        "job_id": 122127152458,
+        "name": "Pyplot gallery ratchet (6/8)",
+        "restore_seconds": 8.0,
+        "conclusion": "success"
+      }
+    ],
+    "reproduce": [
+      "gh api repos/reflex-dev/xy/actions/jobs/122126833318/logs",
+      "gh api repos/reflex-dev/xy/actions/runs/40485681835/jobs?per_page=100"
+    ]
+  }
+}

@@ -310,17 +310,30 @@ def test_best_counts_every_public_rectangular_mark(kind: str) -> None:
     assert _loc(figure) == "upper left"
 
 
-def test_best_compares_area_coverage_not_only_intersection() -> None:
+def _wedge_figure():
     # Every upper candidate touches this filled wedge, but the upper-left sees
-    # only a thin sliver while the upper-right is almost full. A boolean
-    # polygon-intersection score makes those candidates tie.
-    figure = xy.area_chart(
+    # only a thin sliver while the upper-right is almost full.
+    return xy.area_chart(
         xy.area([0.0, 1.0], [0.95, 1.0], base=[0.0, 0.0], name="area"),
         xy.x_axis(domain=(0.0, 1.0)),
         xy.y_axis(domain=(0.0, 1.0)),
         xy.legend(loc="best"),
     ).figure()
-    assert _loc(figure) == "upper left"
+
+
+def test_best_compares_area_coverage_not_only_intersection() -> None:
+    # The in-plot scorer itself, without the composition API's outside-top
+    # opt-in: a boolean polygon-intersection score makes the upper candidates
+    # tie, while area coverage prefers the sliver.
+    figure = _wedge_figure()
+    spec, _blob = figure.build_payload()
+    assert _legendfit.resolve_for_figure(figure, spec, {"loc": "best"}) == "upper left"
+
+
+def test_composition_best_leaves_a_plot_whose_every_position_is_covered() -> None:
+    # Even the sliver covers data, so the composition API's `best` takes the
+    # outside-top band (tests/test_legend_outside_top.py).
+    assert _loc(_wedge_figure()) == "outside top"
 
 
 def test_best_ignores_fully_transparent_marks() -> None:

@@ -14,6 +14,11 @@ contribute covered fill area, bars contribute their rectangles, and annotations
 contribute their visible anchors/boxes. Candidate order is stable and is the
 deterministic tie break.
 
+When the composition API opted in (`auto_outside="top"`) and every candidate
+scores above zero, no in-plot position is free and the least-bad one would
+still hide marks, so the pass resolves to the `"outside top"` band instead
+(`_may_go_outside`). The pyplot shim never opts in.
+
 `xy.pyplot._axes.Axes._best_legend_loc` carries a second copy of this scoring
 that runs against the shim's own entry arrays. The two are pinned to agree by
 `tests/test_legend_best_placement.py`; folding the shim onto this module is a
@@ -26,6 +31,8 @@ from collections.abc import Sequence
 from typing import Any, Optional
 
 import numpy as np
+
+from ._validate import LEGEND_OUTSIDE_TOP
 
 #: Every Matplotlib candidate, in Matplotlib's own preference order (corners,
 #: then the mid-edges, then dead center) so a tie keeps the first. Each entry is
@@ -1415,7 +1422,66 @@ def resolve_for_figure(
     if not used:
         return _FALLBACK
     floor = min(scores.values())
+    if (
+        floor > _OUTSIDE_FLOOR
+        and _may_go_outside(spec, options)
+        and _band_holds_a_row(spec, options, plot_size)
+    ):
+        # Every in-plot position covers marks: no corner is empty (stacked
+        # areas or bars at the axis maximum, many series). The least-bad corner
+        # still hides data, so take the band above the plot instead.
+        return LEGEND_OUTSIDE_TOP
     return next(name for name, score in scores.items() if score <= floor + 1e-12)
+
+
+#: A best in-plot score above this means no candidate is empty. Scores are
+#: non-negative sums of covered fractions and crossings, so an empty box is an
+#: exact 0; the epsilon only absorbs float noise.
+_OUTSIDE_FLOOR = 1e-9
+
+
+def _may_go_outside(spec: Optional[dict[str, Any]], options: dict[str, Any]) -> bool:
+    """Whether a `best` legend may resolve to the outside-top band.
+
+    Only the composition API opts in (`auto_outside="top"`); the pyplot shim's
+    `best` keeps Matplotlib's in-plot-only semantics. Anchored and polar
+    legends own their placement and never move outside.
+    """
+    return (
+        options.get("auto_outside") == "top"
+        and options.get("anchor") is None
+        and (spec or {}).get("coords", "cartesian") == "cartesian"
+    )
+
+
+def _band_holds_a_row(
+    spec: Optional[dict[str, Any]],
+    options: dict[str, Any],
+    plot_size: tuple[float, float],
+) -> bool:
+    """Whether the band `best` would open fits at least one legend row.
+
+    `plot_size` is the plot measured with the legend inside, so its height is
+    the room a band would come out of (title, axes and bottom chrome already
+    removed). A card too short for one row above a 40 px plot keeps its least
+    bad in-plot corner: a band there could only clip the legend it exists to
+    show (`_outside_legend_budget` would cut it to fit).
+    """
+    if spec is None:
+        return True
+    try:
+        from ._svg import _OUTSIDE_LEGEND_GAP, _PLOT_MIN_PX, _outside_top_legend_band
+
+        trial = dict(spec)
+        own = {key: value for key, value in options.items() if key != "auto_loc"}
+        trial["legend"] = {**own, "loc": LEGEND_OUTSIDE_TOP}
+        # A zero cap leaves the box its one-row floor: the smallest band.
+        band = _outside_top_legend_band(trial, float(plot_size[0]), cap=0.0)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return True
+    if band is None:
+        return False
+    return float(band["box_h"]) <= float(plot_size[1]) - _PLOT_MIN_PX - _OUTSIDE_LEGEND_GAP
 
 
 def _column_values(column: Any) -> Optional[np.ndarray]:

@@ -22,11 +22,8 @@ permissions:
   contents: read
 
 env:
-  REGISTRY: 176771536320.dkr.ecr.us-west-2.amazonaws.com
-  CADDY_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/frontend
   HARBOR_CADDY_IMAGE: oci.main.reflexsandbox.com/apps/xy/frontend
   ACR_CADDY_IMAGE: reflexdev.azurecr.io/xy/frontend
-  BACKEND_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/backend
   HARBOR_BACKEND_IMAGE: oci.main.reflexsandbox.com/apps/xy/backend
   ACR_BACKEND_IMAGE: reflexdev.azurecr.io/xy/backend
   DEPOT_PROJECT: ${{ vars.DOCS_DEPOT_PROJECT }}
@@ -109,19 +106,6 @@ jobs:
           REFLEX_TELEMETRY_ENABLED: "false"
         run: uv run --no-sync reflex export --frontend-only
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-2
-          mask-aws-account-id: true
-
-      - name: Log in to Amazon ECR
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-        run: aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin "$REGISTRY"
-
       - name: Log in to Harbor
         run: echo "$HARBOR_SECRET" | docker login oci.main.reflexsandbox.com -u "$HARBOR_USER" --password-stdin
         env:
@@ -142,14 +126,12 @@ jobs:
           DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
           DEPOT_PROJECT: ${{ env.DEPOT_PROJECT }}
           IMAGE_TAG: ${{ inputs.image_tag }}
-          CADDY_IMAGE: ${{ env.CADDY_IMAGE }}
           HARBOR_CADDY_IMAGE: ${{ env.HARBOR_CADDY_IMAGE }}
           ACR_CADDY_IMAGE: ${{ env.ACR_CADDY_IMAGE }}
         run: |
           depot build \
             --project "$DEPOT_PROJECT" \
             --file docs/app/dockerfiles/caddy.Dockerfile \
-            --tag "${CADDY_IMAGE}:${IMAGE_TAG}" \
             --tag "${HARBOR_CADDY_IMAGE}:${IMAGE_TAG}" \
             --tag "${ACR_CADDY_IMAGE}:${IMAGE_TAG}" \
             --push \
@@ -162,7 +144,6 @@ jobs:
           DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
           DEPOT_PROJECT: ${{ env.DEPOT_PROJECT }}
           IMAGE_TAG: ${{ inputs.image_tag }}
-          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
           HARBOR_BACKEND_IMAGE: ${{ env.HARBOR_BACKEND_IMAGE }}
           ACR_BACKEND_IMAGE: ${{ env.ACR_BACKEND_IMAGE }}
           XY_VERSION: ${{ steps.xy_version.outputs.version }}
@@ -170,7 +151,6 @@ jobs:
           depot build \
             --project "$DEPOT_PROJECT" \
             --file docs/app/dockerfiles/backend.Dockerfile \
-            --tag "${BACKEND_IMAGE}:${IMAGE_TAG}" \
             --tag "${HARBOR_BACKEND_IMAGE}:${IMAGE_TAG}" \
             --tag "${ACR_BACKEND_IMAGE}:${IMAGE_TAG}" \
             --build-arg "XY_VERSION=${XY_VERSION}" \
@@ -182,10 +162,8 @@ jobs:
       - name: Summary
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
-          CADDY_IMAGE: ${{ env.CADDY_IMAGE }}
           HARBOR_CADDY_IMAGE: ${{ env.HARBOR_CADDY_IMAGE }}
           ACR_CADDY_IMAGE: ${{ env.ACR_CADDY_IMAGE }}
-          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
           HARBOR_BACKEND_IMAGE: ${{ env.HARBOR_BACKEND_IMAGE }}
           ACR_BACKEND_IMAGE: ${{ env.ACR_BACKEND_IMAGE }}
         run: |
@@ -195,11 +173,9 @@ jobs:
             echo "**Tag:** \`${IMAGE_TAG}\`"
             echo ""
             echo "**Frontend** (\`${IMAGE_TAG}\`):"
-            echo "- ECR: \`${CADDY_IMAGE}\`"
             echo "- Harbor: \`${HARBOR_CADDY_IMAGE}\`"
             echo "- ACR: \`${ACR_CADDY_IMAGE}\`"
             echo "**Backend** (\`${IMAGE_TAG}\`):"
-            echo "- ECR: \`${BACKEND_IMAGE}\`"
             echo "- Harbor: \`${HARBOR_BACKEND_IMAGE}\`"
             echo "- ACR: \`${ACR_BACKEND_IMAGE}\`"
           } >> "$GITHUB_STEP_SUMMARY"
