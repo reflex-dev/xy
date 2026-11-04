@@ -375,16 +375,29 @@ def main() -> None:
         #    effect cleanup), so the counts are exact, both ways.
         #    Settle the baseline first: a chart registering late would
         #    otherwise shift the exact count after `views_before` is read.
-        settle_deadline = time.monotonic() + 30.0
-        views_before = probe.eval("window.__xy_views.size")
-        stable_since = time.monotonic()
-        while time.monotonic() - stable_since < 1.5:
-            if time.monotonic() > settle_deadline:
-                raise SystemExit("timeout waiting for the view registry to settle")
-            time.sleep(0.25)
-            size = probe.eval("window.__xy_views.size")
-            if size != views_before:
-                views_before, stable_since = size, time.monotonic()
+        #    One in-page poll bounds the whole wait: it resolves once the
+        #    size has been unchanged for settle_quiet_ms (1.5 seconds) and
+        #    gives up after settle_limit_ms (30 seconds); the CDP call gets
+        #    5 seconds of slack beyond that, so a stalled page cannot hang it.
+        settle_quiet_ms = 1_500  # 1.5 seconds without a registry change
+        settle_limit_ms = 30_000  # 30 seconds maximum wait
+        views_before = probe.eval(
+            "new Promise((resolve) => {"
+            " const start = performance.now();"
+            " let size = window.__xy_views.size, since = start;"
+            " const tick = () => {"
+            "  const now = performance.now(), next = window.__xy_views.size;"
+            "  if (next !== size) { size = next; since = now; }"
+            f"  if (now - since >= {settle_quiet_ms}) return resolve(size);"
+            f"  if (now - start >= {settle_limit_ms}) return resolve(null);"
+            "  setTimeout(tick, 250);"  # poll every 250 milliseconds
+            " };"
+            " tick();"
+            "})",
+            timeout_s=settle_limit_ms / 1000 + 5.0,
+        )
+        if views_before is None:
+            raise SystemExit("timeout waiting for the view registry to settle")
         assert probe.eval("window.__xy_views.has('board')"), "board view not mounted"
 
         def click_split() -> None:
