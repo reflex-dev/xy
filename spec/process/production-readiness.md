@@ -354,12 +354,14 @@ XY's announcement matches `reflex-marketing`'s current main branch:
 "Build vs. Buy for Internal Software" links to
 `https://reflex.dev/blog/build-vs-buy-internal-software/`. It has a flat black
 background with white text in both color modes and a text-only Read more action
-hidden at 640px and below. Its visible contribution is 40px at every width, above the fixed 64px docs header. A head script restores the same
+hidden at 640px and below. Its visible contribution is 40px at every width,
+above the fixed 64px docs header. A head script restores the same
 `reflex_announcement_dismissed_release` storage key and
-`build-vs-buy-internal-software-v1` release before paint; dismissal persists across
-reloads and same-origin marketing/docs navigation, with a working visit-local
-fallback when storage is unavailable. Header and sidebar offsets reserve only
-the visible announcement. The wrapper retains the shared native link and close
+`build-vs-buy-internal-software-v1` release before paint. When storage is
+available, dismissal persists across reloads and same-origin marketing/docs
+navigation. Without storage, dismissal applies to the current document and the
+announcement can reappear on reload or navigation. Header and sidebar offsets
+reserve only the visible announcement. The wrapper retains the shared native link and close
 event while adapting destination, copy, and accessible name. The message wraps
 at narrow widths. Announcement links open in a new tab with `noopener noreferrer`,
 matching their accessible name.

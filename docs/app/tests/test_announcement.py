@@ -102,4 +102,6 @@ def test_production_announcement_matches_marketing_and_persists_dismissal() -> N
         page.get_by_role("button", name="Dismiss announcement").click()
         expect(page.locator("[data-announcement]")).to_be_hidden()
         expect(page.locator(".docs-nav-frame")).to_have_css("height", "64px")
+        page.reload(wait_until="domcontentloaded")
+        expect(page.locator("[data-announcement]")).to_be_visible()
         browser.close()
