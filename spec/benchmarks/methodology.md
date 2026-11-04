@@ -245,7 +245,7 @@ it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 The glob collects six modules — `test_codspeed_animation.py`,
 `test_codspeed_kernels.py`, `test_codspeed_polar.py`,
 `test_codspeed_pyplot.py`, `test_codspeed_selection.py`, and
-`test_codspeed_transport.py` — for **109 rows** total, counting parametrized
+`test_codspeed_transport.py` — for **111 rows** total, counting parametrized
 expansion. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
 
@@ -259,28 +259,35 @@ no longer exists. Removing one is allowed; removing one silently is not. Stale
 rows already in the dashboard have to be archived there by hand; this gate stops
 new ones appearing.
 
-**`benchmarks/test_codspeed_pyplot.py` — 14 rows, seven paired arms.** Each pair
+**`benchmarks/test_codspeed_pyplot.py` — 16 rows, eight paired arms.** Each pair
 expresses one chart twice over the same input arrays: once through the
 declarative API (`xy.chart` + marks) and once through the identical
 matplotlib-style calls in `xy.pyplot`. Both arms end at the same terminal work —
-`build_payload_split(2048)`, or PNG bytes for the export pair — so the gap
+`build_payload_split(2048)`, or PNG bytes for the export pairs — so the gap
 between a `*_pyplot` row and its `*_raw` twin is exactly what the shim adds:
 matplotlib-call translation, fmt-string parsing, and figure-lifecycle
 bookkeeping. The pyplot arm includes `plt.close("all")` because figure-registry
 bookkeeping is part of the shim's per-figure cost. The pairs are a 10k line, a
 1M line, a 100k scatter, a 100k-value/200-bin histogram, a 1k-category bar, a
 5k-point three-series styled panel (title, axis labels, legend — the shim's
-worst honest case, where translation is largest relative to data), and a
-100k-point PNG export.
+worst honest case, where translation is largest relative to data), a
+100k-point PNG export, and an 80×120-cell `pcolormesh` PNG export at the
+1800×840 canvas of `bench_pyplot_vs_matplotlib.py` (#551: an upscaled mesh,
+where per-pixel instead of per-cell colormap work and the subpixel-edged plot
+background fill once dominated the export).
 
 Fairness pins, all asserted in the module rather than assumed:
 
 - Both arms build the same 640x480 canvas (`plt.subplots()`'s 6.4x4.8in at
   dpi=100), and the raw arm declares the explicit axes the shim adds implicitly,
   so chrome layout work is identical on both sides.
-- The export pair uses `scale=2.0` to match `savefig`'s fixed 2x supersampling —
-  both emit a 1280x960 canvas. A smaller raw canvas would overstate the gap.
-- Every pair except the histogram asserts byte-identical payload sizes across
+- The line export pair uses `scale=2.0` to match `savefig`'s fixed 2x
+  supersampling — both emit a 1280x960 canvas. A smaller raw canvas would
+  overstate the gap. The `pcolormesh` export pair builds 900x420 and exports at
+  `scale=2.0` / `dpi=200`, so both emit the 1800x840 canvas of the
+  cross-library harness. Both export pairs assert a valid PNG rather than a
+  payload size.
+- Every build pair except the histogram asserts byte-identical payload sizes across
   arms, so a row cannot get faster by shipping a different chart. This is §2's
   oracle discipline applied to a shim-overhead measurement.
 - The histogram pair is exempt and documents why: `ax.hist` pre-bins with NumPy
@@ -386,7 +393,11 @@ in the focused-gate table of `spec/process/production-readiness.md`.
   reaches the 10x total-time target. The run alternates library order to reduce
   drift bias, excludes data generation, imports, and the first warm-up render,
   retains raw timing samples in its JSON artifact, and fails a case whose PNG
-  comes back blank for either library.
+  comes back blank for either library. Both adapters build at 100 DPI and
+  pass the same explicit `dpi=200` to `savefig`, so both arms export the
+  shared 1800x840 canvas; `tests/test_bench_pyplot_vs_matplotlib.py` pins that
+  contract (an xy arm that omitted it exported at build DPI and failed the
+  dimension oracle, #551).
 
 The CodSpeed pyplot pairs of §8 track the same promise continuously, so a
 structural regression surfaces attributed to the `*_pyplot` arm instead of as an

@@ -4,7 +4,7 @@ Every workload here is one chart expressed twice over the same input arrays
 and ending in the same terminal work: once through the public declarative API
 (``xy.chart`` + marks) and once through the identical Matplotlib-style calls
 in ``xy.pyplot``. Both arms finish at the engine's split wire payload (or PNG
-bytes for the export pair), so the gap between a ``*_pyplot`` row and its
+bytes for the export pairs), so the gap between a ``*_pyplot`` row and its
 ``*_raw`` twin is exactly what the shim adds — Matplotlib-call translation,
 fmt-string parsing, and figure-lifecycle bookkeeping. Everything below the
 shim is shared engine work and moves both rows together.
@@ -43,6 +43,8 @@ HIST_BINS = 200
 BAR_N = 1_000
 PANEL_N = 5_000
 EXPORT_N = 100_000
+MESH_ROWS, MESH_COLS = 80, 120
+MESH_WIDTH, MESH_HEIGHT = 900, 420
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -393,6 +395,46 @@ def test_png_export_line_pyplot(benchmark, export_data):
     def export() -> bytes:
         buffer = io.BytesIO()
         fig.savefig(buffer, format="png")
+        return buffer.getvalue()
+
+    png = benchmark(export)
+    assert png.startswith(b"\x89PNG")
+    plt.close("all")
+
+
+@pytest.fixture(scope="module")
+def mesh_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The release harness's smoke pcolormesh grid (#551): 80 x 120 cells."""
+    x = np.linspace(-3.0, 3.0, MESH_COLS)
+    y = np.linspace(-2.0, 2.0, MESH_ROWS)
+    xx, yy = np.meshgrid(x, y)
+    return x, y, np.sin(xx * 1.8) * np.cos(yy * 2.4)
+
+
+def test_png_export_pcolormesh_raw(benchmark, mesh_data):
+    """Native PNG export of an upscaled heatmap through the raw API.
+
+    The 900 x 420 chart at scale=2.0 is the 1800 x 840 canvas of
+    `bench_pyplot_vs_matplotlib.py`: each of the 9,600 cells covers ~125
+    destination pixels, so this row tracks the per-cell (not per-pixel)
+    colormap cost and the plot-background interior fill (#551).
+    """
+    x, y, z = mesh_data
+    fig = xy.chart(xy.heatmap(z, x=x, y=y), width=MESH_WIDTH, height=MESH_HEIGHT).figure()
+    png = benchmark(fig.to_png, engine=xy.Engine.default, scale=2.0)
+    assert png.startswith(b"\x89PNG")
+
+
+def test_png_export_pcolormesh_pyplot(benchmark, mesh_data):
+    """The release-audit pcolormesh row through figure.savefig (#551)."""
+    x, y, z = mesh_data
+    plt.close("all")
+    fig, ax = plt.subplots(figsize=(MESH_WIDTH / 100, MESH_HEIGHT / 100), dpi=100)
+    ax.pcolormesh(x, y, z, shading="auto", cmap="viridis")
+
+    def export() -> bytes:
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="png", dpi=200)
         return buffer.getvalue()
 
     png = benchmark(export)

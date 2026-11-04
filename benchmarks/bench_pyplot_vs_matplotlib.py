@@ -123,7 +123,7 @@ def _summary(samples: list[dict[str, float | int]]) -> dict[str, float | int]:
 
 def _xy_render(fig: Any) -> bytes:
     out = io.BytesIO()
-    fig.savefig(out, format="png")
+    fig.savefig(out, format="png", dpi=EXPORT_DPI)
     return out.getvalue()
 
 

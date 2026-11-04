@@ -435,6 +435,53 @@ measured ~13% slower than `main` before the row-band parallel rasterizer now
 measures 14.5–15.1 ms on this branch versus 19.9–20.1 ms on `main` (about 27%
 faster), byte-identical output. CodSpeed continues to track the direct tier.
 
+### #551: pcolormesh export on a 4-CPU Linux runner
+
+The 2026-11-05 release audit measured the smoke pcolormesh row at 5.54× on
+Linux x86_64. Reproduced on a shared 4-CPU Linux container (2026-11-04; CPython
+3.13.18, NumPy 2.5.1, Matplotlib 3.11.1, Rust 1.97.0), the same row measured
+**3.59×**, and standard 200×300 measured **4.36×** — so the macOS table above
+did not carry over to slower x86 cores. Profiling split the xy row cleanly:
+build 0.6 ms, Python layout/chrome ≈3 ms, native rasterize + PNG encode
+≈19 ms, of which encoding was ≈1–1.7 ms. Per-command timing of the native
+display list attributed the raster time to three causes, all of them work that
+cannot vary per pixel:
+
+| cause | cost per 1800×840 export (before) | fix |
+|---|---:|---|
+| heatmap blit normalized and colormapped **every destination pixel** (f64 divide, three ties-to-even rounds) although an 80×120 grid has 9,600 cells | ≈12.8 ms | color each nearest-sampled cell once per run of equal columns, reuse the colored row for every destination row that samples it, and `memcpy` opaque rows on an opaque canvas |
+| the plot-background `fill_rect` left its byte-fill fast path whenever the plot rect had subpixel edges (the norm at 2× export) and coverage-blended ≈1.1M pixels | ≈4.7 ms | exact coverage blend on the one-pixel border only; the fully covered interior is a row fill |
+| 16 gridlines with alpha 0 (grid off) each ran the full stroke coverage walk | ≈1.0 ms | skip strokes and fills whose alpha is 0 at dispatch — `blend_px` already discards them |
+
+All three are byte-identical by construction (the per-cell color is the same
+pure function of the same value; a full-coverage opaque blend is an overwrite;
+an alpha-0 source never changes a pixel) and by test: Rust parity tests compare
+the direct heatmap command with the expanded-RGBA image command for upscaled,
+fractional, multi-band, NaN, partial-alpha and opaque cases, and the rect fill
+with the per-pixel coverage reference; a 24-image export corpus (meshes from
+7×5 to 1,500×2,000 at three DPIs, NaN/alpha meshes, `imshow`, transparent
+figures, subplot grids, `hist2d`, polar, translucent axes backgrounds) hashed
+identically before and after. The native stage for the smoke row fell from
+≈19 ms to ≈3 ms; since every family paints the same subpixel-edged plot
+background, every family's export got ≈5 ms faster.
+
+| profile | pcolormesh workload | xy before | xy after | Matplotlib | speedup before → after |
+|---|---|---:|---:|---:|---:|
+| smoke (21 reps) | 80×120 cells | 30.86 ms | 7.12 ms | 107.4 ms | 3.59× → **15.07×** |
+| standard (21 reps) | 200×300 cells | 29.39 ms | 9.48 ms | 127.2 ms | 4.36× → **13.42×** |
+| huge (11 reps) | 400×600 cells | 29.78 ms | 16.42 ms | 222.2 ms | 7.72× → **13.53×** |
+
+xy PNG sizes are unchanged in every profile (276,368 / 439,185 / 637,385 bytes)
+and the render tier stays `direct`. The post-fix standard run passes
+`--target-speedup 10 --require-target` for all six families (line 11.70×,
+scatter 30.02×, histogram 10.99×, bar 39.02×, pcolormesh 13.42×, contour
+11.67×; geometric mean 16.94×, up from 10.56× with four families failing).
+The huge profile's 5M-value histogram row stays at ≈5× before and after; that
+is a binning cost, not a raster one, and is not addressed here. Raw reports,
+environment, and commands: `benchmarks/evidence/issue-551-pcolormesh-png/`.
+The CodSpeed `test_png_export_pcolormesh_{raw,pyplot}` pair tracks this
+export shape continuously.
+
 Reproduce and retain the raw samples with:
 
 ```bash
@@ -691,10 +738,12 @@ individually drawn markers.
 ### Native static heatmap scaling
 
 Static heatmaps now borrow their canonical f64 grid directly. A private ABI-v26
-multi-span call normalizes only nearest-sampled destination pixels through the
+multi-span call normalizes only nearest-sampled source cells through the
 same f32 rounding helper used by browser-payload compilation, then colormaps in
-Rust. It therefore owns no derived grid, performs no full-grid normalization,
-and allocates no RGBA expansion. Exact browser-payload and expanded-RGBA parity
+Rust — once per run of destination pixels that sample the same cell, not once
+per pixel (#551; see the `xy.pyplot` versus Matplotlib/Agg section). It
+therefore owns no derived grid, performs no full-grid normalization, and
+allocates no RGBA expansion. Exact browser-payload and expanded-RGBA parity
 covers transparent and opaque canvases, downsampling, NaNs, clipped domains,
 alpha, colormap interpolation, multiple spans, and malformed references.
 

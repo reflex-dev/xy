@@ -377,6 +377,36 @@ impl Surface<'_> {
         blend_px(self.px, o, self.opaque, rgba);
     }
 
+    /// Blend a run of per-pixel colors starting at `(x, y)` — exactly
+    /// `blend_u8` per pixel, with the clip test hoisted out of the loop.
+    fn blend_row_u8(&mut self, x: usize, y: usize, colors: &[[u8; 4]]) {
+        if self.polar_clip.is_some() {
+            for (offset, &rgba) in colors.iter().enumerate() {
+                self.blend_u8_polar_clipped(x + offset, y, rgba);
+            }
+            return;
+        }
+        let channels = self.channels;
+        let start = ((y - self.y0) * self.w + x) * channels;
+        let row = &mut self.px[start..start + colors.len() * channels];
+        for (offset, &rgba) in colors.iter().enumerate() {
+            blend_px(row, offset * channels, self.opaque, rgba);
+        }
+    }
+
+    /// Copy prepared pixel bytes into row `y` at `x` — the opaque-canvas,
+    /// opaque-source, unclipped case of `blend_row_u8`, where every blend is
+    /// an overwrite. Callers check `can_overwrite` first.
+    fn overwrite_row(&mut self, x: usize, y: usize, bytes: &[u8]) {
+        let start = ((y - self.y0) * self.w + x) * self.channels;
+        self.px[start..start + bytes.len()].copy_from_slice(bytes);
+    }
+
+    /// Whether an opaque source may be written with `overwrite_row`.
+    fn can_overwrite(&self) -> bool {
+        self.opaque && self.polar_clip.is_none()
+    }
+
     #[cold]
     #[inline(never)]
     fn blend_u8_polar_clipped(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
@@ -514,24 +544,70 @@ fn fill_rect(cv: &mut Canvas<'_>, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
         let color = &rgba8[..channels];
         for y in by0..by1 {
             let row = &mut cv.px[(y * cv.w + bx0) * channels..(y * cv.w + bx1) * channels];
-            if color.iter().all(|channel| *channel == color[0]) {
-                row.fill(color[0]);
-            } else {
-                for pixel in row.chunks_exact_mut(channels) {
-                    pixel.copy_from_slice(color);
-                }
-            }
+            fill_row(row, color);
         }
         return true;
     }
+    // Subpixel edges (a plot rect at fractional layout coordinates is the
+    // common case at 2× export). Only the one-pixel border has partial
+    // coverage; every interior pixel has coverage exactly 1.0, and an opaque
+    // color blended at full coverage is an overwrite. Paint the border through
+    // the per-pixel coverage blend and the interior as a contiguous row fill —
+    // byte-identical to blending every pixel, without ~1M f32 blends for a
+    // full plot-area background (#551).
+    let column_cover: Vec<f32> = (bx0..bx1)
+        .map(|x| ((x + 1) as f32).min(x1) - (x as f32).max(x0))
+        .collect();
+    let interior = if rgba[3] >= 1.0 {
+        let first = column_cover.iter().position(|&cx| cx == 1.0);
+        let last = column_cover.iter().rposition(|&cx| cx == 1.0);
+        match (first, last) {
+            // `cx` is 1.0 on a contiguous run: it only drops below 1 on the
+            // first and last columns of the span.
+            (Some(a), Some(b)) if column_cover[a..=b].iter().all(|&cx| cx == 1.0) => {
+                Some((a, b + 1))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let channels = cv.channels();
+    let rgba8 = [to_u8(rgba[0]), to_u8(rgba[1]), to_u8(rgba[2]), 255];
     for y in by0..by1 {
         let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
-        for x in bx0..bx1 {
-            let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
-            cv.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
+        match interior {
+            Some((a, b)) if cy == 1.0 => {
+                for (offset, &cx) in column_cover[..a].iter().enumerate() {
+                    cv.blend(bx0 + offset, y, rgba, (cx * cy).clamp(0.0, 1.0));
+                }
+                let row =
+                    &mut cv.px[(y * cv.w + bx0 + a) * channels..(y * cv.w + bx0 + b) * channels];
+                fill_row(row, &rgba8[..channels]);
+                for (offset, &cx) in column_cover[b..].iter().enumerate() {
+                    cv.blend(bx0 + b + offset, y, rgba, (cx * cy).clamp(0.0, 1.0));
+                }
+            }
+            _ => {
+                for (offset, &cx) in column_cover.iter().enumerate() {
+                    cv.blend(bx0 + offset, y, rgba, (cx * cy).clamp(0.0, 1.0));
+                }
+            }
         }
     }
     true
+}
+
+/// Overwrite a contiguous pixel row with one opaque color.
+#[inline]
+fn fill_row(row: &mut [u8], color: &[u8]) {
+    if color.iter().all(|channel| *channel == color[0]) {
+        row.fill(color[0]);
+    } else {
+        for pixel in row.chunks_exact_mut(color.len()) {
+            pixel.copy_from_slice(color);
+        }
+    }
 }
 
 // ---- polygon fill (coverage scanline) ---------------------------------------
@@ -1625,26 +1701,61 @@ fn blit_heatmap(
     let xmap: Vec<usize> = (bx0..bx1)
         .map(|x| (((x as f32 + 0.5 - dx) / dw * iw as f32).floor() as usize).min(iw - 1))
         .collect();
+    let color_at = |index: usize| {
+        let value = if canonical {
+            f64::from(crate::kernels::normalize_one_f32(
+                f64_at(values, index),
+                domain[0],
+                domain[1],
+                f32::NAN,
+            ))
+        } else {
+            f64::from(f32_at(values, index))
+        };
+        crate::kernels::heatmap_color(value, stops, alpha)
+    };
     let pixels = dw.max(0.0) * dh.max(0.0);
     let threads = raster_fanout(pixels, IMAGE_FANOUT_PX, cv.h);
     paint_image_bands(cv, by0, by1, threads, |surface| {
+        // Nearest sampling maps whole runs of destination pixels onto one
+        // source cell: an upscaled mesh repeats each cell across many columns
+        // and each source row across many destination rows. Color a source
+        // row once (one normalize + colormap per run of equal `sx`, not per
+        // pixel) and reuse it for every destination row that samples it. The
+        // per-cell color is the same pure function of the same value, so the
+        // output is byte-identical to coloring every pixel (#551).
+        let mut row_colors = vec![[0u8; 4]; xmap.len()];
+        // Opaque rows on an opaque, unclipped canvas are overwrites: pack them
+        // as RGB once and `memcpy` each destination row that repeats them.
+        let mut row_rgb: Vec<u8> = Vec::new();
+        let mut row_overwrites = false;
+        let mut cached_row = usize::MAX;
         for y in surface.y0..surface.y1 {
             let sy = (((y as f32 + 0.5 - dy) / dh * ih as f32).floor() as usize).min(ih - 1);
             let source_row = ih - 1 - sy;
-            for (offset, &sx) in xmap.iter().enumerate() {
-                let index = source_row * iw + sx;
-                let value = if canonical {
-                    f64::from(crate::kernels::normalize_one_f32(
-                        f64_at(values, index),
-                        domain[0],
-                        domain[1],
-                        f32::NAN,
-                    ))
-                } else {
-                    f64::from(f32_at(values, index))
-                };
-                let color = crate::kernels::heatmap_color(value, stops, alpha);
-                surface.blend_u8(bx0 + offset, y, color);
+            if source_row != cached_row {
+                let base = source_row * iw;
+                let mut previous = usize::MAX;
+                let mut color = [0u8; 4];
+                for (slot, &sx) in row_colors.iter_mut().zip(&xmap) {
+                    if sx != previous {
+                        color = color_at(base + sx);
+                        previous = sx;
+                    }
+                    *slot = color;
+                }
+                cached_row = source_row;
+                row_overwrites =
+                    surface.can_overwrite() && row_colors.iter().all(|color| color[3] == 255);
+                if row_overwrites {
+                    row_rgb.clear();
+                    row_rgb.extend(row_colors.iter().flat_map(|c| [c[0], c[1], c[2]]));
+                }
+            }
+            if row_overwrites {
+                surface.overwrite_row(bx0, y, &row_rgb);
+            } else {
+                surface.blend_row_u8(bx0, y, &row_colors);
             }
         }
     });
@@ -2575,7 +2686,9 @@ fn rasterize_with_spans<'a>(
                     let n = r.u32()? as usize;
                     let pts = r.pts(n)?;
                     let c = r.rgba()?;
-                    if !fill_rect(&mut cv, &pts, c) {
+                    // A fully transparent source never changes a pixel
+                    // (`blend_px` drops alpha 0), so skip the coverage walk.
+                    if c[3] > 0.0 && !fill_rect(&mut cv, &pts, c) {
                         fill_poly(&mut cv, &pts, |_, _| c);
                     }
                 }
@@ -2608,7 +2721,12 @@ fn rasterize_with_spans<'a>(
                     }
                     let dash_offset = if op == OP_PHASED_STROKE { r.f32()? } else { 0.0 };
                     let cap = r.u8()?;
-                    stroke_shaped(&mut cv, &pts, width, c, closed, (&dash, dash_offset), cap);
+                    // Transparent strokes (e.g. gridlines styled off with a
+                    // zero-alpha color) paint nothing; skip their coverage
+                    // walk rather than blending ~1k alpha-0 pixels each (#551).
+                    if c[3] > 0.0 {
+                        stroke_shaped(&mut cv, &pts, width, c, closed, (&dash, dash_offset), cap);
+                    }
                 }
                 OP_POINT => {
                     let (cx, cy, rr) = (r.f32()?, r.f32()?, r.f32()?);
@@ -3964,7 +4082,119 @@ mod tests {
 
     #[test]
     fn direct_heatmap_image_matches_expanded_rgba() {
-        let (iw, ih) = (31usize, 17usize);
+        assert_direct_heatmap_matches_expanded(31, 17, (1.25, -0.75, 15.5, 10.25), 18, 11, 187);
+    }
+
+    /// Upscaled meshes (many destination pixels per cell — the pcolormesh
+    /// export shape, #551) take the per-row color cache and run reuse, and a
+    /// canvas this large fans out across row bands. Fractional cell edges
+    /// and a non-integer scale make runs uneven; NaN and partial alpha cover
+    /// the transparent and blended branches.
+    #[test]
+    fn upscaled_direct_heatmap_matches_expanded_rgba() {
+        // Alpha 255 on the opaque canvas takes the packed-RGB row overwrite;
+        // partial alpha keeps the per-pixel blend.
+        for alpha in [187u8, 255] {
+            assert_direct_heatmap_matches_expanded(7, 5, (3.4, 2.6, 591.3, 493.7), 600, 500, alpha);
+            assert_direct_heatmap_matches_expanded(
+                120,
+                80,
+                (0.5, 0.25, 1395.0, 646.8),
+                1400,
+                660,
+                alpha,
+            );
+        }
+    }
+
+    /// The interior row-fill of a subpixel-edged rect (#551) must equal the
+    /// per-pixel coverage blend it replaced: fractional edges, a rect clipped
+    /// by the canvas, a sub-two-pixel rect with no full-coverage interior,
+    /// opaque and translucent colors, over non-uniform existing pixels.
+    #[test]
+    fn fractional_rect_fill_matches_per_pixel_coverage_blend() {
+        let (w, h) = (23usize, 17usize);
+        let rects = [
+            (2.3f32, 1.6f32, 19.45f32, 14.2f32),
+            (-1.2, 2.0, 30.0, 9.9),
+            (4.5, 3.5, 5.25, 3.75),
+            (3.0, 2.5, 12.0, 8.0),
+            (0.0, 0.0, 23.0, 17.0),
+        ];
+        let colors = [
+            [0.2f32, 0.4, 0.6, 1.0],
+            [0.9, 0.1, 0.3, 0.55],
+            [1.0, 1.0, 1.0, 1.0],
+        ];
+        let seed = |cv: &mut Canvas<'_>| {
+            for (index, byte) in cv.px.iter_mut().enumerate() {
+                *byte = (index * 37 % 251) as u8;
+            }
+        };
+        for opaque in [false, true] {
+            for rgba in colors {
+                for (x0, y0, x1, y1) in rects {
+                    let pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                    let mut got = canvas_px(w, h, opaque);
+                    {
+                        let mut cv = Canvas::wrap(w, h, opaque, &mut got);
+                        seed(&mut cv);
+                        assert!(fill_rect(&mut cv, &pts, rgba));
+                    }
+                    let mut want = canvas_px(w, h, opaque);
+                    {
+                        let mut cv = Canvas::wrap(w, h, opaque, &mut want);
+                        seed(&mut cv);
+                        let (bx0, by0, bx1, by1) = cv.bbox(x0, y0, x1, y1);
+                        for y in by0..by1 {
+                            let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
+                            for x in bx0..bx1 {
+                                let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
+                                cv.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
+                            }
+                        }
+                    }
+                    assert_eq!(got, want, "opaque={opaque} rgba={rgba:?} rect={pts:?}");
+                }
+            }
+        }
+    }
+
+    /// Fully transparent strokes and fills paint nothing, so the dispatcher
+    /// skips them (#551: alpha-0 gridlines cost ~1 ms per 2× export).
+    #[test]
+    fn transparent_strokes_and_fills_leave_canvas_untouched() {
+        let mut cmds = vec![OP_STROKE];
+        cmds.extend(u32le(2));
+        for value in [1.5f32, 4.25, 30.5, 4.25] {
+            cmds.extend(f32le(value));
+        }
+        cmds.extend(f32le(2.2));
+        cmds.extend([12, 34, 56, 0]);
+        cmds.push(0); // open
+        cmds.extend(u32le(0)); // no dash
+        cmds.push(1); // butt cap
+        cmds.push(OP_FILL_POLY);
+        cmds.extend(u32le(3));
+        for value in [2.0f32, 2.0, 20.0, 3.0, 8.0, 9.5] {
+            cmds.extend(f32le(value));
+        }
+        cmds.extend([200, 10, 10, 0]);
+        for opaque in [false, true] {
+            let got = rasterize_to_vec(&cmds, &[], 32, 12, opaque).expect("valid commands");
+            let blank = rasterize_to_vec(&[], &[], 32, 12, opaque).expect("empty list");
+            assert_eq!(got, blank, "opaque={opaque}");
+        }
+    }
+
+    fn assert_direct_heatmap_matches_expanded(
+        iw: usize,
+        ih: usize,
+        rect: (f32, f32, f32, f32),
+        w: usize,
+        h: usize,
+        alpha: u8,
+    ) {
         let values: Vec<f32> = (0..iw * ih)
             .map(|index| match index % 37 {
                 0 => f32::NAN,
@@ -3973,14 +4203,13 @@ mod tests {
             })
             .collect();
         let stops = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [253, 231, 37]];
-        let alpha = 187u8;
         let raw: Vec<f64> = values.iter().copied().map(f64::from).collect();
         let mut rgba = vec![0u8; iw * ih * 4];
         assert!(crate::kernels::heatmap_rgba_into(
             &raw, iw, ih, &stops, alpha, &mut rgba,
         ));
 
-        let (dx, dy, dw, dh) = (1.25, -0.75, 15.5, 10.25);
+        let (dx, dy, dw, dh) = rect;
         let mut expanded = vec![OP_IMAGE];
         for value in [dx, dy, dw, dh] {
             expanded.extend(f32le(value));
@@ -4012,9 +4241,9 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_to_vec(&direct, &[&arena], 18, 11, opaque)
+            let got = rasterize_to_vec(&direct, &[&arena], w, h, opaque)
                 .expect("direct heatmap command");
-            let want = rasterize_to_vec(&expanded, &[], 18, 11, opaque)
+            let want = rasterize_to_vec(&expanded, &[], w, h, opaque)
                 .expect("expanded image command");
             assert_eq!(got, want, "opaque={opaque}");
         }
@@ -4041,19 +4270,19 @@ mod tests {
         }
         for opaque in [false, true] {
             let got =
-                rasterize_to_vec(&canonical, &[b"unused", &canonical_arena], 18, 11, opaque)
+                rasterize_to_vec(&canonical, &[b"unused", &canonical_arena], w, h, opaque)
                     .expect("canonical heatmap command");
-            let want = rasterize_to_vec(&expanded, &[], 18, 11, opaque)
+            let want = rasterize_to_vec(&expanded, &[], w, h, opaque)
                 .expect("expanded image command");
             assert_eq!(got, want, "canonical opaque={opaque}");
         }
 
-        let mut out = vec![0u8; 18 * 11 * 4];
+        let mut out = vec![0u8; w * h * 4];
         assert!(!rasterize_data_into(
             &direct,
             &arena[..arena.len() - 1],
-            18,
-            11,
+            w,
+            h,
             &mut out,
         ));
     }

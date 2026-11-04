@@ -79,12 +79,18 @@ src/                                          # 15,423 lines shipped, 8 modules
                         #   canonical spans) and paints into a straight-alpha
                         #   RGBA8 framebuffer the caller owns:
                         #     · scanline polygon fill, flat + linear gradient,
-                        #       with a rectangle fast path
+                        #       with a rectangle fast path (subpixel edges get
+                        #       exact coverage; the fully covered interior is a
+                        #       row fill)
+                        #     · fully transparent fills/strokes are skipped at
+                        #       dispatch — they cannot change a pixel
                         #     · SDF/distance-based stroke and point-symbol paint
                         #       (round caps/joins and AA fall out of the metric)
                         #     · affine scatter projection, typed per-point color/
                         #       size resolution, batched triangle meshes, segments
                         #     · image blit incl. density/heatmap colormap sampling
+                        #       (heatmaps color each nearest-sampled source cell
+                        #       once per destination-row run, not per pixel)
                         #     · text, blitted and bilinearly scaled from font.rs
                         #     · row-banded multithreaded paint (std::thread::scope,
                         #       byte-identical to the serial path) and the fused

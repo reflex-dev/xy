@@ -290,6 +290,9 @@ These commands match the non-blocking GitHub Actions measurement lane:
 .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
   --profile huge --reps 11 --warmups 2 \
   --json pyplot-vs-matplotlib-huge.json --out pyplot-vs-matplotlib-huge.md
+# Before/after reports for the #551 pcolormesh export fix (smoke, standard,
+# huge; environment and commands inside):
+# benchmarks/evidence/issue-551-pcolormesh-png/linux-x86_64-4cpu/
 # Opt-in high-memory production ceiling; fixture construction is untimed.
 .venv/bin/python benchmarks/bench_scatter_native.py --sizes 1e9 --production \
   --large-numpy-generator --native-png --json scatter-1b.json
