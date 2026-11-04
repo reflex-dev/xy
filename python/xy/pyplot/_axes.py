@@ -674,6 +674,8 @@ class _AxisProxy:
 
     def set_minor_locator(self, locator: Any) -> None:
         """Set the locator used for the independent unlabeled minor tick set."""
+        if self._is_units_registry_ticker(locator):
+            return
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_locator")] = locator
         host._invalidate_shared_ticker_axis(key)
@@ -688,6 +690,8 @@ class _AxisProxy:
 
     def set_minor_formatter(self, formatter: Any) -> None:
         """Set a minor formatter, used when a labeled minor set is promoted."""
+        if self._is_units_registry_ticker(formatter):
+            return
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_formatter")] = as_formatter(formatter, "set_minor_formatter()")
         host._invalidate_shared_ticker_axis(key)
@@ -1999,6 +2003,7 @@ class Axes(PlotTypeMixin):
 
         handles: list[Line2D] = []
         for gx, gy, fmt in _iter_plot_groups(args):
+            gx = _restore_pandas_period_timestamps(self, gx)
             gx, gy = np.atleast_1d(gx), np.atleast_1d(gy)
             gx, gy = _convert_timedelta_axis(gx), _convert_timedelta_axis(gy)
             # A 2-D operand draws one line per column; each column advances the
@@ -9560,6 +9565,49 @@ def _parse_date_text(value: str) -> Optional[np.datetime64]:
         except ValueError:
             continue
     return None
+
+
+def _restore_pandas_period_timestamps(ax: Any, values: Any) -> Any:
+    """pandas' PeriodIndex ordinals → the timestamps they stand for, else ``values``.
+
+    pandas >= 3.1 plots a time series by handing ``ax.plot`` its
+    ``PeriodIndex.asi8`` integer ordinals (older releases passed Period
+    objects, which `_convert_timedelta_axis` already maps). Those ordinals only
+    mean something through matplotlib's units registry, which this engine
+    deliberately omits: its time axis is native ms-since-epoch. pandas records
+    the series it is about to draw in ``ax._plot_data`` immediately before the
+    call, so restore timestamps only when the integers *are* that record's
+    index storage (shared memory) and its complete ordinal sequence. A later
+    numeric overlay whose values happen to equal period ordinals is ordinary
+    data and stays untouched. Duck-typed: the shim never imports pandas.
+    """
+    if not isinstance(values, np.ndarray) or values.dtype != np.int64 or values.ndim != 1:
+        return values
+    records = getattr(ax, "_plot_data", None)
+    if not isinstance(records, list) or not records:
+        return values
+    record = records[-1]
+    index = getattr(record[0], "index", None) if isinstance(record, tuple) and record else None
+    to_timestamp = getattr(index, "to_timestamp", None)
+    freq = getattr(ax, "freq", None)  # pandas' axis frequency: alias or offset
+    business_day = (freq if isinstance(freq, str) else getattr(freq, "name", None)) == "B"
+    if callable(to_timestamp):
+        ordinals = getattr(index, "asi8", None)  # PeriodIndex storage
+    elif business_day:
+        # Business-day series skip Period[B] (deprecated): pandas plots an
+        # int64 Index of np.busday_count ordinals from 1970-01-01 instead.
+        ordinals = getattr(index, "_values", None)
+    else:
+        return values
+    if not isinstance(ordinals, np.ndarray) or ordinals.dtype != np.int64:
+        return values
+    if ordinals.shape != values.shape or not np.shares_memory(values, ordinals):
+        return values
+    if not np.array_equal(values, ordinals):
+        return values
+    if callable(to_timestamp):
+        return np.asarray(to_timestamp(how="start").to_numpy(), dtype="datetime64[ns]")
+    return np.busday_offset(np.datetime64("1970-01-01", "D"), values).astype("datetime64[ns]")
 
 
 def _convert_timedelta_axis(values: np.ndarray) -> np.ndarray:

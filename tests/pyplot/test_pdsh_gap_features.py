@@ -519,8 +519,17 @@ def _ms(stamp: str) -> float:
     return float(np.datetime64(stamp, "ms").astype(np.int64))
 
 
+def _pandas_plotting():
+    """pandas, skipping where its plotting backend (matplotlib) is absent.
+
+    ``Series.plot`` imports matplotlib before it calls into the xy axes; the
+    shim itself never does, so this path is optional in dev environments."""
+    pytest.importorskip("matplotlib")
+    return pytest.importorskip("pandas")
+
+
 def test_pandas_datetime_series_plot_completes():
-    pd = pytest.importorskip("pandas")
+    pd = _pandas_plotting()
     index = pd.date_range("2012-01-01", periods=120, freq="D")
     series = pd.Series(np.linspace(4000.0, 5000.0, 120), index=index)
     fig, ax = plt.subplots()
@@ -528,6 +537,62 @@ def test_pandas_datetime_series_plot_completes():
     lo, hi = ax.get_xlim()
     assert lo == _ms("2012-01-01") and hi == _ms("2012-04-29")
     _png()
+
+
+@pytest.mark.parametrize(
+    ("freq", "periods"),
+    [("D", 120), ("MS", 24), ("h", 72), ("B", 40)],
+    ids=["daily", "monthly", "hourly", "business-day"],
+)
+@pytest.mark.parametrize("container", ["series", "frame"])
+def test_pandas_period_index_plots_keep_calendar_coordinates(freq, periods, container):
+    # pandas >= 3.1 hands ax.plot() PeriodIndex.asi8 ordinals instead of Period
+    # objects (#549); they must still land on the native ms-since-epoch axis.
+    pd = _pandas_plotting()
+    index = pd.date_range("2012-01-01", periods=periods, freq=freq)
+    values = np.linspace(4000.0, 5000.0, periods)
+    if container == "series":
+        data = pd.Series(values, index=index)
+    else:
+        data = pd.DataFrame({"a": values, "b": values[::-1]}, index=index)
+    fig, ax = plt.subplots()
+    data.plot(ax=ax)
+    expected = index.values.astype("datetime64[ms]").astype(np.int64).astype(np.float64)
+    for line in ax.lines:
+        assert np.issubdtype(np.asarray(line.get_xdata()).dtype, np.datetime64)
+        np.testing.assert_array_equal(np.asarray(line.get_xdata(orig=False)), expected)
+    assert ax.get_xlim() == (expected[0], expected[-1])
+    _png(fig)
+
+
+def test_numeric_overlay_after_pandas_period_plot_keeps_its_units():
+    # [0, 1, 2] equal the leading daily ordinals of a 1970-01-01 index, but they
+    # are the user's own numbers, not pandas' index storage: leave them alone.
+    pd = _pandas_plotting()
+    index = pd.date_range("1970-01-01", periods=3, freq="D")
+    fig, ax = plt.subplots()
+    pd.Series([1.0, 2.0, 3.0], index=index).plot(ax=ax)
+    (overlay,) = ax.plot(np.array([0, 1, 2], dtype=np.int64), [3.0, 2.0, 1.0])
+    assert list(np.asarray(overlay.get_xdata())) == [0, 1, 2]
+    assert ax.lines[0].get_xdata(orig=False)[1] == _ms("1970-01-02")
+
+
+def test_pandas_minor_period_tickers_are_ignored():
+    pd = pytest.importorskip("pandas")
+    converter = pytest.importorskip("pandas.plotting._matplotlib.converter")
+    index = pd.date_range("2012-01-01", periods=30, freq="D")
+    freq = index.to_period("D").freq
+    fig, ax = plt.subplots()
+    ax.plot(index.values, np.arange(30.0))
+    ax.xaxis.set_minor_locator(
+        converter.TimeSeries_DateLocator(freq, minor_locator=True, plot_obj=None)
+    )
+    ax.xaxis.set_minor_formatter(
+        converter.TimeSeries_DateFormatter(freq, minor_locator=True, plot_obj=None)
+    )
+    assert isinstance(ax.xaxis.get_minor_locator(), plt.NullLocator)
+    assert isinstance(ax.xaxis.get_minor_formatter(), plt.NullFormatter)
+    _png(fig)
 
 
 def test_get_xdata_orig_false_is_ms_since_epoch():
