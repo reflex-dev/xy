@@ -1278,7 +1278,7 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   where published wheels already exist — the source build is a deliberate
   trade-off that keeps hosted examples on the launched ref at the cost of
   compiling the core and render client inside repo2docker. The repository's
-  `.binder/environment.yml` provisions only the build toolchain (`rust=1.88.*`,
+  `.binder/environment.yml` provisions only the build toolchain (`rust=1.99.*`,
   `nodejs=22.*` — loose pins, because exact conda build strings are
   arch-specific and retired by conda-forge rebuilds). The interpreter carries a
   loose version-only pin (`python=3.13.*`): repo2docker's default kernel env

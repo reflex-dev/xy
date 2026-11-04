@@ -6,7 +6,10 @@ dependencies:
   # Loose version pins on purpose — exact conda build strings are
   # arch-specific (mybinder.org also schedules aarch64 nodes) and conda-forge
   # rebuilds retire them, which would quietly make this file unsolvable.
-  - rust=1.88.*
+  # Track the stable toolchain CI builds with (ci.yml `toolchain:`). It must
+  # also stay at or above the highest `rust-version` in Cargo.lock
+  # (argminmax 0.7.1 needs 1.89).
+  - rust=1.99.*
   - nodejs=22.*
   # repo2docker's default kernel env resolves to Python 3.10 (observed
   # 3.10.19 on mybinder and in CI), below xy's requires-python >=3.11, which
