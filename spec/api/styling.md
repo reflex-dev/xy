@@ -735,8 +735,8 @@ exact and never moves automatically.
 when every one of the nine in-plot candidates scores above zero — no corner,
 edge or center position is free of marks — `best` resolves to `"outside top"`
 (below) instead of the least-bad corner, because that corner still hides data.
-It does so only if the band would hold at least one legend row above a 40 px
-plot (`_band_holds_a_row`). On a card shorter than that, a band could only clip
+It does so only if the band would hold at least one legend row plus the 8 px
+gap (`_OUTSIDE_LEGEND_GAP`) above a 40 px plot (`_band_holds_a_row`). On a card shorter than that, a band could only clip
 the legend, so `best` keeps the least-bad corner.
 This is the case of the reported builder chart: stacked bars that reach the axis
 maximum cover every candidate, and `best` used to settle on `upper right`, over
