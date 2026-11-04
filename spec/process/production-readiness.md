@@ -329,8 +329,8 @@ uses level-two section headings. Installation examples use subsections so code
 blocks cannot become invalid direct children of a list.
 The docs consume the reusable `reflex-site-shared` base theme and components
 directly. XY owns its branding, navigation, project-specific footer content,
-and the docs-only brand layer adapted from
-[Reflex PR #7549](https://github.com/reflex-dev/reflex/pull/7549). It must not
+and the docs-only brand layer that follows the
+[Reflex marketing theme](https://github.com/reflex-dev/marketing/pull/213). It must not
 vendor shared base CSS, search/buttons, or the navbar frame and announcement.
 The local layer follows the current marketing finish: Geist 400 article text
 and headings, Inter compact navigation/internal UI, Geist 525 actions, 8px control
@@ -338,6 +338,9 @@ corners, 12px fields, and neutral light/dark tokens. The app-owned
 `--docs-control-radius` isolates chrome from Radix live-example radius settings;
 footer actions retain 8px corners and Geist 525 in the rendered production DOM.
 The footer color-theme group and its three buttons use the same 8px radius.
+Feedback fields use a 2px `--ring` halo for keyboard focus and a system-color
+outline in forced-colors mode. Invalid fields retain the focus indicator and
+use a separate semantic border color.
 Light uses #FDFCFC canvas,
 #0A0A0A ink, #6B6B6B secondary text, #F5F5F5/#F9F9F9 quiet surfaces, #E5E5E5
 borders, and #1F1F1F primary actions (#333 hover). Preserve dark mode with neutral

@@ -87,7 +87,7 @@ def _menu_item(label: str, href: str) -> rx.Component:
             href=href.removeprefix("/docs/xy") or "/",
             aria_current=rx.cond(active, "page", None),
             class_name=ui.cn(
-                "docs-navbar-link inline-flex h-9 items-center justify-center whitespace-nowrap rounded-control px-3 "
+                "docs-navbar-link inline-flex h-9 items-center justify-center whitespace-nowrap px-3 "
                 "text-sm font-normal leading-none no-underline transition-colors duration-150 "
                 "motion-reduce:transition-none focus-visible:outline-2 "
                 "focus-visible:outline-offset-2 focus-visible:outline-ring",
@@ -128,7 +128,7 @@ def _mobile_navigation() -> rx.Component:
             ui.icon("Menu01Icon", class_name="size-5 group-open/xy-menu:hidden"),
             ui.icon("Cancel01Icon", class_name="hidden size-5 group-open/xy-menu:block"),
             aria_label="Toggle navigation menu",
-            class_name="flex size-9 cursor-pointer list-none items-center justify-center rounded-control text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden",
+            class_name="flex size-9 cursor-pointer list-none items-center justify-center text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden",
         ),
         rx.el.div(
             *[

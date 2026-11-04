@@ -198,7 +198,6 @@ html .ReflexSearch-overlay :is(.ReflexSearch-escape, .ReflexSearch-hit, .ReflexS
   border-color: var(--border);
   border-radius: 12px;
   color: var(--foreground);
-  box-shadow: none;
   font-family: var(--font-sans);
   font-size: 14px;
   font-weight: 400;
@@ -208,10 +207,12 @@ html .ReflexSearch-overlay :is(.ReflexSearch-escape, .ReflexSearch-hit, .ReflexS
   min-height: 128px;
   padding: 12px;
   line-height: 1.5;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .02), 0 1px 4px rgb(0 0 0 / .02);
 }
 
 .docs-feedback-content div:has(> input[data-slot="input"]) {
   min-height: 40px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .02), 0 1px 4px rgb(0 0 0 / .02);
 }
 
 .docs-feedback-content input {
@@ -374,21 +375,16 @@ html .ReflexSearch-overlay :is(.ReflexSearch-escape, .ReflexSearch-hit, .ReflexS
   }
 }
 
-/* Fields share the internal input's flush halo rather than button outlines. */
-.docs-feedback-content div:has(> input[data-slot="input"]),
-.docs-feedback-content textarea {
-  box-shadow: 0 1px 2px rgb(0 0 0 / .02), 0 1px 4px rgb(0 0 0 / .02);
-}
+/* Keep resting shadows in separate rules so optimization preserves specificity. */
 .docs-feedback-content textarea:focus-visible,
 .docs-feedback-content div:has(> input[data-slot="input"]:focus-visible) {
   border-color: var(--secondary-a6);
   outline: none;
-  box-shadow: 0 0 0 2px var(--secondary-4);
+  box-shadow: 0 0 0 2px var(--ring);
 }
 .docs-feedback-content textarea:is([data-invalid], [aria-invalid="true"], :user-invalid):focus-visible,
 .docs-feedback-content div:has(> input:is([data-invalid], [aria-invalid="true"], :user-invalid):focus-visible) {
   border-color: var(--destructive-a11);
-  box-shadow: 0 0 0 2px var(--destructive-4);
 }
 
 @media (forced-colors: active) {

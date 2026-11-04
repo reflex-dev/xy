@@ -87,8 +87,9 @@ borders, and charcoal primary actions. Dark mode remains available with neutral
 dark counterparts. Chart colors and syntax themes retain their own contracts.
 Geist 400 supplies article text and headings. Inter remains the compact
 navigation and internal UI font. Actions use Geist 525 with 8px corners. The docs
-radius token keeps live example settings isolated. Fields use 12px corners and
-the internal input's flush focus halo. Preserve the docs' 64px navigation and
+radius token keeps live example settings isolated. Feedback fields use 12px
+corners, a 2px `--ring` halo for keyboard focus, and a system-color outline in
+forced-colors mode. Preserve the docs' 64px navigation and
 compact reading, sidebar, and table of contents layout.
 
 The shared announcement keeps its native link and close event, with a flat black
