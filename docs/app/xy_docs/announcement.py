@@ -24,14 +24,6 @@ def match_marketing_announcement(component: rx.Component) -> None:
         message.children = rx.fragment(ANNOUNCEMENT_TITLE).children
         message.custom_attrs["data-shimmer-text"] = ANNOUNCEMENT_TITLE
         dismiss.custom_attrs["data-announcement-dismiss"] = ""
-        component.children.insert(
-            0,
-            rx.el.div(
-                *[rx.el.span() for _ in range(5)],
-                class_name="docs-announcement-glass",
-                aria_hidden=True,
-            ),
-        )
         return
     for child in component.children:
         match_marketing_announcement(child)

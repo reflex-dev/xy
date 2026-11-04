@@ -148,6 +148,11 @@ function xyTextAdvance(text, fontSize) {
   return Number(fontSize) * units / XY_FONT_BASE_PX;
 }
 
+// Spacing, in tick-label font sizes, that one category label needs along a
+// vertical axis: one text line plus a gap, instead of the numeric one-tick-per-
+// 45-px density. Mirrored by `_CATEGORY_LABEL_PITCH` in python/xy/_svg.py.
+const CATEGORY_LABEL_PITCH = 1.6;
+
 // Gap between an outside-top legend band and the top of the plot (or the
 // top-axis tick labels). Mirrored by `_OUTSIDE_LEGEND_GAP` in python/xy/_svg.py.
 const OUTSIDE_LEGEND_GAP = 8;
@@ -827,6 +832,9 @@ export class ChartView {
   }
 
   _layout() {
+    // Relative slot font sizes (`em`, `vw`, `rem`) follow their context, which
+    // a resize or theme change can move; measure them again for this layout.
+    this._cssFontPxCache = null;
     // Plot rect from the current size — margins fixed, data area flexes.
     const compact = this.size.w < 520;
     // Explicit padding (spec.padding = [top,right,bottom,left]) overrides the
@@ -1264,7 +1272,26 @@ export class ChartView {
       // still positions by the element's REAL height, so an agreed line count
       // means the reserved band and the painted block are the same box.
       title.style.maxWidth = `${Math.max(40, Number(this._titleWrapWidth) || 40)}px`;
+      // Size to the text, not to the room right of `left`. An absolutely
+      // positioned box with only `left` set shrink-wraps to the containing
+      // block's remaining width, and a centred or right title's `left` is the
+      // plot's midpoint or right edge: on a 320 px card the title wrapped into
+      // lines the band never reserved and its first line left the canvas.
+      title.style.width = "max-content";
       title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
+      // A wide measured left gutter moves the plot's centre right of the
+      // canvas centre, and the title (sized at the authored gutters' wrap
+      // width) can then cross the right edge. Keep the box on the canvas: it
+      // is never wider than the canvas, so this only shifts it.
+      // `offsetWidth` rounds to whole px; a 237.08 px title clamped as 237
+      // ended 0.08 px past the edge. One px up covers any rounding.
+      const boxW = title.isConnected ? title.offsetWidth + 1 : 0;
+      if (boxW > 0) {
+        const shift = loc === "left" ? 0 : loc === "right" ? 1 : 0.5;
+        const leftEdge = Math.min(Math.max(x - shift * boxW, 0), Math.max(0, this.size.w - boxW));
+        title.style.left = `${leftEdge}px`;
+        title.style.transform = `translate(0, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
+      }
     }
   }
 
@@ -1295,7 +1322,7 @@ export class ChartView {
       const ticks = labelsOnLeft
         ? this._axisTicks(
           axis.id,
-          this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
+          this._yTickTarget(axis.id, plotHeight),
         )
         : { ticks: [], labels: [] };
       let tickRoom = 0;
@@ -1339,9 +1366,53 @@ export class ChartView {
 
   _slotFontSize(slot, fallback) {
     const styles = this.spec.dom && this.spec.dom.styles;
-    const value = styles && styles[slot] && styles[slot]["font-size"];
-    const parsed = parseFloat(String(value ?? ""));
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    const decls = styles && styles[slot];
+    // Slot styles keep the caller's spelling (`chrome_styles`), so read each.
+    const value = decls && (decls["font-size"] ?? decls.font_size ?? decls.fontSize);
+    // Tick labels paint inside the `labels` layer (its own stylable slot), so
+    // a relative size there resolves against that layer, not the root.
+    const host = slot === "tick_label" && this.labels ? this.labels : this.root;
+    const px = this._cssFontPx(value, host);
+    return Number.isFinite(px) && px > 0 ? px : fallback;
+  }
+
+  // A CSS font-size in px, as the browser paints it. `parseFloat("2rem")` is
+  // 2, not 32, so any unit but px resolves through a probe element styled
+  // the same way inside the chart root (em/% then resolve as they do there).
+  // Cached per value between layouts (draws call it every frame); `_layout`
+  // clears the cache because a relative size can change with its context.
+  _cssFontPx(value, host = this.root) {
+    if (value === null || value === undefined || value === "") return NaN;
+    if (typeof value === "number") return value;
+    const text = String(value).trim();
+    if (/^-?[\d.]+(px)?$/i.test(text)) return parseFloat(text);
+    if (!host || !host.isConnected) return NaN;
+    // Keyed by host as well: the same `1.5em` differs between root and labels.
+    const cache = this._cssFontPxCache || (this._cssFontPxCache = new Map());
+    const key = `${host === this.root ? "root" : "labels"}|${text}`;
+    if (cache.has(key)) return cache.get(key);
+    const probe = document.createElement("span");
+    probe.style.position = "absolute";
+    probe.style.visibility = "hidden";
+    probe.style.fontSize = text;
+    host.appendChild(probe);
+    const px = parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    cache.set(key, px);
+    return px;
+  }
+
+  // The size a Cartesian vertical category axis paints its labels at, or
+  // null for every other axis: the larger of the axis's own size and the
+  // `tick_label` slot's, because the renderers resolve the two in opposite
+  // orders. The one-line target and the collision check both use it.
+  _verticalCategoryLabelFont(axis) {
+    if (!axis || axis.kind !== "category" || axis.theta_unit || this.spec?.coords === "polar") return null;
+    return Math.max(
+      8,
+      this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
+      this._slotFontSize("tick_label", 0),
+    );
   }
 
   _xAxisRoom(side, plotWidth) {
@@ -1749,6 +1820,23 @@ export class ChartView {
       if (index >= 0 && index < axis.tick_labels.length) return String(axis.tick_labels[index]);
     }
     return fmtAxis(axis, value, step);
+  }
+
+  // Tick target for a vertical axis `h` px long. Category axes label every row
+  // that fits a line of text; every other kind keeps one tick per 45 px. An
+  // authored tick_count still wins (`_axisTickTarget`). Mirrors the vertical
+  // category branch of `axis_ticks` in python/xy/_svg.py.
+  _yTickTarget(axisId, h) {
+    // A polar radial axis keeps the numeric density: its labels ride a spoke.
+    const size = this._verticalCategoryLabelFont(this._axis(axisId));
+    if (size !== null) {
+      // Floor of one: a row too short for three labels shows one. At most
+      // 200, so a tall axis strides its labels across every row rather than
+      // `categoryTicks` cutting the list off after the 200th.
+      const fit = Math.floor(h / (size * CATEGORY_LABEL_PITCH));
+      return this._axisTickTarget(axisId, Math.max(1, Math.min(200, fit)));
+    }
+    return this._axisTickTarget(axisId, Math.max(3, h / 45));
   }
 
   _axisTickTarget(axisId, fallback) {
@@ -2832,6 +2920,21 @@ export class ChartView {
     this._pickDirty = true;
   }
 
+  // Whether the first layout guessed at something only the mounted DOM can
+  // measure: an outside-top legend box, or a chrome slot whose font size is
+  // relative (`300%`, `2em`, `1.5rem`), which `_cssFontPx` can only resolve
+  // once the chart root is connected.
+  _needsMountedLayout() {
+    if (this._outsideLegend) return true;
+    const styles = this.spec?.dom?.styles;
+    for (const slot of ["title", "tick_label"]) {
+      const decls = styles && styles[slot];
+      const value = decls && (decls["font-size"] ?? decls.font_size ?? decls.fontSize);
+      if (typeof value === "string" && !/^-?[\d.]+(px)?$/i.test(value.trim())) return true;
+    }
+    return false;
+  }
+
   // A data update re-resolves `loc="best"`, and its payload can move the main
   // legend between an in-plot corner and the outside-top band. The band
   // changes the plot rect, so the mounted legend chrome is rebuilt and laid
@@ -2963,19 +3066,23 @@ export class ChartView {
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
-    if (this._outsideLegend) {
-      // The first `_layout` ran before this box existed and reserved no band.
-      // Lay out again now that it can be measured, and move what was already
-      // placed from the band-less rect. Backing stores are sized later, from
-      // this final rect, by GL init.
+    if (this._needsMountedLayout()) {
+      // The first `_layout` ran before this DOM existed: it reserved no band
+      // for an outside-top legend, and a relative slot font size (`300%`,
+      // `2em`) fell back to its default. Lay out again now that both can be
+      // measured, and move what was already placed from the provisional rect.
+      // Backing stores are sized later, from this final rect, by GL init.
       this._layout();
       const p = this.plot;
       this.canvas.style.left = p.x + "px";
       this.canvas.style.top = p.y + "px";
       this.canvas.style.width = p.w + "px";
       this.canvas.style.height = p.h + "px";
-      root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
-      root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+      // Bounded by the box legends place in: a polar chart's gutter beside the
+      // disc, not the plot rect (as in `_applyLayout`).
+      const lb = this._legendRect || p;
+      root.style.setProperty("--xy-legend-max-width", Math.max(40, lb.w - 12) + "px");
+      root.style.setProperty("--xy-legend-max-height", Math.max(40, lb.h - 12) + "px");
       this._positionTitles();
       for (const lg of this._legends) {
         const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
@@ -8181,7 +8288,10 @@ export class ChartView {
       const angle = this._axisTickLabelAngle(axis);
       return labels.map((label) => ({ ...label, angle: angle === null ? 0 : angle, row: 0 }));
     }
-    const fontSize = Math.max(
+    // A vertical category axis collides at its painted size, the size its
+    // one-line target used; every other axis keeps the axis size.
+    const categoryFont = dim === "y" ? this._verticalCategoryLabelFont(axis) : null;
+    const fontSize = categoryFont ?? Math.max(
       8,
       this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
     );
@@ -8349,7 +8459,7 @@ export class ChartView {
       "x",
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
-    const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+    const yt = this._axisTicks("y", this._yTickTarget("y", p.h));
     const minorTicks = (axis, axisId) => {
       if (!Array.isArray(axis.minor_tick_values)) return [];
       const [lo, hi] = this._axisRange(axisId);
@@ -8649,7 +8759,7 @@ export class ChartView {
         if (this._axisTickLabelStrategy(axis) === "none") continue;
         const ticks = this._axisTicks(
           axis.id,
-          this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
+          this._yTickTarget(axis.id, p.h),
         );
         const tick = tickParts(axis);
         for (const side of this._axisTickSides(axis)) {
@@ -8993,7 +9103,7 @@ export class ChartView {
       }
     };
     for (const axis of extraYAxes) {
-      const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
+      const ticks = this._axisTicks(axis.id, this._yTickTarget(axis.id, p.h));
       const labelCandidates = [];
       for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
@@ -9626,6 +9736,9 @@ export class ChartView {
     if (this._destroyed) return;
     const previousPlot = this.plot;
     this._applyTheme();
+    // A theme can move the font a relative slot size resolves against; the
+    // draw below re-targets ticks from it, so measure those sizes again.
+    this._cssFontPxCache = null;
     this._applyLayout();
     if (this.plot.w !== previousPlot.w || this.plot.h !== previousPlot.h) {
       this._scheduleViewRequest();

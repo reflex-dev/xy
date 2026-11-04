@@ -1,4 +1,24 @@
-/* Docs brand layer adapted from reflex-dev/reflex#7549 (749463293bc6).
+/* Metric-matched fallbacks for the marketing fonts, so the swap to Geist/Inter
+   keeps line widths and wraps (size-adjust measured against Geist/Inter on Arial). */
+@font-face {
+	font-family: 'Geist Fallback';
+	src: local('Arial'), local('Helvetica');
+	size-adjust: 101.73%;
+	ascent-override: 98.8%;
+	descent-override: 29%;
+	line-gap-override: 0%;
+}
+
+@font-face {
+	font-family: 'Inter Fallback';
+	src: local('Arial'), local('Helvetica');
+	size-adjust: 105.64%;
+	ascent-override: 91.71%;
+	descent-override: 22.84%;
+	line-gap-override: 0%;
+}
+
+/* Docs brand layer synchronized with the current Reflex marketing finish.
    Shared base styles remain owned by reflex-site-shared. */
 /* Docs-only brand layer. Shared package consumers retain their own theme.
    Editorial selectors deliberately exclude live component examples. */
@@ -42,55 +62,56 @@
 }
 
 :root {
-  --font-instrument-sans: Inter, Arial, sans-serif;
-  --font-sans: Inter, Arial, sans-serif;
-  --font-heading: Geist, Inter, Arial, sans-serif;
+  --font-instrument-sans: Inter, "Inter Fallback", Arial, sans-serif;
+  --font-sans: Inter, "Inter Fallback", Arial, sans-serif;
+  --font-heading: Geist, "Geist Fallback", Inter, "Inter Fallback", Arial, sans-serif;
   --font-weight-book: 400;
   --font-weight-normal: 400;
+  --docs-control-radius: 8px;
   --radius-card: 20px;
   --radius-panel: 24px;
 }
 
 :root, .light, .light-theme {
   --background: #fdfcfc;
-  --foreground: #000;
+  --foreground: #0a0a0a;
   --card: #fff;
-  --card-foreground: #000;
-  --primary: #000;
+  --card-foreground: #0a0a0a;
+  --primary: #1f1f1f;
   --primary-foreground: #fff;
-  --primary-hover: #2b2b2b;
-  --muted: #f5f3f1;
-  --muted-foreground: #69645e;
-  --subtle: #f9f8f7;
-  --subtle-foreground: #777169;
-  --accent: #f5f3f1;
-  --accent-hover: #ebe8e4;
-  --inset: #ebe8e4;
-  --border: #e5e2de;
-  --border-subtle: #efeeec;
-  --border-strong: #cbc5bf;
-  --ring: #5c52b4;
+  --primary-hover: #333;
+  --muted: #f5f5f5;
+  --muted-foreground: #6b6b6b;
+  --subtle: #f9f9f9;
+  --subtle-foreground: #6b6b6b;
+  --accent: #f5f5f5;
+  --accent-hover: #ededed;
+  --inset: #ededed;
+  --border: #e5e5e5;
+  --border-subtle: rgb(0 0 0 / 5%);
+  --border-strong: #d4d4d4;
+  --ring: #0a0a0a;
 }
 
 .dark, .dark-theme {
-  --background: #151413;
-  --foreground: #f5f3f1;
-  --card: #1d1c1a;
-  --card-foreground: #f5f3f1;
-  --primary: #f5f3f1;
-  --primary-foreground: #151413;
-  --primary-hover: #ded9d2;
-  --muted: #22211f;
-  --muted-foreground: #b7b1a9;
-  --subtle: #1b1a18;
-  --subtle-foreground: #a39d95;
-  --accent: #292724;
-  --accent-hover: #35322e;
-  --inset: #35322e;
-  --border: #393631;
-  --border-subtle: #2c2a27;
-  --border-strong: #5c5750;
-  --ring: #afa5f4;
+  --background: #151515;
+  --foreground: #f5f5f5;
+  --card: #1d1d1d;
+  --card-foreground: #f5f5f5;
+  --primary: #f5f5f5;
+  --primary-foreground: #151515;
+  --primary-hover: #dedede;
+  --muted: #222;
+  --muted-foreground: #b7b7b7;
+  --subtle: #1b1b1b;
+  --subtle-foreground: #a3a3a3;
+  --accent: #292929;
+  --accent-hover: #353535;
+  --inset: #353535;
+  --border: #393939;
+  --border-subtle: #2c2c2c;
+  --border-strong: #5c5c5c;
+  --ring: #f5f5f5;
 }
 
 .font-heading { font-family: var(--font-heading); }
@@ -110,10 +131,7 @@
   letter-spacing: .025em;
   text-transform: none;
 }
-.docs-sidebar a:where(:not([aria-current='page'], [aria-current='true'])) p {
-  color: var(--muted-foreground);
-}
-.docs-sidebar a:hover p { color: var(--foreground); }
+.docs-sidebar a p { color: var(--foreground); }
 .docs-sidebar a[aria-current='page'] p { font-weight: 500; }
 .docs-sidebar a:focus-visible,
 .docs-sidebar summary:focus-visible {
@@ -122,6 +140,7 @@
 }
 .docs-reading-column { max-width: 896px; padding-inline: 48px; }
 .docs-reading-column .docs-prose {
+  font-family: var(--font-heading);
   font-size: 15px;
   font-weight: 400;
   line-height: 1.85;
@@ -137,13 +156,13 @@
 }
 .docs-reading-column h1.docs-heading {
   font-size: clamp(34px, 3vw, 44px);
-  font-weight: 300;
+  font-weight: 400;
   margin-top: 8px;
   margin-bottom: 12px;
 }
 .docs-reading-column h2.docs-heading { font-size: 30px; margin-top: 48px; }
 .docs-reading-column h3.docs-heading { font-size: 23px; margin-top: 32px; }
-.docs-reading-column h4.docs-heading { font-size: 17px; font-weight: 500; }
+.docs-reading-column h4.docs-heading { font-size: 17px; }
 .docs-article .code-block {
   border-color: var(--border);
 }
@@ -201,14 +220,12 @@
   .docs-reading-column { padding-inline: 20px; }
   .docs-reading-column .docs-prose { font-size: 15px; }
   .docs-reading-column h2.docs-heading { font-size: 26px; }
-  .docs-page-navigation > a {
-  min-width: 0; padding: 10px 12px; }
+  .docs-page-navigation > a { padding: 10px 12px; }
   .docs-reading-column .docs-page-navigation { gap: 8px; }
   .docs-landing footer > div { padding-inline: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .docs-page-navigation > a {
-  min-width: 0; transition: none; }
+  .docs-page-navigation > a { transition: none; }
 }
 
 /* Documentation surfaces only: never select controls inside live examples. */
@@ -243,7 +260,7 @@
     gap: 2px !important;
     padding: 3px !important;
     border: 1px solid var(--border) !important;
-    border-radius: 999px;
+    border-radius: var(--docs-control-radius);
     background: var(--muted) !important;
     box-shadow: none !important;
   }
@@ -253,20 +270,20 @@
   }
   html .docs-article .doc-demo-tab {
     border: 0 !important;
-    border-radius: 999px !important;
+    border-radius: var(--docs-control-radius) !important;
     margin: 0;
     padding: 7px 12px !important;
     min-height: 32px;
-    font-family: var(--font-sans);
+    font-family: var(--font-heading);
     font-size: 13px !important;
-    font-weight: 400 !important;
+    font-weight: 525 !important;
     background: transparent !important;
     color: var(--muted-foreground) !important;
   }
   html .docs-article .doc-demo-tab[data-state='active'] {
     background: var(--card) !important;
     color: var(--foreground) !important;
-    box-shadow: 0 1px 3px rgb(0 0 0 / .06) !important;
+    box-shadow: var(--shadow-small) !important;
   }
   html .docs-article .doc-demo-tab:hover { color: var(--foreground) !important; }
   html .docs-article .doc-demo-tab:focus-visible {
@@ -275,9 +292,9 @@
   }
   .docs-article .code-block:not(.doc-demo-tab-card .code-block) { border-radius: 16px !important; }
   .docs-article .code-block button {
-    font-family: var(--font-sans) !important;
-    font-weight: 400 !important;
-    border-radius: 999px !important;
+    font-family: var(--font-heading) !important;
+    font-weight: 525 !important;
+    border-radius: var(--docs-control-radius) !important;
     background: var(--muted) !important;
   }
   .docs-article .code-block button:focus-visible {

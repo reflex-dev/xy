@@ -1,11 +1,10 @@
-/* XY docs header brand layer, adapted from reflex-dev/reflex#7549. */
-/* Keep the 64px docs header; match reflex-marketing's 44px desktop / 40px
-   mobile announcement, layered opal artwork, and persisted dismissal. */
+/* Compact shared docs shell with the current marketing palette and controls.
+   Preserve 64px docs navigation and 40px announcement contribution. */
 html:has(.docs-nav-frame) { --docs-header-height: 64px; }
-html:not([data-announcement-dismissed='true']):has(.docs-nav-frame [data-announcement]) { --docs-header-height: 108px; }
+html:not([data-announcement-dismissed='true']):has(.docs-nav-frame [data-announcement]) { --docs-header-height: 104px; }
 .docs-nav-frame {
   left: 0;
-  --docs-control-shadow: 0 0 0 .5px rgb(0 0 0 / 12.5%), 0 1px 1px rgb(0 0 0 / 4%), 0 2px 4px rgb(0 0 0 / 4%);
+  background: #0a0a0a;
 }
 .docs-nav-frame > .docs-navbar-header {
   height: 64px;
@@ -17,8 +16,12 @@ html:not([data-announcement-dismissed='true']):has(.docs-nav-frame [data-announc
   transition: border-radius 200ms ease, background-color 200ms ease;
 }
 html:not([data-announcement-dismissed='true']) .docs-nav-frame:has([data-announcement]) > .docs-navbar-header {
-  margin-top: -28px;
-  border-radius: 24px 24px 0 0;
+  border-radius: 12px 12px 0 0;
+}
+@media (max-width: 1279px) {
+  html .docs-nav-frame:has(.docs-navbar-menu[open]) > .docs-navbar-header {
+    border-radius: 0;
+  }
 }
 .docs-nav-frame > .docs-navbar-header > .docs-navbar-inner {
   max-width: 1536px;
@@ -28,7 +31,7 @@ html:not([data-announcement-dismissed='true']) .docs-nav-frame:has([data-announc
   padding: 12px 24px 20px;
   border-bottom: 1px solid var(--border);
   border-radius: 0 0 24px 24px;
-  box-shadow: 0 12px 24px -16px rgb(0 0 0 / 20%);
+  box-shadow: var(--shadow-medium);
 }
 .docs-navbar-mobile-link { padding-inline: 8px; }
 .docs-navbar-mobile-link svg { color: var(--muted-foreground); }
@@ -53,10 +56,7 @@ html:not([data-announcement-dismissed='true']) .docs-nav-frame:has([data-announc
 }
 .docs-sidebar-drawer #sidebar-container { min-height: 0; }
 .docs-sidebar-drawer #sidebar-container > div { padding-left: 16px; padding-right: 20px; }
-.docs-sidebar-drawer a:where(:not([aria-current='page'], [aria-current='true'])) p {
-  color: var(--muted-foreground);
-}
-.docs-sidebar-drawer a:hover p { color: var(--foreground); }
+.docs-sidebar-drawer a p { color: var(--foreground); }
 .docs-sidebar-drawer a[aria-current='page'] p { font-weight: 500; }
 .docs-sidebar-drawer a:focus-visible,
 .docs-sidebar-drawer summary:focus-visible {
@@ -73,49 +73,20 @@ html:not([data-announcement-dismissed='true']) .docs-nav-frame:has([data-announc
 .docs-nav-frame [data-announcement] {
   position: relative;
   isolation: isolate;
-  height: 72px;
-  padding-bottom: 28px;
+  height: 40px;
   width: 100%;
   overflow: hidden;
-  background: #e8e7f1;
-  color: #000;
+  background: #0a0a0a;
+  color: #fff;
   border: 0;
   font-family: Inter, Arial, sans-serif;
 }
 html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { display: none; }
-/* Five mirrored artwork panels match reflex-marketing/assets/marketing.css. */
-.docs-nav-frame .docs-announcement-glass {
-  display: flex;
-  position: absolute;
-  z-index: -2;
-  inset: -48px -12%;
-  pointer-events: none;
-  filter: blur(6px);
-  will-change: transform;
-  animation: docs-announcement-glass-drift 26s ease-in-out infinite alternate;
-}
-.docs-announcement-glass > span {
-  flex: 1;
-  background: url('/docs/xy/header/opal.avif') center 22% / cover no-repeat;
-}
-.docs-announcement-glass > span:nth-child(2) { background-position: center 62%; transform: scaleX(-1); }
-.docs-announcement-glass > span:nth-child(3) { background-position: center 38%; }
-.docs-announcement-glass > span:nth-child(4) { background-position: center 78%; transform: scaleX(-1); }
-.docs-announcement-glass > span:nth-child(5) { background-position: center 50%; }
-.docs-nav-frame [data-announcement]::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: radial-gradient(ellipse 34% 90% at 50% 36%, rgb(255 255 255 / 30%), transparent),
-    linear-gradient(180deg, rgb(255 255 255 / 28%), transparent 45%);
-}
 .docs-nav-frame [data-announcement] > a {
   display: block;
   height: 100%;
   width: 100%;
-  color: #000;
+  color: #fff;
   background: transparent;
 }
 .docs-nav-frame [data-announcement] > a > span:first-child {
@@ -132,16 +103,13 @@ html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { d
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  height: 20px;
-  padding-inline: 8px;
-  border-radius: 999px;
-  background: #000;
+  background: transparent;
   color: #fff;
-  font: 400 12px/18px Inter, Arial, sans-serif;
+  font: 400 14px/20px var(--font-sans);
 }
 .docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(2) {
-  color: #000;
-  font: 400 14px/20px Inter, Arial, sans-serif;
+  color: #fff;
+  font: 400 14px/20px var(--font-sans);
   white-space: nowrap;
 }
 .docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(3) {
@@ -149,19 +117,16 @@ html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { d
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-  padding: 5px 12px;
-  border-radius: 999px;
-  background: #fff;
-  color: #000;
-  font: 400 13px/20px Inter, Arial, sans-serif;
-  box-shadow: var(--docs-control-shadow);
+  background: transparent;
+  color: #fff;
+  font: 400 14px/20px var(--font-sans);
   white-space: nowrap;
 }
-.docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(3) svg { display: none; }
+.docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(3) svg { display: block; width: 16px; height: 16px; }
 .docs-nav-frame [data-announcement] > button {
   position: absolute;
-  /* Center in marketing's visible 44px announcement contribution. */
-  top: 22px;
+  /* Center in the compact docs announcement. */
+  top: 50%;
   right: 16px;
   display: inline-flex;
   align-items: center;
@@ -169,31 +134,16 @@ html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { d
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: transparent;
-  color: #000;
+  color: #fff;
   cursor: pointer;
 }
-.docs-nav-frame [data-announcement] > button:hover { background: rgb(255 255 255 / 35%); }
+.docs-nav-frame [data-announcement] > button:hover { background: #333; }
 .docs-nav-frame [data-announcement] > a:focus-visible,
-.docs-nav-frame [data-announcement] > button:focus-visible { outline: 2px solid #000; }
+.docs-nav-frame [data-announcement] > button:focus-visible { outline: 2px solid #fff; }
 .docs-nav-frame [data-announcement] > a:focus-visible { outline-offset: -4px; }
 .docs-nav-frame [data-announcement] > button:focus-visible { outline-offset: 2px; }
-@keyframes docs-announcement-glass-drift {
-  from { transform: translate3d(-5%, 0, 0) scale(1.04); }
-  to { transform: translate3d(5%, 0, 0) scale(1); }
-}
-@media (max-width: 1279px) {
-  html .docs-nav-frame:has(.docs-navbar-menu[open]) > .docs-navbar-header {
-    border-radius: 0;
-  }
-}
-@media (max-width: 960px) {
-  html:not([data-announcement-dismissed='true']):has(.docs-nav-frame [data-announcement]) { --docs-header-height: 104px; }
-  .docs-nav-frame [data-announcement] { height: 64px; padding-bottom: 24px; }
-  html:not([data-announcement-dismissed='true']) .docs-nav-frame:has([data-announcement]) > .docs-navbar-header { margin-top: -24px; }
-  .docs-nav-frame [data-announcement] > button { top: 20px; }
-}
 @media (max-width: 640px) {
   .docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(3) { display: none; }
   .docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(2) {
@@ -212,7 +162,6 @@ html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { d
   .docs-nav-frame [data-announcement] > button { right: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .docs-nav-frame .docs-announcement-glass { animation: none; will-change: auto; }
   .docs-nav-frame > .docs-navbar-header,
   .docs-navbar-mobile-link { transition: none; }
 }
@@ -221,3 +170,36 @@ html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { d
 .docs-nav-frame [data-announcement] .announcement-shimmer { animation: none; background: none; -webkit-text-fill-color: currentColor; }
 .docs-nav-frame [data-announcement] .announcement-shimmer::after { content: none; }
 .docs-nav-frame [data-announcement] > a:hover { background: transparent; }
+.docs-nav-frame [data-announcement] > a:is(:hover, :focus-visible) > span:first-child > span:nth-child(3) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 640px) {
+  .docs-nav-frame [data-announcement] > a:is(:hover, :focus-visible) .announcement-shimmer {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+/* Local hooks style shared controls without duplicating their implementation. */
+.docs-navbar-link, .docs-navbar-github, .docs-navbar-menu > summary {
+  border-radius: var(--docs-control-radius);
+}
+.docs-navbar-github {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding-inline: 16px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: 525 14px/20px var(--font-heading);
+  text-decoration: none;
+  transition: background-color 150ms ease;
+}
+.docs-navbar-github:hover { background: var(--primary-hover); }
+.docs-navbar-github:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .docs-navbar-github { transition: none; }
+}

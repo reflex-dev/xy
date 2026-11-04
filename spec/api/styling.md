@@ -360,7 +360,9 @@ remeasurement, resize, and streaming changes to outside-legend placement, so
 all three paths update the canvas and positioned chrome together. Connected
 charts also remeasure these gutters on `refreshTheme()` and automatic theme
 changes: revealing an axis title or tick paint reserves its room, and hiding
-it releases that room before the refreshed frame is drawn.
+it releases that room before the refreshed frame is drawn. Relative slot font
+sizes are resolved again before this measurement, so a theme font change and
+a paint-visibility change share the same refreshed layout.
 
 ### Plot rectangle and chrome reservations
 
