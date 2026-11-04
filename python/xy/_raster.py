@@ -1378,7 +1378,9 @@ def render_raster(
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
         for side in _axis_tick_label_sides(axis, is_x=is_x):
             side_axis = {**axis, "side": side}
-            side_items = _axis_tick_label_layout(side_axis, values, step, axis_scale, is_x)
+            side_items = _axis_tick_label_layout(
+                side_axis, values, step, axis_scale, is_x, font_size
+            )
             # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
             # The bottom gap is 15 here against the SVG exporter's 16: that 1 px has
             # always separated the two and is not this seam's to change.

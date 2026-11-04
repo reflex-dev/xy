@@ -2976,6 +2976,21 @@ def _tick_label_slot_px(spec: dict[str, Any]) -> Optional[float]:
     return slot_font_size(slot, 0.0) or None if "font-size" in slot else None
 
 
+def _is_vertical_category_axis(axis: dict[str, Any], is_x: bool) -> bool:
+    """A Cartesian vertical category axis: one-line labels at the painted size.
+
+    Polar category theta keeps one spoke per category, and a polar radial axis
+    (it always carries `hole`) keeps the numeric density: its labels ride a
+    spoke, not a vertical edge.
+    """
+    return (
+        not is_x
+        and axis.get("kind") == "category"
+        and axis.get("theta_unit") is None
+        and axis.get("hole") is None
+    )
+
+
 def axis_ticks(
     axis: dict[str, Any],
     length_px: float,
@@ -3010,14 +3025,7 @@ def axis_ticks(
         categories = axis.get("categories") or []
         if axis.get("theta_unit") is not None and requested is None:
             target = len(categories)
-        elif (
-            not is_x
-            and not authored
-            and axis.get("theta_unit") is None
-            # A polar radial axis (it always carries `hole`) keeps the
-            # numeric density: its labels ride a spoke, not a vertical edge.
-            and axis.get("hole") is None
-        ):
+        elif not authored and _is_vertical_category_axis(axis, is_x):
             # Unauthored vertical category axis: label every row that fits a
             # line of text, not one per numeric-tick spacing. The larger of the
             # axis's own and the `tick_label` slot's font size, because the
@@ -3158,6 +3166,7 @@ def _axis_tick_label_layout(
     step: float,
     scale: _Scale,
     is_x: bool,
+    painted_font_px: Optional[float] = None,
 ) -> list[dict[str, Any]]:
     """Port ChartView._layoutTickLabels for deterministic static chrome."""
     strategy = _axis_tick_label_strategy(axis)
@@ -3165,6 +3174,10 @@ def _axis_tick_label_layout(
         return []
 
     font_size = _axis_tick_font_size(axis)
+    if _is_vertical_category_axis(axis, is_x):
+        # Collide at the painted size, the size the one-line target used: a
+        # 24 px `tick_label` slot measured at 11 px let two-line labels overlap.
+        font_size = max(font_size, float(painted_font_px or 0.0))
     min_gap = float(axis.get("tick_label_min_gap", 8 if is_x else 4))
     raw_angle = axis.get("tick_label_angle")
     explicit_angle = float(raw_angle) if raw_angle is not None else None
@@ -4047,7 +4060,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 )
             else:
                 label_offset = _axis_tick_label_offset(axis, 8.0)
-            for item in _axis_tick_label_layout(side_axis, values, step, axis_scale, is_x):
+            for item in _axis_tick_label_layout(
+                side_axis, values, step, axis_scale, is_x, font_size
+            ):
                 angle = float(item["angle"])
                 block = _textblock.measure(item["text"], font_size)
                 if is_x:

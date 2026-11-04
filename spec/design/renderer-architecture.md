@@ -377,6 +377,17 @@ dashboard height lost every other row. Horizontal category axes keep the
 one spoke per category; and a polar radial category axis (identified by its
 `hole` field, or `coords: "polar"` in the client) keeps the numeric density.
 
+The target assumes one-line labels, so the collision pass that follows
+(`_layoutTickLabels` / `_axis_tick_label_layout`) is the safety net for
+multi-line or rotated ones. On a vertical category axis it measures at the same
+painted size as the target (`_verticalCategoryLabelFont` /
+`_is_vertical_category_axis`), not at the axis's 11 px default. Measuring 24 px
+two-line labels at 11 px let ten of them overlap where five fit. The client
+resolves the slot size to the px it paints: `_cssFontPx` reads non-px units
+(`2rem`, `1.5em`) through a probe element in the chart root, because
+`parseFloat("2rem")` is 2. The static exporters accept px only. Any other unit
+falls back to the axis size there, which is also the size they paint.
+
 **Time.** Time axes carry epoch milliseconds. `timeTicks` picks the first
 member of `TIME_STEPS` — a fixed ladder of 1/2/5/10/20/50/100/200/500 ms, then
 second, minute, hour, day multiples up to 14 days — that is at least the rough

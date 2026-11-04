@@ -14,6 +14,7 @@ turns that into a failure.
 
 from __future__ import annotations
 
+import itertools
 import os
 import sys
 import tempfile
@@ -311,3 +312,86 @@ def test_browser_polar_radial_category_axis_keeps_numeric_density() -> None:
     assert spec["coords"] == "polar" and spec["axes"]["y"]["kind"] == "category"
     payload = _probe(chart, _RADIAL_TARGET_PROBE, "data-xy-radial-target", "polar_radial_target")
     assert payload["target"] == payload["numeric"], payload
+
+
+# --- review findings: painted label size (PR 545) ------------------------------------
+
+_LABEL_BOX_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const boxes = [...document.querySelectorAll('[data-xy-label-kind="tick"][data-xy-axis="y"]')]
+      .filter((node) => node.textContent && getComputedStyle(node).display !== "none")
+      .map((node) => node.getBoundingClientRect())
+      .map((box) => [box.top, box.bottom])
+      .sort((a, b) => a[0] - b[0]);
+    let overlap = 0;
+    for (let i = 1; i < boxes.length; i += 1) overlap = Math.max(overlap, boxes[i - 1][1] - boxes[i][0]);
+    document.body.setAttribute("data-xy-label-boxes", JSON.stringify({ count: boxes.length, overlap }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-label-boxes-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+TWO_LINE = [chr(65 + i) + "\nX" for i in range(10)]
+
+
+def _two_line_chart():
+    return xy.chart(
+        xy.bar(TWO_LINE, [5.0] * len(TWO_LINE), orientation="horizontal"),
+        width=900,
+        height=500,
+        styles={"tick_label": {"font_size": "24px"}},
+    )
+
+
+def test_browser_rem_slot_font_does_not_overlap_category_labels() -> None:
+    # `2rem` paints 32 px labels; the target must not read it as 2 px.
+    chart = xy.chart(
+        xy.bar(list("ABCDEF"), [5.0] * 6, orientation="horizontal"),
+        width=900,
+        height=180,
+        styles={"tick_label": {"font_size": "2rem"}},
+    )
+    payload = _probe(chart, _LABEL_BOX_PROBE, "data-xy-label-boxes", "rem_labels")
+    assert payload["count"] >= 1 and payload["overlap"] <= 0.5, payload
+
+
+def test_browser_multiline_category_labels_collide_at_the_painted_size() -> None:
+    payload = _probe(_two_line_chart(), _LABEL_BOX_PROBE, "data-xy-label-boxes", "two_line_labels")
+    assert payload["count"] >= 1 and payload["overlap"] <= 0.5, payload
+
+
+def test_static_multiline_category_labels_collide_at_the_painted_size() -> None:
+    import re
+
+    svg = _two_line_chart().to_svg()
+    anchors = sorted(
+        float(m.group(1))
+        for m in re.finditer(r'<text x="[^"]+" y="([^"]+)"[^>]*><tspan[^>]*>[A-J]</tspan>', svg)
+    )
+    assert len(anchors) >= 1
+    block = 2 * 24 * 1.2  # two lines at the painted 24 px
+    gaps = [b - a for a, b in itertools.pairwise(anchors)]
+    assert not gaps or min(gaps) >= block, (len(anchors), gaps[:3])
+
+
+def test_browser_title_clamp_holds_for_a_fractional_title_width() -> None:
+    # `offsetWidth` rounds; a title whose painted width has a fraction must
+    # still end on the canvas. A fractional letter-spacing forces one.
+    names = [f"Regional distribution centre {i}" for i in range(4)]
+    chart = xy.chart(
+        xy.bar(names, [3.0, 5.0, 2.0, 4.0], orientation="horizontal"),
+        title="Quarterly fulfilment overview report",
+        width=320,
+        height=220,
+        styles={"title": {"letter-spacing": "0.0371px"}},
+    )
+    payload = _probe(chart, _TITLE_BOUNDS_PROBE, "data-xy-title-bounds", "title_fraction")
+    assert payload["right"] >= 0 and payload["left"] >= 0, payload

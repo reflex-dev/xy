@@ -166,6 +166,8 @@ Eight properties this pins down, each of which has matching coverage:
   reserved and lost its first line above the canvas. Because a measured left gutter can move the plot's
   centre right of the canvas centre, the client then clamps the measured box
   inside the canvas (it is never wider than the canvas, so this only shifts it).
+  The clamp adds 1 px to `offsetWidth`, which rounds to whole px: a
+  237.08 px title clamped as 237 px ended 0.08 px past the edge.
 - **A partial sector owns its bounding box.** Full turns retain the centred
   circle above. For a partial turn, layout finds the bounds of the visible
   outer arc plus inner boundary and scales/translates that shape to the plot

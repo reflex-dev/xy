@@ -1082,7 +1082,9 @@ export class ChartView {
       // canvas centre, and the title (sized at the authored gutters' wrap
       // width) can then cross the right edge. Keep the box on the canvas: it
       // is never wider than the canvas, so this only shifts it.
-      const boxW = title.isConnected ? title.offsetWidth : 0;
+      // `offsetWidth` rounds to whole px; a 237.08 px title clamped as 237
+      // ended 0.08 px past the edge. One px up covers any rounding.
+      const boxW = title.isConnected ? title.offsetWidth + 1 : 0;
       if (boxW > 0) {
         const shift = loc === "left" ? 0 : loc === "right" ? 1 : 0.5;
         const leftEdge = Math.min(Math.max(x - shift * boxW, 0), Math.max(0, this.size.w - boxW));
@@ -1161,8 +1163,45 @@ export class ChartView {
     const decls = styles && styles[slot];
     // Slot styles keep the caller's spelling (`chrome_styles`), so read each.
     const value = decls && (decls["font-size"] ?? decls.font_size ?? decls.fontSize);
-    const parsed = parseFloat(String(value ?? ""));
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    const px = this._cssFontPx(value);
+    return Number.isFinite(px) && px > 0 ? px : fallback;
+  }
+
+  // A CSS font-size in px, as the browser paints it. `parseFloat("2rem")` is
+  // 2, not 32, so any unit but px resolves through a probe element styled
+  // the same way inside the chart root (em/% then resolve as they do there).
+  _cssFontPx(value) {
+    if (value === null || value === undefined || value === "") return NaN;
+    if (typeof value === "number") return value;
+    const text = String(value).trim();
+    if (/^-?[\d.]+(px)?$/i.test(text)) return parseFloat(text);
+    const cache = this._cssFontPxCache || (this._cssFontPxCache = new Map());
+    if (cache.has(text)) return cache.get(text);
+    let px = NaN;
+    if (this.root && this.root.isConnected) {
+      const probe = document.createElement("span");
+      probe.style.position = "absolute";
+      probe.style.visibility = "hidden";
+      probe.style.fontSize = text;
+      this.root.appendChild(probe);
+      px = parseFloat(getComputedStyle(probe).fontSize);
+      probe.remove();
+      cache.set(text, px);
+    }
+    return px;
+  }
+
+  // The size a Cartesian vertical category axis paints its labels at, or
+  // null for every other axis: the larger of the axis's own size and the
+  // `tick_label` slot's, because the renderers resolve the two in opposite
+  // orders. The one-line target and the collision check both use it.
+  _verticalCategoryLabelFont(axis) {
+    if (!axis || axis.kind !== "category" || axis.theta_unit || this.spec?.coords === "polar") return null;
+    return Math.max(
+      8,
+      this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
+      this._slotFontSize("tick_label", 0),
+    );
   }
 
   _xAxisRoom(side, plotWidth) {
@@ -1511,17 +1550,9 @@ export class ChartView {
   // authored tick_count still wins (`_axisTickTarget`). Mirrors the vertical
   // category branch of `axis_ticks` in python/xy/_svg.py.
   _yTickTarget(axisId, h) {
-    const axis = this._axis(axisId);
     // A polar radial axis keeps the numeric density: its labels ride a spoke.
-    if (axis && axis.kind === "category" && !axis.theta_unit && this.spec?.coords !== "polar") {
-      // The larger of the axis's own and the `tick_label` slot's font size:
-      // the renderers resolve the two in opposite orders, and the pitch must
-      // fit whichever one is painted.
-      const size = Math.max(
-        8,
-        this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
-        this._slotFontSize("tick_label", 0),
-      );
+    const size = this._verticalCategoryLabelFont(this._axis(axisId));
+    if (size !== null) {
       // Floor of one: a row too short for three labels shows one. At most
       // 200, so a tall axis strides its labels across every row rather than
       // `categoryTicks` cutting the list off after the 200th.
@@ -7724,7 +7755,10 @@ export class ChartView {
       const angle = this._axisTickLabelAngle(axis);
       return labels.map((label) => ({ ...label, angle: angle === null ? 0 : angle, row: 0 }));
     }
-    const fontSize = Math.max(
+    // A vertical category axis collides at its painted size, the size its
+    // one-line target used; every other axis keeps the axis size.
+    const categoryFont = dim === "y" ? this._verticalCategoryLabelFont(axis) : null;
+    const fontSize = categoryFont ?? Math.max(
       8,
       this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
     );
