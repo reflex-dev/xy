@@ -186,6 +186,7 @@ export const XY_CHROME_CSS = `
 :where(.xy [data-xy-selection-lasso-handle]){fill:var(--chart-bg,#fff);stroke:var(--chart-selection,var(--xy-selection));stroke-width:1.5;cursor:grab;pointer-events:all}
 :where(.xy [data-xy-selection-lasso-handle][data-xy-active]){cursor:grabbing;fill:var(--chart-selection,var(--xy-selection))}
 :where(.xy [data-xy-slot="crosshair_x"],.xy [data-xy-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
+:where(.xy [data-xy-slot="tooltip_cursor"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.xy [data-xy-slot="axis_band"]){cursor:var(--xy-axis-band-cursor)}
 :where(.xy [data-xy-slot="axis_line"],.xy [data-xy-slot="tick_mark"]){width:var(--xy-axis-rule-width);height:var(--xy-axis-rule-height);background:var(--xy-axis-rule-paint)}
 :where(.xy [data-xy-slot="tick_label"]){color:var(--chart-text,inherit)}

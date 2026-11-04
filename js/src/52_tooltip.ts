@@ -1,12 +1,29 @@
-import { fmtCategory, fmtNumberSpec, fmtValue } from "./30_ticks";
+import {
+  defaultTimeFormat, fmtCategory, fmtNumberSpec, fmtTimeSpec, fmtValue, isTimeFormat,
+} from "./30_ticks";
 import { ChartView } from "./50_chartview";
 
 // ChartView tooltip resolution: map a hovered vertex back to its source
 // row, denormalize units, and compose the tooltip lines/DOM. Split out of
 // 50_chartview.js; augments the prototype so `this.*` is unchanged.
 
+// Row keys that are channels rather than source columns. A value found under
+// one of these is already positional; anything else reached the row as a copied
+// source column and resolves its channel through `aliases`.
+const TOOLTIP_CHANNELS = new Set([
+  "x", "y", "color_value", "color_category", "size_value",
+]);
+
+// Short names the docs give these channels in `labels=`/`format=`.
+const TOOLTIP_CHANNEL_ALIASES = {
+  color_value: "color",
+  color_category: "color",
+  size_value: "size",
+};
+
 Object.assign(ChartView.prototype, {
   _showTooltip(hit, clientX, clientY) {
+    this._clearBandHover();
     const row = this._localRow(hit);
     this._lastRow = row;
     this._setTooltipAnchor(hit, row, clientX, clientY);
@@ -192,6 +209,57 @@ Object.assign(ChartView.prototype, {
     return lo + v * (hi - lo);
   },
 
+  // The authored column name that names this trace's `channel`. `format=` and
+  // `labels=` are keyed by the user's column names; rows are keyed by channel.
+  // `sources` carries the per-TRACE mapping, so two series binding different
+  // columns to y keep their own formats — the figure-level `aliases` map
+  // cannot tell them apart.
+  _tooltipFieldFor(traceId, channel) {
+    const sources = (this.spec.tooltip && this.spec.tooltip.sources) || {};
+    for (const [field, entries] of Object.entries(sources)) {
+      if (!Array.isArray(entries)) continue;
+      if (entries.some((e) => e && e.trace === traceId && e.channel === channel)) return field;
+    }
+    return null;
+  },
+
+  // The channel a field is bound to ON THIS TRACE. `aliases` is figure-level
+  // and `setdefault`-built, so it keeps only the FIRST binding: a column used
+  // as x by one trace and y by another resolved to the wrong axis on the
+  // second, and with it the wrong channel-keyed format, the wrong axis format
+  // and the wrong visible span. `sources` carries the per-trace truth;
+  // `aliases` stays the fallback for fields it does not list.
+  _tooltipChannelFor(traceId, field) {
+    const sources = (this.spec.tooltip && this.spec.tooltip.sources) || {};
+    const entries = sources[field];
+    if (!Array.isArray(entries)) return null;
+    const match = entries.find((e) => e && e.trace === traceId);
+    return (match && match.channel) || null;
+  },
+
+  // `format=` for a listed field: the author's own key wins, then the channel
+  // it is bound to, so `format={"x": ...}` and `format={"time": ...}` are both
+  // honored however the field was named in `fields=`/`title=`.
+  _tooltipFormatFor(formats, field, channel, traceId) {
+    if (field !== undefined && formats[field] !== undefined) return formats[field];
+    return this._tooltipChannelFormat(formats, channel, traceId);
+  },
+
+  // `format=` for a value known only by its channel. The channel key wins when
+  // the author used one (`format={"x": ...}`), then the column name bound to
+  // that channel — without this, `format={"time": ...}` was accepted, shipped,
+  // and then ignored by every path that looks a value up by channel.
+  _tooltipChannelFormat(formats, channel, traceId) {
+    if (formats[channel] !== undefined) return formats[channel];
+    // The short channel names `labels=` documents for direct array channels
+    // ("color", "size") name the same value here, so the two maps stay one
+    // vocabulary.
+    const short = TOOLTIP_CHANNEL_ALIASES[channel];
+    if (short !== undefined && formats[short] !== undefined) return formats[short];
+    const field = this._tooltipFieldFor(traceId, channel);
+    return field === null ? undefined : formats[field];
+  },
+
   _defaultTooltipLabel(channel, fallback, labels, aliases) {
     for (const [field, alias] of Object.entries(aliases)) {
       if (alias === channel && typeof labels[field] === "string") {
@@ -303,7 +371,7 @@ Object.assign(ChartView.prototype, {
     return (own / total) * 100;
   },
 
-  _defaultTooltipItems(row, labels = {}, aliases = {}) {
+  _defaultTooltipItems(row, labels = {}, aliases = {}, formats = {}) {
     const items = [];
     if (row.source !== undefined && row.target !== undefined) {
       items.push({ kind: "title", value: `${String(row.source)} → ${String(row.target)}` });
@@ -381,13 +449,24 @@ Object.assign(ChartView.prototype, {
     if (row.x !== undefined) {
       const polar = this._polarTooltipField("x", row.x, row.x_kind);
       const { label, customized } = this._defaultTooltipLabel("x", "x", labels, aliases);
+      // A polar angle reads as its authored spoke label ("North"), not as the
+      // radians behind it, so the polar text stays the default. An explicit
+      // `format=` is an instruction about THIS channel, though, and overrides
+      // it — otherwise `format={"x": ...}` was accepted and silently dropped.
+      const polarFormat = polar
+        ? this._tooltipChannelFormat(formats, "x", row.trace)
+        : undefined;
       // A numeric polar angle only appears when the user asked for the row
       // by naming it (`labels={"x": ...}`); authored spoke labels always show.
       if (!polar || !polar.omit || customized) {
         items.push({
           kind: "field",
           label: polar && !customized ? polar.label : label,
-          value: polar ? polar.value : fmtValue(row.x, row.x_kind),
+          value: polar && polarFormat === undefined ? polar.value : this._formatTooltipValue(
+            row.x, row.x_kind,
+            polar ? polarFormat : this._tooltipChannelFormat(formats, "x", row.trace),
+            { channel: "x", row },
+          ),
         });
       }
     }
@@ -397,14 +476,24 @@ Object.assign(ChartView.prototype, {
       items.push({
         kind: "field",
         label: polar && !customized ? polar.label : label,
-        value: fmtValue(row.y, row.y_kind),
+        value: this._formatTooltipValue(
+          row.y, row.y_kind,
+          this._tooltipChannelFormat(formats, "y", row.trace), { channel: "y", row },
+        ),
       });
     }
     if (row.color_value !== undefined) {
       const { label } = this._defaultTooltipLabel(
         "color_value", "color", labels, aliases,
       );
-      items.push({ kind: "field", label, value: fmtValue(row.color_value) });
+      items.push({
+        kind: "field",
+        label,
+        value: this._formatTooltipValue(
+          row.color_value, undefined,
+          this._tooltipChannelFormat(formats, "color_value", row.trace),
+        ),
+      });
     }
     if (row.color_category !== undefined) {
       const { label, customized } = this._defaultTooltipLabel(
@@ -418,7 +507,14 @@ Object.assign(ChartView.prototype, {
       const { label } = this._defaultTooltipLabel(
         "size_value", "size", labels, aliases,
       );
-      items.push({ kind: "field", label, value: fmtValue(row.size_value) });
+      items.push({
+        kind: "field",
+        label,
+        value: this._formatTooltipValue(
+          row.size_value, undefined,
+          this._tooltipChannelFormat(formats, "size_value", row.trace),
+        ),
+      });
     }
     if (!items.length) items.push({ kind: "value", value: `#${row.index}` });
     return items;
@@ -437,10 +533,93 @@ Object.assign(ChartView.prototype, {
     const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
     const key = row[field] !== undefined ? field : aliases[field];
     if (!key || row[key] === undefined) return [undefined, undefined];
-    return [row[key], row[`${key}_kind`]];
+    // Third element: the CHANNEL behind the value, which is the only route
+    // back to the axis that says how to format it. Not the key that found the
+    // value: `_applySharedTooltipFields` copies a source column onto the row
+    // under its own name, so the key is usually the column ("time"), while the
+    // axis is reachable only through the channel it is bound to ("x").
+    const channel = (TOOLTIP_CHANNELS.has(key) ? key : null)
+      || this._tooltipChannelFor(row.trace, field)
+      || aliases[field]
+      || null;
+    return [row[key], row[`${key}_kind`], channel];
   },
 
-  _formatTooltipValue(value, kind, format) {
+  // The axis a tooltip field reads its scale from: the hovered trace's own x
+  // or y axis, so a secondary or named axis formats by its own `format=` and
+  // its own visible range. Channels that are not positions (colour, size) have
+  // no axis and resolve to null.
+  _tooltipValueAxis(context) {
+    const channel = context && context.channel;
+    if (channel !== "x" && channel !== "y") return null;
+    const g = this._tooltipContextTrace(context);
+    return this._axis(channel === "x" ? (g && g.xAxis) : (g && g.yAxis));
+  },
+
+  // The gpu trace a tooltip value came from: named outright by a band item,
+  // else looked up from the row's trace id.
+  _tooltipContextTrace(context) {
+    return context.g || (context.row
+      ? this.gpuTraces.find((t) => t.trace.id === context.row.trace)
+      : null);
+  },
+
+  // How finely the hovered series is actually sampled, in ms, so the default
+  // pattern can keep that precision (`defaultTimeFormat`). The gap to the
+  // hovered point's own neighbours is what decides whether its tooltip reads
+  // differently from theirs, and it is O(1); a row with no index to hand falls
+  // back to the column's mean spacing, which is exact for a regular series.
+  _tooltipTimeResolution(context) {
+    const channel = context.channel;
+    const g = this._tooltipContextTrace(context);
+    const cpu = g && g._cpu;
+    const column = cpu && (channel === "x" ? cpu.x : cpu.y);
+    if (!column || column.length < 2) return null;
+    const meta = channel === "x" ? cpu.xMeta || g.xMeta : cpu.yMeta || g.yMeta;
+    const at = (i) => this._decodeValue(column, meta, i);
+    const idx = context.row && Number.isInteger(context.row.index) ? context.row.index : -1;
+    if (idx >= 0 && idx < column.length) {
+      let gap = Infinity;
+      if (idx > 0) gap = Math.min(gap, Math.abs(at(idx) - at(idx - 1)));
+      if (idx + 1 < column.length) gap = Math.min(gap, Math.abs(at(idx + 1) - at(idx)));
+      if (Number.isFinite(gap) && gap > 0) return gap;
+    }
+    // No index to hand (a band title names a slot, not a row): the mean
+    // spacing, which is the exact gap for the regular series this matters for.
+    const total = Math.abs(at(column.length - 1) - at(0));
+    return total > 0 ? total / (column.length - 1) : null;
+  },
+
+  // strftime pattern for a time-kinded tooltip value with no authored
+  // `format=`: the axis's own `format=` first, so the tooltip and the tick
+  // labels under it read the same, then the default resolved from the span in
+  // view and the series' own sampling (§7.4).
+  _tooltipTimeFormat(context) {
+    const axis = this._tooltipValueAxis(context);
+    if (!axis) return null;
+    if (isTimeFormat(axis.format)) return axis.format;
+    const [lo, hi] = this._axisRange(axis.id);
+    return defaultTimeFormat(Math.abs(hi - lo), this._tooltipTimeResolution(context));
+  },
+
+  // One grammar for every tooltip value: a strftime `format=` on a time value,
+  // else the numeric spec, else the kind's plain text. A time value with no
+  // strftime format still resolves one from its axis (`_tooltipTimeFormat`),
+  // which is why `context` travels with every call — without it a table-backed
+  // datetime fell through to the raw ISO string no `format=` could reach.
+  _formatTooltipValue(value, kind, format, context?) {
+    if (kind === "time_ms") {
+      // An authored `format=` always wins, whichever grammar it is written in:
+      // a strftime pattern resolves here, a numeric spec falls through to the
+      // number path below (`format={"time": ",.0f"}` means epoch milliseconds,
+      // as a number). Only a value with nothing authored on it inherits the
+      // axis/span default.
+      const spec = isTimeFormat(format) ? format
+        : typeof format === "string" ? null
+          : this._tooltipTimeFormat(context);
+      const text = spec === null || spec === undefined ? null : fmtTimeSpec(value, spec);
+      if (text !== null) return text;
+    }
     const formatted = fmtNumberSpec(value, format);
     if (formatted !== null) return formatted;
     return fmtValue(value, kind);
@@ -450,36 +629,42 @@ Object.assign(ChartView.prototype, {
     const tooltip = this.spec.tooltip || {};
     const labels = tooltip.labels || {};
     const aliases = tooltip.aliases || {};
-    if (!tooltip.title && !Array.isArray(tooltip.fields)) {
-      return this._defaultTooltipItems(row, labels, aliases);
-    }
     const formats = tooltip.format || {};
+    if (!tooltip.title && !Array.isArray(tooltip.fields)) {
+      return this._defaultTooltipItems(row, labels, aliases, formats);
+    }
     const items = [];
     if (typeof tooltip.title === "string") {
       const title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
-        const [value, kind] = this._tooltipLookup(row, field);
-        return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
+        const [value, kind, channel] = this._tooltipLookup(row, field);
+        return value === undefined ? "" : this._formatTooltipValue(
+          value, kind, this._tooltipFormatFor(formats, field, channel, row.trace),
+          { channel, row },
+        );
       });
       if (title) items.push({ kind: "title", value: title });
     }
     if (Array.isArray(tooltip.fields)) {
       for (const field of tooltip.fields) {
         if (typeof field !== "string") continue;
-        const [value, kind] = this._tooltipLookup(row, field);
+        const [value, kind, channel] = this._tooltipLookup(row, field);
         if (value === undefined) continue;
         items.push({
           kind: "field",
           label: typeof labels[field] === "string" ? labels[field] : field,
-          value: this._formatTooltipValue(value, kind, formats[field]),
+          value: this._formatTooltipValue(
+            value, kind, this._tooltipFormatFor(formats, field, channel, row.trace),
+            { channel, row },
+          ),
         });
       }
     }
-    return items.length ? items : this._defaultTooltipItems(row, labels, aliases);
+    return items.length ? items : this._defaultTooltipItems(row, labels, aliases, formats);
   },
 
   _tooltipLines(items) {
     return items.map((item) => (
-      item.kind === "field" ? `${item.label}: ${item.value}` : item.value
+      item.kind === "field" || item.kind === "series" ? `${item.label}: ${item.value}` : item.value
     ));
   },
 
@@ -492,10 +677,13 @@ Object.assign(ChartView.prototype, {
         row.textContent = item.value;
       } else {
         this._applySlot(row, "tooltip_row");
-        if (item.kind === "field") {
+        if (item.kind === "field" || item.kind === "series") {
           const label = document.createElement("span");
           this._applySlot(label, "tooltip_label");
           label.textContent = item.label;
+          // A band row names a series; painting the name in the series
+          // colour is the swatch (renderer-owned state, inline like hover).
+          if (item.kind === "series" && item.color) label.style.color = item.color;
           row.appendChild(label);
         }
         const value = document.createElement("span");
@@ -545,6 +733,279 @@ Object.assign(ChartView.prototype, {
   _hideTooltip() {
     this.tooltip.style.display = "none";
     this._tooltipAnchor = null;
+    this._clearBandHover();
+  },
+
+  // -- shared-axis bands (interaction spec §7.3) ------------------------------
+
+  _clearBandHover() {
+    // Outstanding band picks are being abandoned. Their seqs were drawn from
+    // `_pickSeq`, and the last one still equals it, so a reply arriving after
+    // this would pass the single-pick guard and render as an ordinary point
+    // readout. Advance past them.
+    if (this._bandPicks && this._bandPicks.size) this._pickSeq = (this._pickSeq || 0) + 1;
+    this._bandKey = null;
+    this._hoverTargets = null;
+    this._bandRows = null;
+    this._bandCursor = null;
+    this._bandTitleValue = undefined;
+    if (this._bandPicks) this._bandPicks.clear();
+    this._hideTooltipCursor();
+  },
+
+  _ensureTooltipCursor() {
+    if (this._tooltipCursor) return this._tooltipCursor;
+    const el = document.createElement("div");
+    el.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:3;";
+    this._applySlot(el, "tooltip_cursor");
+    this.root.appendChild(el);
+    this._tooltipCursor = el;
+    return el;
+  },
+
+  // The cursor is anchored in data space like a point tooltip: reprojected on
+  // every draw, hidden when its coordinate leaves the plot.
+  _positionTooltipCursor() {
+    const a = this._bandCursor;
+    if (!a) { this._hideTooltipCursor(); return; }
+    const el = this._ensureTooltipCursor();
+    const [lx, ly] = this._projectDataPoint(a.xAxis, a.yAxis, a.x, a.y);
+    const p = this.plot;
+    let pos = a.dim === "x" ? lx : ly;
+    const lo = a.dim === "x" ? p.x : p.y;
+    const hi = a.dim === "x" ? p.x + p.w : p.y + p.h;
+    if (!Number.isFinite(pos)) { el.style.display = "none"; return; }
+    // A bar joins the band while ANY part of its footprint overlaps the plot
+    // (`_bandCandidate`), so a bar clipped by the edge can be selected with its
+    // category centre outside. The band is real and the pointer is on it, so
+    // mark the part that IS visible rather than dropping the cursor and
+    // leaving the tooltip with nothing locating it. A point band's footprint
+    // is its own coordinate, so this never moves it.
+    // Projected through the axes as they are NOW, not as they were at hover:
+    // the band survives a pan or zoom, and a stale pixel span clamped the
+    // cursor onto a stretch the bar had already left. Each slot is projected
+    // through ITS OWN axes before the union, because a band can hold series on
+    // different ones and their data values do not share a number line.
+    const edge = (v, xAxis, yAxis) => {
+      const [ex, ey] = this._projectDataPoint(
+        xAxis, yAxis, a.dim === "x" ? v : a.x, a.dim === "x" ? a.y : v,
+      );
+      return a.dim === "x" ? ex : ey;
+    };
+    let spanLo = Infinity;
+    let spanHi = -Infinity;
+    for (const s of a.spans || []) {
+      const e0 = edge(s.lo, s.xAxis, s.yAxis);
+      const e1 = edge(s.hi, s.xAxis, s.yAxis);
+      if (!Number.isFinite(e0) || !Number.isFinite(e1)) continue;
+      spanLo = Math.min(spanLo, e0, e1);
+      spanHi = Math.max(spanHi, e0, e1);
+    }
+    if (
+      Number.isFinite(spanLo) && Number.isFinite(spanHi) && spanHi > spanLo
+      && spanHi >= lo && spanLo <= hi
+    ) {
+      pos = Math.min(Math.max(pos, Math.max(spanLo, lo)), Math.min(spanHi, hi));
+    }
+    if (pos < lo || pos > hi) { el.style.display = "none"; return; }
+    el.style.display = "block";
+    if (a.dim === "x") {
+      el.style.left = `${pos}px`;
+      el.style.top = `${p.y}px`;
+      el.style.width = "1px";
+      el.style.height = `${p.h}px`;
+    } else {
+      el.style.left = `${p.x}px`;
+      el.style.top = `${pos}px`;
+      el.style.width = `${p.w}px`;
+      el.style.height = "1px";
+    }
+  },
+
+  _hideTooltipCursor() {
+    if (this._tooltipCursor) this._tooltipCursor.style.display = "none";
+  },
+
+  // One title for the band coordinate (or the authored template against the
+  // anchor series' row), then one row per series: its name in its colour and
+  // its value along the other axis — or the authored fields minus the band
+  // field — through the same format grammar as a point tooltip.
+  _bandTooltipItems(rows, hits) {
+    const tooltip = this.spec.tooltip || {};
+    const formats = tooltip.format || {};
+    const along = this._tooltipBandMode() || "x";
+    const across = along === "x" ? "y" : "x";
+    const first = rows[0];
+    const items: any[] = [];
+    let title;
+    if (typeof tooltip.title === "string") {
+      title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
+        const [value, kind, channel] = this._tooltipLookup(first, field);
+        return value === undefined ? "" : this._formatTooltipValue(
+          value, kind, this._tooltipFormatFor(formats, field, channel, first.trace),
+          { channel, row: first },
+        );
+      });
+    } else if (this._bandTitleValue !== undefined && this._bandTitleValue !== null) {
+      // A bar band is titled by its category centre, not the anchor slot; the
+      // centre is an axis coordinate, so it takes the same label lookup as a
+      // row value.
+      const [value, kind] = this._sourceDisplayValue(
+        hits[0] && hits[0].g, along, this._bandTitleValue, first[`${along}_kind`],
+      );
+      title = this._formatTooltipValue(
+        value, kind, this._tooltipChannelFormat(formats, along, first.trace),
+        { channel: along, g: hits[0] && hits[0].g, row: first },
+      );
+    } else if (first[along] !== undefined) {
+      title = this._formatTooltipValue(
+        first[along], first[`${along}_kind`],
+        this._tooltipChannelFormat(formats, along, first.trace),
+        { channel: along, g: hits[0] && hits[0].g, row: first },
+      );
+    }
+    if (title) items.push({ kind: "title", value: title });
+    // `fields=["x"]` in `mode="x"` asks for the band coordinate and nothing
+    // else, which the title already carries — so the rows are names alone.
+    // Filtering first and then testing `.length` read that as "no fields
+    // configured" and fell back to the default `across` value, silently
+    // ignoring the selection. An authored EMPTY list still means unset, as it
+    // does in nearest mode.
+    const authored = Array.isArray(tooltip.fields)
+      ? tooltip.fields.filter((f) => typeof f === "string")
+      : null;
+    const fields = authored && authored.length
+      ? authored.filter((f) => f !== along)
+      : null;
+    rows.forEach((row, i) => {
+      const g = hits[i] && hits[i].g;
+      const name = this._tooltipSeriesName(row) || `series ${i + 1}`;
+      let value;
+      if (fields) {
+        value = fields
+          .map((f) => {
+            const [v, k, channel] = this._tooltipLookup(row, f);
+            return v === undefined ? null : this._formatTooltipValue(
+              v, k, this._tooltipFormatFor(formats, f, channel, row.trace), { channel, g, row },
+            );
+          })
+          .filter((v) => v !== null)
+          .join("  ");
+      } else {
+        const v = row[across];
+        value = v === undefined ? ""
+          : this._formatTooltipValue(
+            v, row[`${across}_kind`],
+            this._tooltipChannelFormat(formats, across, row.trace),
+            { channel: across, g, row },
+          );
+      }
+      items.push({ kind: "series", label: name, value, color: this._seriesColorCss(g) });
+    });
+    return items;
+  },
+
+  // The band tooltip follows the pointer (§7.3): a band has several points,
+  // and the cursor line already marks where it is.
+  _renderBandTooltip(clientX, clientY, options: any = {}) {
+    const rows = this._bandRows;
+    const hits = this._hoverTargets;
+    if (!rows || !rows.length || !hits) {
+      this._hideTooltip();
+      return;
+    }
+    // `show=False` drops the tooltip ELEMENT, not the band (§7.3): the hover
+    // event, the kernel picks and the active dots all still run, which is how
+    // `_hoverBand` already treats it. Clearing the band from here instead —
+    // this method is also called when an exact reply lands — dropped the
+    // remaining `_bandPicks` while their replies were in flight. Those replies
+    // then missed the band map, and the last of them still matched `_pickSeq`,
+    // so it fell into the single-pick handler and dispatched an `exact: true`
+    // hover carrying one series where the band promises all of them.
+    if (this.spec.show_tooltip === false) {
+      this.tooltip.style.display = "none";
+      return;
+    }
+    const items = this._bandTooltipItems(rows, hits);
+    if (!this._customTooltip) this._renderBuiltinTooltip(items);
+    if (this.a11yLive && options.announce !== false) {
+      const announcement = this._tooltipLines(items).join(", ");
+      if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
+    }
+    this.tooltip.style.display = "block";
+    const rect = this.root.getBoundingClientRect();
+    this._placeTooltip(clientX - rect.left, clientY - rect.top);
+  },
+
+  _dispatchBandHover(clientX, clientY, exact) {
+    if (!this._interactionFlag("hover")) return;
+    const rows = this._bandRows;
+    const hits = this._hoverTargets;
+    if (!rows || !hits || !rows.length) return;
+    const points = hits.map((h, i) => this._hoverPoint(rows[i], h));
+    this._dispatchChartEvent("hover", {
+      row: rows[0],
+      trace: hits[0].trace,
+      index: hits[0].index,
+      ...(exact ? { exact: true } : {}),
+      view: this._eventView("hover"),
+      ...this._hoverPayload(rows[0], hits[0], clientX, clientY, exact, points),
+    });
+  },
+
+  // One exact pick per series in the band; replies are matched by seq to
+  // their row (`_applyBandPickResult`), never to the single-pick `_pickSeq`.
+  _requestBandPicks() {
+    if (!this.comm || !this._hoverTargets) return;
+    if (!this._bandPicks) this._bandPicks = new Map();
+    this._bandPicks.clear();
+    this._hoverTargets.forEach((h, i) => {
+      this._pickSeq = (this._pickSeq || 0) + 1;
+      this._bandPicks.set(this._pickSeq, i);
+      this.comm.send({ type: "pick", seq: this._pickSeq, trace: h.trace, index: h.index });
+    });
+  },
+
+  _applyBandPickResult(msg) {
+    const slot = this._bandPicks.get(msg.seq);
+    this._bandPicks.delete(msg.seq);
+    const rows = this._bandRows;
+    if (!rows || slot === undefined || slot >= rows.length) return;
+    // Exact or nothing (§16), as in nearest mode: a reply the kernel could not
+    // resolve, or one whose trace has since gone, means the band no longer
+    // describes the data it was built from. Returning silently left its rows
+    // and cursor on screen describing points that are not there.
+    const rowG = msg.row && this.gpuTraces.find((t) => t.trace.id === msg.row.trace);
+    if (!msg.row || !rowG) {
+      this._hideTooltip();
+      return;
+    }
+    // A reply is only allowed to replace the row it was requested for. `seq`
+    // alone does not prove that: the map is rebuilt per band, so a late reply
+    // from a previous band could land in a slot that now holds another series.
+    const target = this._hoverTargets && this._hoverTargets[slot];
+    if (!target || msg.row.trace !== target.trace || msg.row.index !== target.index) return;
+    for (const channel of ["x", "y"]) {
+      if (typeof msg.row[channel] !== "number") continue;
+      const [value, kind] = this._sourceDisplayValue(
+        rowG, channel, msg.row[channel], msg.row[`${channel}_kind`],
+      );
+      msg.row[channel] = value;
+      if (kind === undefined) delete msg.row[`${channel}_kind`];
+    }
+    const local = rows[slot];
+    if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
+      for (const [key, value] of Object.entries(local)) {
+        if (msg.row[key] === undefined) msg.row[key] = value;
+      }
+    }
+    rows[slot] = msg.row;
+    // The primary row mirrors the single-pick path's `_lastRow` contract.
+    if (slot === 0) this._lastRow = rows[0];
+    const xy = this._lastHoverXY;
+    if (!xy) return;
+    this._renderBandTooltip(xy.clientX, xy.clientY, { announce: false });
+    if (this._bandPicks.size === 0) this._dispatchBandHover(xy.clientX, xy.clientY, true);
   },
 
   // A hidden retained anchor is off-screen and may return after another draw.

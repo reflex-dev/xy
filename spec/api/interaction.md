@@ -163,7 +163,7 @@ aliases for `ranges.x`/`ranges.y` (`50_chartview.ts`, `_eventView`).
 
 | Event | Detail |
 | --- | --- |
-| `xy:hover` | `{row, trace, index, view}` plus the structured payload `{active: true, cursor: {px, data}, points}` (view-state.md §7.1) — genuinely additive; the kernel's exact-value reply re-dispatches with `exact: true` and a refreshed payload. `cursor.px` is chart-root-relative pixels; `cursor.data` is keyed by **exact axis ID** with one entry per declared axis; each `points[]` entry carries `trace` (series name), `index`, `row`, its `x_axis`/`y_axis` bindings, and the series `color`. |
+| `xy:hover` | `{row, trace, index, view}` plus the structured payload `{active: true, cursor: {px, data}, points}` (view-state.md §7.1) — genuinely additive; the kernel's exact-value reply re-dispatches with `exact: true` and a refreshed payload. `cursor.px` is chart-root-relative pixels; `cursor.data` is keyed by **exact axis ID** with one entry per declared axis; each `points[]` entry carries `trace` (series name), `index`, `row`, its `x_axis`/`y_axis` bindings, and the series `color`. Under `xy.tooltip(mode="x"\|"y")` (§7.3) `points[]` holds one entry per series in the band and `row`/`trace`/`index` describe the first. |
 | `xy:leave` | `{view, active: false}` with `source: "leave"`. Dispatched by canvas pointer exit and by a document-level missed-leave backstop: browsers skip boundary events when the element under a stationary cursor changes (page scroll, hit-test churn), so while a pointer-owned readout is live, a `pointerover` whose target left the chart root runs the same exit path (`53_interaction.ts` `_pointerHoverExit`). Keyboard readouts are exempt — they survive mouse movement elsewhere and are dismissed by `Escape`. |
 | `xy:click` | `{x, y, view, row, trace, index}`; `row`/`trace`/`index` are `null` when the click hit no mark. |
 | `xy:brush` | `{range: {x0, x1, y0, y1}, view}` for box/axis-range drags, or `{polygon: [[x, y], …], view}` for lasso. |
@@ -397,6 +397,169 @@ The hover tooltip is anchored in data space, not at the cursor
 - Keyboard traversal can focus a point outside the current view; its readout
   keeps the edge-clamped placement (the anchor is dropped when its
   projection starts outside the plot rect).
+
+### 7.3 Shared-axis bands (`xy.tooltip(mode="x")`)
+
+`mode="nearest"` (the default) is the behaviour above: the pointer must land
+within 12 px of a mark. `mode="x"` (and `mode="y"`) trades that for Recharts'
+axis tooltip and Plotly's `hovermode="x unified"`: only the pointer's
+coordinate along the band axis picks the data, the perpendicular coordinate
+is ignored entirely, and the whole plot height (width) is the hit target.
+Wire: `tooltip.mode`, shipped only when not `"nearest"`.
+
+- Every eligible series snaps to its point nearest the pointer along the
+  band axis (`_nearestCpuIndexAlong`, `50_chartview.ts`); the closest of
+  those to the pointer sets the band, and every series whose snapped point
+  projects to the same coordinate (within 0.5 CSS px — f32 decode noise, not
+  a different x) joins it (`_bandHits`). Index-aligned series therefore read
+  as one band whose boundaries fall halfway between adjacent points; a
+  series with no point at that coordinate is omitted rather than guessed.
+- Eligible series are point, line and area marks with retained CPU columns,
+  and bars. A bar's footprint along its position axis (`pos ± width/2`, in
+  plot pixels) is its band extent: the pointer anywhere over the bar selects
+  it, and bars whose footprints touch chain into one band — so the slots of
+  a grouped category read as one band listing every series, a stacked
+  category as one band of cumulative tops (the same rows nearest mode
+  shows), and two bar calls with a gap between them as two bands. The
+  cursor and the title then sit on the chain's centre — the category — not
+  on the anchor slot, and the title takes the category label lookup. Bars
+  get no active dot: the bar is the mark. Density tiers, rectangles,
+  ribbons, funnels, heatmaps and segments keep their own hover geometry and
+  never join a band; legend-hidden series are out (§10). Polar charts have
+  no band axis and fall back to nearest.
+- The tooltip shows the band coordinate as its title (or the authored
+  `title` template resolved against the anchor series' row), then one row per
+  series in band order: the series name painted in the series colour, then
+  its value along the other axis — or the authored `fields`, minus the band
+  field — through the same `format` grammar. A `fields` list naming only the
+  band field therefore leaves the rows as names alone: the title already
+  carries that value, and falling back to the default would ignore the
+  selection. An empty `fields` list still means unset, as in nearest mode. It **follows the pointer**: the
+  one exception to the data-space anchoring above, because a band has several
+  points and the cursor already marks it. The `tooltip_cursor` DOM slot draws
+  that line across the plot at the snapped coordinate, reprojected on every
+  draw exactly as an anchor would be. It hides when the coordinate leaves the
+  plot — except where the band is a bar, which joins while any part of its
+  footprint overlaps: a bar clipped by the plot edge can be selected with its
+  category centre outside, and the cursor is then drawn on the part of the
+  footprint that is visible rather than dropped, so the tooltip is never left
+  with nothing locating it.
+- Every series in the band gets an active dot, drawn from its CPU columns
+  rather than its vertex buffer (a smoothed or stepped line's vertex index is
+  not its data index) in the series colour. Adding it exposed that the
+  nearest-mode highlight dot had stopped rendering at all: the full point
+  program multiplies fill alpha by the per-item `a_style.x` factor, the
+  regular scatter draw moved to the simpler point program that never sets
+  that constant attribute, and `_drawHoverPoint` inherited its default of 0.
+  It now sets every constant attribute and stroke uniform the program reads
+  (`tests/test_tooltip_band.py::test_browser_nearest_hover_highlight_is_visible`).
+- `xy:hover` fires once per band change with `points[]` carrying one entry
+  per series in band order; `row`/`trace`/`index` describe the first. One
+  `pick` goes to the kernel per series; each exact reply replaces its own row
+  and re-renders, and the last one re-dispatches `xy:hover` with
+  `exact: true`.
+- `xy.tooltip(show=False, mode="x")` keeps the hover contract — `xy:hover`
+  with `points[]`, the kernel picks, the active dots — and drops only the
+  tooltip element and the cursor line, as nearest mode drops only the
+  element.
+- The active dots draw through a scratch VAO owned by the view's current GL
+  context. `_initGl` forgets it before rebuilding (a handle from a lost
+  context binds with `INVALID_OPERATION`, and the recovery frame's error
+  check would then reject every restore while a band was up — §18) and
+  `destroy()` deletes it, so a band tooltip neither strands a context
+  restore nor leaks into the shared host
+  (`tests/test_tooltip_band.py::test_browser_band_survives_context_loss_and_destroy`).
+- Keyboard traversal is unchanged: it walks single points, and starting it
+  clears the band. Static exports are unaffected (tooltips are live-only).
+
+Live capture: `spec/assets/tooltip-x-band.png` — the pointer (red ring) far
+above Page B, the band tooltip, the cursor line, and both active dots.
+
+### 7.4 Value formatting (`xy.tooltip(format=...)`)
+
+One grammar resolves the tooltip values `format=` can address — the default
+x/y/colour/size rows, the fields listed in `fields=`, the placeholders in
+`title=`, and a band's title and series rows — in both modes
+(`js/src/52_tooltip.ts`, `_formatTooltipValue`). Composition-specific readouts
+keep their own text and are not `format=`-driven: sankey flow and node totals,
+funnel stage rows, and a categorical colour label, which is a category name
+rather than a value.
+
+- An authored `format=` always wins. A **strftime pattern** (a `%` followed by
+  one of `YmdHMSbB`, the tokens `fmtTimeSpec` replaces) formats a time-kinded
+  value; anything else is the numeric spec. The test is the token, not the `%`,
+  so `format={"yes": ".0%"}` still means percent and `format={"time": ",.0f"}`
+  still means "epoch milliseconds, as a number".
+- `format=` and `labels=` are keyed by the author's **column names**, but rows
+  are keyed by **channel** — a table-backed datetime reaches the row as `x`.
+  Both keys resolve: the channel key first, then the column bound to that
+  channel **on the hovered trace**, read from the `sources` map the payload
+  already carries. Two series binding different columns to `y` therefore keep
+  their own formats. Before this, a format keyed by the column name was
+  accepted, shipped, and then silently ignored by every path that looks a value
+  up by channel — the band title among them.
+- A time value with nothing authored on it resolves a pattern rather than
+  falling through to the ISO stamp: the **axis's own strftime `format=`**
+  first, so a tooltip and the tick labels under it read alike, then a default
+  resolved from the **visible span** and the hovered series' **own sampling**.
+  Only a strftime axis format is inherited — a numeric one on a time axis is
+  not a pattern this value can be read through — and only a position channel
+  has an axis to inherit from. Colour and size have none, and never reach this
+  path at all: their values ship with no kind, so they are read as numbers and
+  a `format=` on them is the numeric spec.
+
+  The pattern is **composed** from two independent answers, never traded off
+  one against the other. The span answers how much CONTEXT the value carries
+  — whether the year, the date, or neither belongs on it — and sets a baseline
+  clock:
+
+  | span in view | date part | clock |
+  | --- | --- | --- |
+  | ≥ 28 d | `%b %d, %Y` | none |
+  | ≥ 1 min | `%b %d` | `%H:%M` |
+  | ≥ 1 s | none | `%H:%M:%S` |
+  | < 1 s | — | none — the ISO stamp stays, as it is the only form carrying ms |
+
+  The hovered series' sampling then answers how much PRECISION the clock must
+  keep, and can only sharpen it: the clock is the finer of the span's and the
+  coarsest unit that still separates samples a `resolution` apart — `%H:%M`
+  from a minute up, `%H:%M:%S` from a second up, and finer than a second there
+  is no strftime token, so the ISO stamp stays. `resolution` is the gap
+  between the hovered point and its neighbours (`_tooltipTimeResolution`,
+  `js/src/52_tooltip.ts`). Every call site carries the hovered row, a band's
+  title and series rows included, so that gap is normally the row's own; a
+  context that reaches the formatter without a row index falls back to the
+  column's mean spacing, exact for the regular series this matters for.
+
+  A tooltip names ONE point, and a pattern that prints the same string for a
+  point and the one beside it names none: ten-second samples in a three-minute
+  window share a minute, hourly samples in a month-wide one share a date, and
+  the span alone cannot know it, because a span says nothing about how close
+  the samples are. The unit comparison is `>=`, so a gap that equals a unit is
+  separated by it — daily samples already differ in date, and a month-wide
+  window of them is not given a clock it has no use for.
+
+  Composing the two is what keeps them independent. Resolving instead by
+  walking down a ladder of whole patterns buys the precision by dropping the
+  date: per-second samples in a month-wide window land on `%H:%M:%S` and name
+  no day at all. Composed, they read `%b %d, %Y, %H:%M:%S`.
+
+  The floor is the resolved default's alone. An authored pattern is used as
+  written, and so is one inherited from the axis — that inheritance exists so
+  a tooltip and the ticks under it read alike, which a silent sharpening would
+  undo. `x_axis(format="%H:%M")` over ten-second samples therefore does
+  collapse neighbouring points, and the answer is to author `%H:%M:%S`.
+
+  The span is the hovered trace's own x/y axis range, so a secondary axis
+  formats by its own view (`defaultTimeFormat`, `js/src/30_ticks.ts`).
+- `format=` alone is enough. It used to reach values only alongside `fields=`
+  or `title=`, because an otherwise-empty tooltip short-circuited to the
+  default rows before formats were read.
+- Formatting is live-only, like the tooltips themselves; static exports are
+  unaffected, and the token set is `fmtTimeSpec`'s, shared with axis labels and
+  mirrored in `python/xy/_svg.py`.
+
+Covered by `tests/test_tooltip_time_format.py`.
 
 ## 8. Unconditional behavior
 
