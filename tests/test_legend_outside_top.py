@@ -439,8 +439,21 @@ def test_band_height_is_capped_so_a_tall_legend_cannot_push_the_plot_off_canvas(
 
 
 def test_band_cap_still_keeps_one_row() -> None:
-    _spec, plot = _layout(_lines(["Revenue", "Gross profit"], width=320, height=60))
-    assert plot["legend_band_h"] > 0
+    # 20 px rows on a 96 px card: the 30 % cap (28.8 px) is under one row, and
+    # the row still shows because the height budget has room for it.
+    months = np.arange(12)
+    chart = xy.line_chart(
+        xy.line(months, months, name="Revenue"),
+        xy.line(months, months + 1, name="Gross profit"),
+        xy.legend(loc="outside top", style={"font-size": "20px"}),
+        width=320,
+        height=96,
+        padding=[0, 0, 0, 0],
+    )
+    _spec, plot = _layout(chart)
+    assert plot["legend_band_h"] > plot["legend_band_cap"], plot
+    assert plot["legend_band_h"] <= plot["legend_band_budget"], plot
+    assert plot["y"] + plot["h"] <= 96 + 1e-6, plot
 
 
 def _hole_chart(width: int, height: int):
@@ -658,3 +671,176 @@ def test_band_cap_keeps_one_row_with_a_tall_swatch() -> None:
     }
     box = _svg._legend_layout(named, plot, {"loc": "outside top", "handleheight": 3.0})
     assert box["visible_count"] == 1
+
+
+# --- streamed placement changes (PR 544 review) -------------------------------------
+
+_APPEND_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const before = { band: !!view._legendBand, plotY: view.plot.y };
+    const buffers = window.__xyAppendBuffers.map((b64) => {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+      return out.buffer;
+    });
+    view._applyAppend(window.__xyAppendMsg, buffers);
+    view._drawNow();
+    view._raf = null;
+    const legend = view.root.querySelector('[data-xy-legend-band="top"]');
+    const canvas = view.canvas.getBoundingClientRect();
+    document.body.setAttribute("data-xy-append-band", JSON.stringify({
+      before,
+      loc: view.spec.legend && view.spec.legend.loc,
+      band: !!view._legendBand,
+      mounted: !!legend,
+      legends: view.root.querySelectorAll("[data-xy-legend-loc]").length,
+      plotY: view.plot.y,
+      plotH: view.plot.h,
+      legendBottomToCanvasTop: legend ? canvas.top - legend.getBoundingClientRect().bottom : null,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-append-band-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+_PLOT_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    document.body.setAttribute("data-xy-plot-rect", JSON.stringify({
+      band: !!view._legendBand, y: view.plot.y, h: view.plot.h,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-plot-rect-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def _streamed_points():
+    return xy.scatter_chart(
+        xy.scatter([0.5], [0.5], name="Points"),
+        xy.x_axis(domain=(0, 1)),
+        xy.y_axis(domain=(0, 1)),
+        xy.legend(loc="best"),
+        width=600,
+        height=300,
+    )
+
+
+def test_append_that_resolves_outside_top_mounts_the_band() -> None:
+    # An append re-resolves loc="best"; when the new data covers every inside
+    # slot the payload says "outside top", and the mounted chart must move its
+    # legend into the band exactly as a fresh render of the same data does.
+    import base64
+    import json
+
+    from conftest import probe_document
+    from xy.interaction import append_data
+
+    chromium = _chromium()
+    fig = _streamed_points().figure()
+    document = probe_document(fig, _APPEND_PROBE)
+    grid = np.linspace(0.0, 1.0, 30)
+    gx, gy = np.meshgrid(grid, grid)
+    msg, buffers = append_data(fig, fig.traces[0].id, gx.ravel(), gy.ravel())
+    assert msg["spec"]["legend"]["loc"] == "outside top"
+    payload_js = (
+        "<script>window.__xyAppendMsg = "
+        + json.dumps(msg)
+        + "; window.__xyAppendBuffers = "
+        + json.dumps([base64.b64encode(bytes(b)).decode() for b in buffers])
+        + ";</script>"
+    )
+    document = document.replace("<script", payload_js + "<script", 1)
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            chromium,
+            document,
+            Path(td) / "append_band.html",
+            "data-xy-append-band",
+            label="streamed outside-top legend probe",
+        )
+        # The same data rendered fresh (the figure now holds the appended rows).
+        fresh = run_browser_probe(
+            chromium,
+            probe_document(fig, _PLOT_PROBE),
+            Path(td) / "fresh_band.html",
+            "data-xy-plot-rect",
+            label="fresh outside-top legend probe",
+        )
+    assert payload["before"]["band"] is False, payload
+    assert payload["loc"] == "outside top", payload
+    assert payload["band"] and payload["mounted"], payload
+    assert payload["legends"] == 1, payload  # the old in-plot box is gone
+    assert payload["legendBottomToCanvasTop"] >= 0, payload
+    assert fresh["band"], fresh
+    assert payload["plotY"] == pytest.approx(fresh["y"], abs=1), (payload, fresh)
+    assert payload["plotH"] == pytest.approx(fresh["h"], abs=1), (payload, fresh)
+
+
+# --- band budget on short charts (PR 544 review) ----------------------------------
+
+_SHORT_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    const root = view.root.getBoundingClientRect();
+    const canvas = view.canvas.getBoundingClientRect();
+    document.body.setAttribute("data-xy-short-band", JSON.stringify({
+      loc: view.spec.legend && view.spec.legend.loc,
+      band: view._legendBand ? view._legendBand.h : 0,
+      canvasBottomToRootBottom: root.bottom - canvas.bottom,
+      plot: [view.plot.y, view.plot.h],
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-short-band-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+@pytest.mark.parametrize("loc", ["best", "outside top"])
+def test_static_band_never_pushes_the_plot_off_a_short_chart(loc: str) -> None:
+    chart = _lines(REGIONS, width=320, height=100, loc=loc)
+    _spec, plot = _layout(chart)
+    assert plot["y"] + plot["h"] <= 100 + 1e-6, plot
+
+
+def test_best_does_not_fall_back_to_a_band_that_cannot_hold_a_row() -> None:
+    spec, _plot = _layout(_lines(REGIONS, width=320, height=100, loc="best"))
+    assert spec["legend"]["loc"] != "outside top", spec["legend"]
+
+
+@pytest.mark.parametrize("loc", ["best", "outside top"])
+def test_browser_band_never_pushes_the_plot_off_a_short_chart(loc: str) -> None:
+    from conftest import probe_document
+
+    chart = _lines(REGIONS, width=320, height=100, loc=loc)
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            _chromium(),
+            probe_document(chart, _SHORT_PROBE),
+            Path(td) / "short_band.html",
+            "data-xy-short-band",
+            label="short-chart outside-top legend probe",
+        )
+    assert payload["canvasBottomToRootBottom"] >= -0.5, payload

@@ -675,6 +675,15 @@ Vega-Lite (right) also keep their default legends outside it.
   edge. Past the cap, static export drops the rows that do not fit (a file
   cannot scroll) and the browser scrolls the box, as both already do for an
   oversized in-plot legend.
+- **Height budget.** Above both of those, the box never takes more than the
+  chart height leaves after the margins, the title, the top and bottom axis
+  rooms, the 40 px plot floor and the 8 px gap (`_outside_legend_budget`, or
+  the inline `bandBudget` in `_layout`). This budget is a hard limit; the one-row
+  floor is not. On a card too short for one row, an explicit `"outside top"`
+  legend is clipped (static) or scrolls (browser) rather than pushing the plot
+  off the canvas: a 320×100 chart used to reserve a 30 px band and end its
+  plot 10 px below the canvas. The 30 % cap ignored the chrome that also
+  claims the height.
 - **Height.** Static export reserves the formula height of the laid-out box (all
   rows up to the cap). The browser reserves the **measured** height of the
   live box, because the legend slot is author-stylable and a formula would
@@ -685,6 +694,12 @@ Vega-Lite (right) also keep their default legends outside it.
   (`_applyLayout`). The two heights
   therefore differ by the browser's own padding and line height (a few px), as
   in-plot legends already do; the row and column structure does not.
+- **Data updates.** A streaming append re-resolves `best`, so its payload can
+  move the legend into or out of the band. The mounted chart rebuilds the
+  legend and lays out again when the main legend crosses between in-plot and
+  `"outside top"` (`_syncOutsideLegendPlacement`, called from `_applyAppend`),
+  matching a fresh render of the same data. A move between in-plot corners
+  stays on the live best-placement path.
 - **Title.** The band counts toward the room the title is lifted over
   (`top_axis_room` / `_topAxisRoom`), exactly as the polar angular-label room
   does, so the title sits above the band in every renderer.
@@ -711,6 +726,9 @@ exact and never moves automatically.
 when every one of the nine in-plot candidates scores above zero — no corner,
 edge or center position is free of marks — `best` resolves to `"outside top"`
 (below) instead of the least-bad corner, because that corner still hides data.
+It does so only if the band would hold at least one legend row above a 40 px
+plot (`_band_holds_a_row`). On a card shorter than that, a band could only clip
+the legend, so `best` keeps the least-bad corner.
 This is the case of the reported builder chart: stacked bars that reach the axis
 maximum cover every candidate, and `best` used to settle on `upper right`, over
 the bars. The payload then ships `loc: "outside top"` without `auto_loc`, so the

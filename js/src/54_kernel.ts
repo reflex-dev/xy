@@ -454,6 +454,7 @@ Object.assign(ChartView.prototype, {
       // domain (history inspection must remain stationary).
       if (this._transitionView) this._transitionView.to = { ...nextView };
       else this.view = { ...nextView };
+      this._syncOutsideLegendPlacement(prevSpec);
       this._scheduleAppendRefine(nextView, atHome);
       return;
     }
@@ -471,6 +472,8 @@ Object.assign(ChartView.prototype, {
       const w = this.view.x1 - this.view.x0;
       this.view = this._viewFrom({ x1: this.view0.x1, x0: this.view0.x1 - w });
     }
+    // The append may move the legend into or out of the outside-top band.
+    this._syncOutsideLegendPlacement(prevSpec);
     // Append payloads are canonical state, so retain them even while the
     // context is lost. The restore path rebuilds every affected GPU object
     // from this latest payload; attempting partial uploads to a dead context

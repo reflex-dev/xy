@@ -448,7 +448,9 @@ protocol to v14.
 A composition-API `loc="best"` legend also carries `"auto_outside": "top"`.
 It is the payload builder's input, not a receiver instruction: it permits
 `_legendfit.resolve_for_figure` to resolve `best` to `"outside top"` when every
-in-plot candidate scores above zero (no empty position). In that case the
+in-plot candidate scores above zero (no empty position) and the band would hold
+at least one legend row above a 40 px plot (`_band_holds_a_row`). A card too
+short for that keeps its least-bad in-plot corner. In that case the
 payload ships `loc: "outside top"` **without** `auto_loc`, preserving the rule
 above that `auto_loc` accompanies only an in-plot concrete `loc`; otherwise it
 ships the in-plot decision with `auto_loc: "best"` as before. Static export at

@@ -1422,7 +1422,11 @@ def resolve_for_figure(
     if not used:
         return _FALLBACK
     floor = min(scores.values())
-    if floor > _OUTSIDE_FLOOR and _may_go_outside(spec, options):
+    if (
+        floor > _OUTSIDE_FLOOR
+        and _may_go_outside(spec, options)
+        and _band_holds_a_row(spec, options, plot_size)
+    ):
         # Every in-plot position covers marks: no corner is empty (stacked
         # areas or bars at the axis maximum, many series). The least-bad corner
         # still hides data, so take the band above the plot instead.
@@ -1448,6 +1452,36 @@ def _may_go_outside(spec: Optional[dict[str, Any]], options: dict[str, Any]) -> 
         and options.get("anchor") is None
         and (spec or {}).get("coords", "cartesian") == "cartesian"
     )
+
+
+def _band_holds_a_row(
+    spec: Optional[dict[str, Any]],
+    options: dict[str, Any],
+    plot_size: tuple[float, float],
+) -> bool:
+    """Whether the band `best` would open fits at least one legend row.
+
+    `plot_size` is the plot measured with the legend inside, so its height is
+    the room a band would come out of (title, axes and bottom chrome already
+    removed). A card too short for one row above a 40 px plot keeps its least
+    bad in-plot corner: a band there could only clip the legend it exists to
+    show (`_outside_legend_budget` would cut it to fit).
+    """
+    if spec is None:
+        return True
+    try:
+        from ._svg import _OUTSIDE_LEGEND_GAP, _PLOT_MIN_PX, _outside_top_legend_band
+
+        trial = dict(spec)
+        own = {key: value for key, value in options.items() if key != "auto_loc"}
+        trial["legend"] = {**own, "loc": LEGEND_OUTSIDE_TOP}
+        # A zero cap leaves the box its one-row floor: the smallest band.
+        band = _outside_top_legend_band(trial, float(plot_size[0]), cap=0.0)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return True
+    if band is None:
+        return False
+    return float(band["box_h"]) <= float(plot_size[1]) - _PLOT_MIN_PX - _OUTSIDE_LEGEND_GAP
 
 
 def _column_values(column: Any) -> Optional[np.ndarray]:

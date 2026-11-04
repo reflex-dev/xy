@@ -158,6 +158,9 @@ const OUTSIDE_TOP_LEGEND = "outside top";
 // rows past it scroll. One row always shows. Mirrored by
 // `_OUTSIDE_LEGEND_MAX_FRACTION` in python/xy/_svg.py.
 const OUTSIDE_LEGEND_MAX_FRACTION = 0.3;
+// The plot rect's height floor (`Math.max(40, ...)` in `_layout`); an
+// outside-top band's budget leaves it intact. `_PLOT_MIN_PX` in _svg.py.
+const PLOT_MIN_PX = 40;
 // Legend style keys the exporters canonicalize (`_LEGEND_SLOT_ALIASES` in
 // python/xy/_svg.py), so both renderers read padding/row gap from one spelling.
 const XY_LEGEND_STYLE_ALIASES = {
@@ -906,16 +909,24 @@ export class ChartView {
     // the title's wrap width for the same reason the title is (the final plot
     // width depends on the plot height, which depends on this band). Mirrors
     // `_outside_top_legend_band` in python/xy/_svg.py.
-    const band = this._outsideLegendBand(this._titleWrapWidth);
+    // Its height is budgeted against what the title, the axes, and the 40 px
+    // plot floor leave (`_outside_legend_budget`), so on a short card the box
+    // shrinks and scrolls rather than pushing the plot off the canvas.
+    const provisionalTopAxisRoom = hasTopAxis ? (compact ? 26 : 32) : 0;
+    const provisionalBottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+    const provisionalBottom =
+      Math.max(baseBottom, provisionalBottomAxisRoom) + colorbarBottomRoom;
+    const bandBudget = Math.max(
+      0,
+      this.size.h - marginTop - titleRoom - provisionalTopAxisRoom - provisionalBottom
+        - PLOT_MIN_PX - OUTSIDE_LEGEND_GAP,
+    );
+    const band = this._outsideLegendBand(this._titleWrapWidth, bandBudget);
     const bandRoom = band ? band.h + OUTSIDE_LEGEND_GAP : 0;
     this._legendBand = band
       ? { x: authoredLeft, y: marginTop + titleRoom, w: this._titleWrapWidth, h: band.h }
       : null;
-    const provisionalTopAxisRoom = hasTopAxis ? (compact ? 26 : 32) : 0;
-    const provisionalBottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
     const provisionalTop = marginTop + titleRoom + bandRoom + provisionalTopAxisRoom;
-    const provisionalBottom =
-      Math.max(baseBottom, provisionalBottomAxisRoom) + colorbarBottomRoom;
     const plotHeight = Math.max(40, this.size.h - provisionalTop - provisionalBottom);
     // Explicit padding is a floor, not permission to clip. Long numeric or
     // categorical ticks and an outside y title reserve the room their actual
@@ -975,7 +986,7 @@ export class ChartView {
   // A box that cannot be measured yet (the first layout runs before the DOM
   // exists; a detached chart has no geometry) falls back to the exporters'
   // formula, and `_buildDom` re-lays out once the box exists.
-  _outsideLegendBand(bandW) {
+  _outsideLegendBand(bandW, budget = Infinity) {
     const lg = this._outsideLegend;
     if (!lg) return null;
     const names = lg._xyLegendNames || [];
@@ -1004,17 +1015,22 @@ export class ChartView {
     lg.style.setProperty("--xy-legend-transform", "none");
     lg.dataset.xyLegendColumns = String(ncols);
     const cap = OUTSIDE_LEGEND_MAX_FRACTION * this.size.h;
+    // The 30 % cap is soft (one full row always shows); the budget is hard.
+    const limit = Math.max(0, budget);
     const measured = lg.isConnected ? lg.offsetHeight : 0;
     if (measured > 0) {
-      if (measured <= cap) return { h: measured, ncols };
-      // Too tall: cap it (the box scrolls, as in-plot legends do), but never
-      // below the title and one full row.
-      const cs = getComputedStyle(lg);
-      const padV = (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.paddingBottom) || 0);
-      const titleH = lg._xyLegendTitle ? lg._xyLegendTitle.offsetHeight + (Number.parseFloat(cs.rowGap) || 0) : 0;
-      const firstRow = (lg._xyItemRows && lg._xyItemRows[0] && lg._xyItemRows[0].row.offsetHeight) || 0;
-      const h = Math.min(measured, Math.max(cap, padV + titleH + firstRow));
-      lg.style.setProperty("--xy-legend-max-height", `${h}px`);
+      let h = measured;
+      if (measured > cap) {
+        // Too tall: cap it (the box scrolls, as in-plot legends do), but never
+        // below the title and one full row.
+        const cs = getComputedStyle(lg);
+        const padV = (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.paddingBottom) || 0);
+        const titleH = lg._xyLegendTitle ? lg._xyLegendTitle.offsetHeight + (Number.parseFloat(cs.rowGap) || 0) : 0;
+        const firstRow = (lg._xyItemRows && lg._xyItemRows[0] && lg._xyItemRows[0].row.offsetHeight) || 0;
+        h = Math.min(measured, Math.max(cap, padV + titleH + firstRow));
+      }
+      h = Math.min(h, limit);
+      if (h < measured) lg.style.setProperty("--xy-legend-max-height", `${h}px`);
       return { h, ncols };
     }
     const rows = Math.ceil(names.length / ncols) + (options.title ? 1 : 0);
@@ -1022,7 +1038,7 @@ export class ChartView {
     const pad = 2 * xyLegendEm(style, "padding", 0.4) * fontSize;
     const oneRow = (options.title ? 2 : 1) * fontSize * 1.03 + (options.title ? rowGap : 0) + pad;
     const estimate = rows * fontSize * 1.03 + Math.max(0, rows - 1) * rowGap + pad;
-    const h = Math.min(estimate, Math.max(cap, oneRow));
+    const h = Math.min(estimate, Math.max(cap, oneRow), limit);
     lg.style.setProperty("--xy-legend-max-height", `${h}px`);
     return { h, ncols };
   }
@@ -2705,6 +2721,21 @@ export class ChartView {
     this._fitModebar();
     this._layoutAxisBands();
     this._pickDirty = true;
+  }
+
+  // A data update re-resolves `loc="best"`, and its payload can move the main
+  // legend between an in-plot corner and the outside-top band. The band
+  // changes the plot rect, so the mounted legend chrome is rebuilt and laid
+  // out again; a move between in-plot corners stays on the live best path.
+  // Mirrors what a fresh render of the same spec mounts.
+  _syncOutsideLegendPlacement(prevSpec) {
+    const outside = (spec) => String(spec?.legend?.loc || "") === OUTSIDE_TOP_LEGEND;
+    if (outside(prevSpec) === outside(this.spec) || !this.root) return false;
+    for (const lg of this._legends || []) lg.remove();
+    this._buildLegend(this.root);
+    this._applyLayout();
+    this._scheduleViewRequest();
+    return true;
   }
 
   _buildDom(el) {

@@ -2585,15 +2585,6 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         axes, provisional_w, compact
     )
     top += title_room
-    # An outside-top legend is a band between the title and the plot. It is
-    # sized at the title's wrap width for the same reason the title is: the
-    # final plot width depends on the plot height, which depends on this band.
-    legend_band = _outside_top_legend_band(
-        spec, title_wrap_width, _OUTSIDE_LEGEND_MAX_FRACTION * float(height)
-    )
-    band_room = legend_band["room"] if legend_band else 0.0
-    top += band_room
-    top += top_axis_room
     if measured_bottom_room:
         bottom = max(bottom, measured_bottom_room)
     colorbar = spec.get("colorbar") or {}
@@ -2606,6 +2597,22 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         bottom += (18 if colorbar.get("pad") == 0 else 38) + (16 if colorbar.get("label") else 0)
     elif colorbar:
         right += (62 if colorbar.get("pad") == 0 else 86) + (18 if colorbar.get("label") else 0)
+    # An outside-top legend is a band between the title and the plot. It is
+    # sized at the title's wrap width for the same reason the title is: the
+    # final plot width depends on the plot height, which depends on this band.
+    # Its height is budgeted against what the title, the axes, and the 40 px
+    # plot floor leave, so on a short card it shrinks rather than pushing the
+    # plot off the canvas.
+    band_budget = _outside_legend_budget(height, top + top_axis_room, bottom)
+    legend_band = _outside_top_legend_band(
+        spec,
+        title_wrap_width,
+        _OUTSIDE_LEGEND_MAX_FRACTION * float(height),
+        band_budget,
+    )
+    band_room = legend_band["room"] if legend_band else 0.0
+    top += band_room
+    top += top_axis_room
     if any(
         axis_id.startswith("y")
         and (
@@ -2678,6 +2685,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         plot["legend_band_h"] = legend_band["box_h"]
         plot["legend_band_ncols"] = legend_band["ncols"]
         plot["legend_band_cap"] = legend_band["cap"]
+        plot["legend_band_budget"] = legend_band["budget"]
     if spec.get("coords") == "polar":
         _recut_polar_plot(spec, plot, width, height, compact)
     return width, height, compact, plot
@@ -6497,10 +6505,15 @@ def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
 #: js/src/50_chartview.ts.
 _OUTSIDE_LEGEND_GAP = 8.0
 
+#: The plot rect's height floor, shared with `max(40, ...)` in `layout` and
+#: ChartView._layout; an outside-top band's budget leaves it intact.
+_PLOT_MIN_PX = 40.0
+
 #: Tallest an outside-top legend box may be, as a fraction of the chart height.
 #: Uncapped, a dozen long one-column rows on a small card claimed more than the
 #: whole canvas and pushed the plot off its bottom edge. Rows past the cap are
-#: dropped in static files and scroll in the browser; one row always shows.
+#: dropped in static files and scroll in the browser; one row always shows
+#: unless `_outside_legend_budget` (the hard limit) has no room for it.
 #: Mirrored by OUTSIDE_LEGEND_MAX_FRACTION in js/src/50_chartview.ts.
 _OUTSIDE_LEGEND_MAX_FRACTION = 0.3
 
@@ -6534,10 +6547,23 @@ def _legend_band_columns(named: list[dict], options: dict, band_w: float) -> int
     return 1
 
 
+def _outside_legend_budget(height: float, top: float, bottom: float) -> float:
+    """Most box height an outside-top band may take, in px.
+
+    What the chart's height leaves after the chrome above (`top`, title and top
+    axis included) and below the plot, the 40 px plot floor, and the band gap.
+    """
+    return max(0.0, float(height) - top - bottom - _PLOT_MIN_PX - _OUTSIDE_LEGEND_GAP)
+
+
 def _outside_top_legend_band(
-    spec: dict[str, Any], band_w: float, cap: float = math.inf
+    spec: dict[str, Any], band_w: float, cap: float = math.inf, budget: float = math.inf
 ) -> Optional[dict[str, float]]:
     """Room an outside-top legend claims above the plot, or None.
+
+    `cap` is the soft 30 % rule (a box always keeps one full row); `budget`
+    is the hard limit from `_outside_legend_budget`, which even that one row
+    may not cross.
 
     Only the main, unanchored legend of a Cartesian chart reserves a band: an
     `anchor` is authored geometry the author owns (and reserves room for), and
@@ -6569,11 +6595,13 @@ def _outside_top_legend_band(
         "legend_band_h": 0.0,
         "legend_band_ncols": ncols,
         "legend_band_cap": cap,
+        "legend_band_budget": budget,
     }
     box = _legend_layout(named, probe, options)
     return {
         "ncols": ncols,
         "cap": cap,
+        "budget": budget,
         "box_h": box["box_h"],
         "room": box["box_h"] + _OUTSIDE_LEGEND_GAP,
     }
@@ -6715,6 +6743,9 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         title_room = text_h + row_gap if title else 0.0
         one_row = pad + title_room + line_h - row_gap
         available_h = max(float(plot.get("legend_band_cap", math.inf)), one_row + 1e-6)
+        # The budget is hard: on a chart too short for even one row the box
+        # is clipped rather than pushing the plot off the canvas.
+        available_h = min(available_h, float(plot.get("legend_band_budget", math.inf)))
     visible_rows = nrows
     content_rows = nrows + (1 if title else 0)
     natural_box_h = content_rows * text_h + max(0, content_rows - 1) * row_gap + pad
