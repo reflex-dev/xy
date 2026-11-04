@@ -314,9 +314,58 @@ xy.y_axis(show=False, grid=True)            # horizontal guides only
 xy.x_axis(line=False, ticks=False, style={"grid_color": "#1e293b"})
 ```
 
-The switches control what is *painted*, not the layout: the plot rect is
-unchanged, because the gutters are reserved by `padding`. An edge-to-edge
-sparkline is `show=False` **plus** `padding=0`.
+The switches control what is *painted*, and layout follows the paint: an axis
+with nothing left to draw reserves nothing, so its automatic gutter collapses
+on every side. Authored `padding` is untouched — it is a floor the switches
+never lower — so an edge-to-edge sparkline is still `show=False` **plus**
+`padding=0`, and with no `padding` the label-aware defaults below continue to
+apply. Every renderer decides this the same way, from the compiled paint
+rather than from a flag: a transparent tick-label paint, or a
+`tick_label_strategy` of `"none"` or `"off"`, claims no tick-label room. The
+axis title is reserved separately and answers to `label_color` alone, so an
+opaque title over switched-off ticks keeps the band it is drawn in — unless it
+is not drawn at all, which is the case for `tick_label_strategy="none"` (which
+suppresses the title too, where `"off"` keeps it) and for an `inside_*`
+`label_position` (drawn over the plot, so it needs no band). A title that *is*
+drawn reserves the band it is drawn in, measured: the automatic gutters are a
+floor for ordinary text, not a ceiling the title is clipped against. Outward
+tick marks answer to no text paint at all, so an axis whose labels are switched
+off while its `tick_length` still draws marks keeps its band for them. The two
+tick tiers are reserved independently, because they are drawn independently:
+the major tier is drawn for the computed ticks, on every `tick_sides`, in
+`style`'s `tick_color`, while the minor tier is drawn only for the positions
+`minor_tick_values` supplies, on `side` alone, in `minor_style`'s own
+`tick_color`. So a `minor_style` with no `minor_tick_values` paints nothing
+and claims nothing; a minor tier with values claims its reach whatever the
+major tier's paint says; and an axis whose `tick_sides` send its major marks
+to the opposite edge still keeps the band its minor marks are drawn in. Each
+side is measured from the original axis: minor marks never inherit another
+side merely because that side's text is being measured. Right-facing marks
+reserve the right gutter and colorbar clearance even on a left-side axis.
+Hidden top axes contribute no automatic top band, just as hidden bottom axes
+contribute no bottom band. Only the primary `x` and `y` axes have a minor tier:
+a named axis draws its major
+marks and stops, so it reserves for those and never for a minor tier it will
+not paint.
+
+Browser layout starts after the styled chart root is created, so named CSS
+colors, alpha colors, and inherited or root-authored CSS variables resolve
+against the chart on the initial frame. A chart constructed while detached
+re-measures its paint-dependent gutters when it first connects, alongside theme
+healing. Canvas geometry, legend bounds, and other positioned chrome are updated
+before rendering, including before the shared GL host chooses its presentation
+extent. This also applies to fixed-size charts, which need no resize event to
+finish connection-time layout. The shared `_applyLayout` routine handles this
+remeasurement, resize, and streaming changes to outside-legend placement, so
+all three paths update the canvas and positioned chrome together. Connected
+charts also remeasure these gutters on `refreshTheme()` and automatic theme
+changes: revealing an axis title or tick paint reserves its room, and hiding
+it releases that room before the refreshed frame is drawn. Relative slot font
+sizes are resolved again before this measurement, so a theme font change and
+a paint-visibility change share the same refreshed layout. During WebGL context
+loss, theme refreshes leave the retained frame and canvas dimensions untouched.
+The pending theme and its gutter measurements are applied on the first drawable
+frame, before the shared host selects its presentation extent.
 
 ### Plot rectangle and chrome reservations
 
@@ -432,7 +481,11 @@ Two asymmetries are deliberate, not oversights:
   plot-relative (`plot-right + 40`) rather than to a canvas inset, so widening
   only the static exporters' right gutter would move their title away from the
   browser's. Unusually wide right-side tick labels can therefore still meet
-  their axis title, in every renderer alike.
+  their axis title, in every renderer alike. The flat *width* is what this
+  fixes; whether the gutter is reserved at all still answers to the paint, as
+  the left gutter does — an axis whose text is switched off holds none of what
+  the gutter exists for and claims none of it, in the browser and the exporters
+  alike.
 - **Only a spec-authored `padding` reaches the browser.** `layout()` is a Python
   function; a chart rendered live with `padding=None` gets ChartView's own
   `46/62` default, not the measured floor. The pyplot shim closes that gap on the

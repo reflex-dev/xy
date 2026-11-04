@@ -1506,9 +1506,13 @@ author expects.
 - **Live re-resolution.** The client watches `matchMedia('(prefers-color-scheme: dark)')`
   and a `MutationObserver` on the container's `class`/`data-theme`/`style`, re-resolving
   tokens on any change. Because of the retained scene graph (§7), **a theme change is
-  uniform + LUT updates, never a data re-upload** — theme/dark-mode switching stays at
-  60 fps even on a 100M-point figure, and a dashboard theme flip repaints every linked
-  view in one frame.
+  uniform + LUT updates, never a data re-upload** for paint-only changes —
+  theme/dark-mode switching stays at 60 fps even on a 100M-point figure, and a
+  dashboard theme flip repaints every linked view in one frame. Axis paints that
+  become visible or hidden also remeasure the gutters and positioned chrome;
+  only a change to plot width or height requests the usual size-dependent LOD
+  refinement. `refreshTheme()` uses the same rule as automatic theme changes.
+During context loss, theme refreshes defer paint-dependent layout updates; the retained frame remains unchanged. The first drawable frame applies the pending theme and layout before rendering (§18).
 - **Programmatic parity.** Everything a token sets is also settable from Python
   (`fig.theme(...)`) so notebook users who never touch CSS get the same control; the
   CSS bridge is the web-author's path to the same renderer state, not a separate system.
