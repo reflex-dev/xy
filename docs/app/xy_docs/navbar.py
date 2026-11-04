@@ -5,7 +5,6 @@ import reflex_components_internal as ui
 from reflex_site_shared.components.algolia import algolia_search
 from reflex_site_shared.components.docs_shell import docs_navbar_frame
 from reflex_site_shared.components.icons import get_icon
-from reflex_site_shared.components.marketing_button import button
 
 from xy_docs.announcement import match_marketing_announcement
 
@@ -88,7 +87,7 @@ def _menu_item(label: str, href: str) -> rx.Component:
             href=href.removeprefix("/docs/xy") or "/",
             aria_current=rx.cond(active, "page", None),
             class_name=ui.cn(
-                "docs-navbar-link inline-flex h-9 items-center justify-center whitespace-nowrap rounded-full px-3 "
+                "docs-navbar-link inline-flex h-9 items-center justify-center whitespace-nowrap rounded-control px-3 "
                 "text-sm font-normal leading-none no-underline transition-colors duration-150 "
                 "motion-reduce:transition-none focus-visible:outline-2 "
                 "focus-visible:outline-offset-2 focus-visible:outline-ring",
@@ -107,21 +106,14 @@ def _menu_item(label: str, href: str) -> rx.Component:
 def _github_button() -> rx.Component:
     """Render the external XY repository link."""
     label = "View XY on GitHub"
-    return rx.el.elements.a(
-        button(
-            get_icon(icon="github_navbar", class_name="size-4 shrink-0"),
-            "GitHub",
-            custom_attrs={"aria-label": label},
-            size="sm",
-            variant="primary",
-            native_button=False,
-            class_name="rounded-full whitespace-nowrap px-4 text-sm font-normal",
-        ),
+    return rx.el.a(
+        get_icon(icon="github_navbar", class_name="size-4 shrink-0"),
+        "GitHub",
         href=XY_REPOSITORY_URL,
         target="_blank",
         rel="noopener noreferrer",
         aria_label=label,
-        class_name="rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        class_name="docs-navbar-github whitespace-nowrap",
     )
 
 
@@ -136,7 +128,7 @@ def _mobile_navigation() -> rx.Component:
             ui.icon("Menu01Icon", class_name="size-5 group-open/xy-menu:hidden"),
             ui.icon("Cancel01Icon", class_name="hidden size-5 group-open/xy-menu:block"),
             aria_label="Toggle navigation menu",
-            class_name="flex size-9 cursor-pointer list-none items-center justify-center rounded-full text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden",
+            class_name="flex size-9 cursor-pointer list-none items-center justify-center rounded-control text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden",
         ),
         rx.el.div(
             *[

@@ -48,7 +48,7 @@ def _page_action(text: str, href: str) -> rx.Component:
         target="_blank",
         rel="noreferrer",
         class_name=(
-            "rounded-full border border-border bg-background px-3 py-0.5 "
+            "docs-footer-action rounded-control border border-border bg-background px-3 py-1.5 "
             "font-small text-subtle-foreground no-underline shadow-small "
             "transition-colors hover:bg-accent hover:!text-muted-foreground"
         ),

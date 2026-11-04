@@ -61,7 +61,7 @@ app = rx.App(
         rx.el.style(CODE_COPY_STYLE),
         rx.el.meta(name="application-name", content="XY"),
         rx.el.meta(name="theme-color", content="#fdfcfc", media="(prefers-color-scheme: light)"),
-        rx.el.meta(name="theme-color", content="#151413", media="(prefers-color-scheme: dark)"),
+        rx.el.meta(name="theme-color", content="#151515", media="(prefers-color-scheme: dark)"),
     ],
 )
 
