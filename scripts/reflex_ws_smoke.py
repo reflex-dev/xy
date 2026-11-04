@@ -370,24 +370,69 @@ def main() -> None:
         # 6) §9 cond/foreach: toggling the split swaps the cond branch from
         #    the composed board to an rx.foreach grid of plan charts bound to
         #    a list[DataHandle] var — the board unmounts, three multiples
-        #    mount and sub (net +2 views).
-        views_before = probe.eval("window.__xy_views.size")
-        probe.scroll_to("split-btn")
-        split = probe.eval(
-            "(() => { const b = document.getElementById('split-btn');"
-            " const r = b.getBoundingClientRect();"
-            " return {x: r.x + r.width / 2, y: r.y + r.height / 2}; })()"
+        #    mount and sub (net +2 views). The unmounted board must leave
+        #    the view registry (issue #548: React clears DOM refs before
+        #    effect cleanup), so the counts are exact, both ways.
+        #    Settle the baseline first: a chart registering late would
+        #    otherwise shift the exact count after `views_before` is read.
+        #    One in-page poll bounds the whole wait: it resolves once the
+        #    size has been unchanged for settle_quiet_ms (1.5 seconds) and
+        #    gives up after settle_limit_ms (30 seconds); the CDP call gets
+        #    5 seconds of slack beyond that, so a stalled page cannot hang it.
+        settle_quiet_ms = 1_500  # 1.5 seconds without a registry change
+        settle_limit_ms = 30_000  # 30 seconds maximum wait
+        views_before = probe.eval(
+            "new Promise((resolve) => {"
+            " const start = performance.now();"
+            " let size = window.__xy_views.size, since = start;"
+            " const tick = () => {"
+            "  const now = performance.now(), next = window.__xy_views.size;"
+            "  if (next !== size) { size = next; since = now; }"
+            f"  if (now - since >= {settle_quiet_ms}) return resolve(size);"
+            f"  if (now - start >= {settle_limit_ms}) return resolve(null);"
+            "  setTimeout(tick, 250);"  # poll every 250 milliseconds
+            " };"
+            " tick();"
+            "})",
+            timeout_s=settle_limit_ms / 1000 + 5.0,
         )
-        probe.mouse("mouseMoved", split["x"], split["y"])
-        probe.mouse("mousePressed", split["x"], split["y"], button="left", buttons=1, clickCount=1)
-        probe.mouse("mouseReleased", split["x"], split["y"], button="left", buttons=0, clickCount=1)
+        if views_before is None:
+            raise SystemExit("timeout waiting for the view registry to settle")
+        assert probe.eval("window.__xy_views.has('board')"), "board view not mounted"
+
+        def click_split() -> None:
+            probe.scroll_to("split-btn")
+            split = probe.eval(
+                "(() => { const b = document.getElementById('split-btn');"
+                " const r = b.getBoundingClientRect();"
+                " return {x: r.x + r.width / 2, y: r.y + r.height / 2}; })()"
+            )
+            probe.mouse("mouseMoved", split["x"], split["y"])
+            probe.mouse(
+                "mousePressed", split["x"], split["y"], button="left", buttons=1, clickCount=1
+            )
+            probe.mouse(
+                "mouseReleased", split["x"], split["y"], button="left", buttons=0, clickCount=1
+            )
+
+        click_split()
         probe.wait_for(
-            f"window.__xy_views.size >= {views_before} + 2",
+            f"window.__xy_views.size === {views_before} + 2"
+            " && !document.getElementById('board') && !window.__xy_views.has('board')",
             timeout_s=30.0,
-            label="foreach small multiples mounting after the cond toggle",
+            label="small multiples mounted and the board view released after the cond toggle",
         )
         views_after = probe.eval("window.__xy_views.size")
         print(f"cond/foreach: {views_before} -> {views_after} mounted views after split toggle")
+        click_split()
+        probe.wait_for(
+            f"window.__xy_views.size === {views_before}"
+            " && window.__xy_views.has('board')"
+            " && Array.from(window.__xy_views.values()).every((v) => !v._destroyed)",
+            timeout_s=30.0,
+            label="board remounted and the small multiples released after toggling back",
+        )
+        print(f"cond/foreach: back to {views_before} mounted views after toggling back")
 
         # 7) /kinds: every chart kind renders in the browser — 20 data-bound
         #    plan charts plus the 7 static composites. Each `kind-<name>`
