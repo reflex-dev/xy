@@ -497,3 +497,42 @@ def test_browser_relative_title_font_reserves_its_painted_band() -> None:
     payload = _probe(chart, _TITLE_PROBE, "data-xy-compact-title", "relative_title")
     assert payload["titleTopToRootTop"] >= -0.5, payload
     assert payload["titleBottomToCanvasTop"] >= -0.5, payload
+
+
+_POLAR_LEGEND_BOUNDS_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    const lb = view._legendRect;
+    document.body.setAttribute("data-xy-polar-legend", JSON.stringify({
+      gutter: lb ? lb.w : null,
+      maxWidth: parseFloat(view.root.style.getPropertyValue("--xy-legend-max-width")),
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-polar-legend-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_mounted_relayout_keeps_the_polar_legend_gutter() -> None:
+    # A relative title font sends a polar chart through the post-mount
+    # relayout; the legend must stay bounded by its gutter, not the plot.
+    theta = np.linspace(0.0, 330.0, 12)
+    chart = xy.polar_chart(
+        xy.line(theta, 1 + theta / 360, name="A very long first series name"),
+        xy.line(theta, 2 - theta / 360, name="A very long second series name"),
+        xy.theta_axis(unit="degrees"),
+        xy.legend(loc="right"),
+        title="Polar",
+        width=520,
+        height=360,
+        styles={"title": {"font_size": "150%"}},
+    )
+    payload = _probe(chart, _POLAR_LEGEND_BOUNDS_PROBE, "data-xy-polar-legend", "polar_gutter")
+    assert payload["gutter"] is not None, payload
+    assert payload["maxWidth"] == pytest.approx(max(40, payload["gutter"] - 12), abs=0.5), payload

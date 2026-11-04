@@ -3001,8 +3001,11 @@ export class ChartView {
       this.canvas.style.top = p.y + "px";
       this.canvas.style.width = p.w + "px";
       this.canvas.style.height = p.h + "px";
-      root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
-      root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+      // Bounded by the box legends place in: a polar chart's gutter beside the
+      // disc, not the plot rect (as in `_applyLayout`).
+      const lb = this._legendRect || p;
+      root.style.setProperty("--xy-legend-max-width", Math.max(40, lb.w - 12) + "px");
+      root.style.setProperty("--xy-legend-max-height", Math.max(40, lb.h - 12) + "px");
       this._positionTitles();
       for (const lg of this._legends) {
         const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
