@@ -1020,3 +1020,20 @@ def test_browser_padded_band_never_overlaps_a_short_plot() -> None:
             label="padded outside-top legend probe",
         )
     assert (not payload["shown"]) or payload["legendBottomToCanvasTop"] >= -0.5, payload
+
+
+def test_browser_band_keeps_an_authored_hidden_legend_hidden() -> None:
+    # The budget's own hide/show must not undo a `visibility` the author set.
+    from conftest import probe_document
+
+    chart = _lines(REGIONS, style={"visibility": "hidden"})
+    with tempfile.TemporaryDirectory() as td:
+        payload = run_browser_probe(
+            _chromium(),
+            probe_document(chart, _PADDED_PROBE),
+            Path(td) / "authored_hidden.html",
+            "data-xy-padded-band",
+            label="authored hidden outside-top legend probe",
+        )
+    assert payload["band"] > 0, payload
+    assert payload["shown"] is False, payload

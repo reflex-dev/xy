@@ -1053,10 +1053,16 @@ export class ChartView {
       const frameV = padV + (Number.parseFloat(cs.borderTopWidth) || 0)
         + (Number.parseFloat(cs.borderBottomWidth) || 0);
       if (h < frameV) {
+        // Remember the author's own value so showing it again restores that,
+        // not the default (an authored `visibility: hidden` must stay hidden).
+        if (!lg._xyBandHidden) lg._xyBandHidden = { visibility: lg.style.visibility };
         lg.style.visibility = "hidden";
         return { h: 0, ncols };
       }
-      lg.style.visibility = "";
+      if (lg._xyBandHidden) {
+        lg.style.visibility = lg._xyBandHidden.visibility;
+        lg._xyBandHidden = null;
+      }
       if (h < measured) lg.style.setProperty("--xy-legend-max-height", `${h}px`);
       return { h, ncols };
     }

@@ -685,7 +685,8 @@ Vega-Lite (right) also keep their default legends outside it.
   plot 10 px below the canvas. A browser box cannot render below its own
   padding and borders. When the budget is smaller than that (a `padding: 2em`
   box needs 44 px), the client hides the box and reserves nothing rather than
-  paint it over the plot; a later layout with room shows it again. Static
+  paint it over the plot; a later layout with room restores the box's own
+  `visibility`, so an author's `visibility: hidden` stays hidden. Static
   export already fits the box, frame included, inside the budget. The 30 % cap ignored the chrome that also
   claims the height. The budget is first taken against the provisional axis
   rooms. If the measured pass then grows them (a y title narrows the plot, so
