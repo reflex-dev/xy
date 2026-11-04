@@ -34,6 +34,10 @@ function loadWrapper(endpoint) {
     }
     destroy() { this.destroyed = true; }
   }
+  // Refs attached during the latest render, detached before cleanup the way
+  // React commits a deletion: DOM refs are cleared (callback refs called with
+  // null, object refs nulled) before passive effect cleanups run.
+  let attachedRefs = [];
   function jsx(tag, props, ...children) {
     const el = {
       id: props.id,
@@ -44,6 +48,7 @@ function loadWrapper(endpoint) {
     };
     if (typeof props.ref === "function") props.ref(el);
     else if (props.ref) props.ref.current = el;
+    if (props.ref) attachedRefs.push(props.ref);
     return el;
   }
   const factory = new Function(
@@ -60,11 +65,25 @@ function loadWrapper(endpoint) {
   return {
     ...loaded,
     renders,
+    windows,
     mount(id, props = { figure: { token: "figure-token" } }) {
       effects = [];
-      loaded.XYChart({ id, ...props });
+      attachedRefs = [];
+      const mountProps = id === undefined ? { ...props } : { id, ...props };
+      // Reflex attaches its own object ref to id-bearing components.
+      const externalRef = { current: null };
+      if (id !== undefined) mountProps.ref = externalRef;
+      loaded.XYChart(mountProps);
+      const refs = attachedRefs;
       const cleanups = effects.map((effect) => effect()).filter(Boolean);
-      return () => cleanups.reverse().forEach((cleanup) => cleanup());
+      return () => {
+        refs.forEach((ref) => {
+          if (typeof ref === "function") ref(null);
+          else ref.current = null;
+        });
+        assert.equal(externalRef.current, null, "external object ref detached");
+        cleanups.reverse().forEach((cleanup) => cleanup());
+      };
     },
   };
 }
@@ -142,13 +161,17 @@ for (const order of ["warm-manager", "open-warm-manager", "legacy-auto-connect",
       assert.equal(namespaceConnections, 2);
       assert.equal(subs.length, 5);
       assert.equal(socket.io, app.io);
+      assert.deepEqual([...loaded.windows.__xy_views.keys()].sort(), ["during-pause", "one", "two"]);
 
       mounts.pop()();
       mounts.pop()();
       await delay(30);
       assert.equal(unsubs.length, 0, "same-token mounts retain the shared room");
+      assert.deepEqual([...loaded.windows.__xy_views.keys()], ["one"],
+        "unmounted views leave the registry even after React cleared the DOM ref");
       mounts.pop()();
       await until(() => unsubs.length === 1, "last mount unsubscribes");
+      assert.equal(loaded.windows.__xy_views.size, 0, "last unmount empties the view registry");
       assert.equal(app.connected, true, "chart cleanup leaves the app transport alive");
       assert.equal(socket.connected, true);
     } finally {
@@ -159,6 +182,46 @@ for (const order of ["warm-manager", "open-warm-manager", "legacy-auto-connect",
     }
   });
 }
+
+test("anonymous mounts register and release their view by mount id", async () => {
+  const http = createServer();
+  const server = new Server(http, { path: "/_event", transports: ["websocket"] });
+  server.of("/_event");
+  server.of("/_xy").on("connection", (socket) => {
+    socket.on("sub", (request) => socket.emit("payload", {
+      ...request, version: 1, spec: { traces: [] },
+      buffers: [Buffer.from(new Float32Array([1]).buffer)],
+    }));
+  });
+  await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${http.address().port}`;
+  const loaded = loadWrapper(`${origin}/_event`);
+  const app = io(`${origin}/_event`, {
+    path: "/_event", transports: ["websocket"], protocols: ["test"],
+    query: { token: "session-token" }, reconnection: false, autoConnect: false,
+  });
+  const mounts = [];
+  try {
+    mounts.push(loaded.mount(undefined), loaded.mount("named"));
+    app.connect();
+    await until(() => loaded.renders.length === 2, "both mounts rendered");
+    const keys = [...loaded.windows.__xy_views.keys()];
+    assert.equal(keys.length, 2);
+    assert.ok(keys.includes("named"));
+    assert.match(keys.find((key) => key !== "named"), /^m\d+$/);
+    mounts.shift()();
+    assert.deepEqual([...loaded.windows.__xy_views.keys()], ["named"]);
+    mounts.shift()();
+    assert.equal(loaded.windows.__xy_views.size, 0);
+    assert.ok(loaded.renders.every((view) => view.destroyed), "every view destroyed");
+    assert.equal(app.connected, true, "chart cleanup leaves the app transport alive");
+  } finally {
+    mounts.forEach((cleanup) => cleanup());
+    loaded.getSocket()?.disconnect();
+    app.disconnect();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 test("an unhydrated figure never creates a socket", () => {
   const loaded = loadWrapper("http://127.0.0.1:1/_event");

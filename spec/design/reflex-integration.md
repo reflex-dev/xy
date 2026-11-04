@@ -118,6 +118,19 @@ chart during an app-managed disconnect cannot reopen the transport early.
 real Socket.IO peers for both creation orders, warm/open/legacy managers,
 binary payload dispatch, repeated mounts, cleanup, and app-owned reconnects.
 
+**Unmount releases the view.** Each mount registers its view in the
+`window.__xy_views` debug/e2e registry under the element `id`, falling back to
+the live mount id (`m<n>`) or `src:<url>` for anonymous mounts. The key is
+captured once when the mount's effect runs and reused verbatim at cleanup:
+React detaches DOM refs (object refs nulled, callback refs called with `null`)
+*before* passive effect cleanup, so re-reading the wrapper ref at teardown
+would fall back to the mount id and leave the destroyed, id-keyed view behind
+(issue #548). Cleanup deletes the entry only while it still holds that
+mount's view, so a newer mount reusing the id is never evicted. The socket
+gate detaches every ref before running cleanup — matching React's order — and
+asserts the registry is empty after the last unmount, for both named and
+anonymous mounts, while the shared app transport stays connected.
+
 Reflex owns reconnection: its `reconnect()` reopens the shared manager, our
 namespace socket re-CONNECTs automatically, and every mounted chart re-`sub`s
 on the `connect` event.

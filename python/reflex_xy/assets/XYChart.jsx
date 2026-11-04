@@ -93,6 +93,16 @@ function xySocket() {
 
 let nextMountId = 1;
 
+// Drop a mount's `window.__xy_views` entry on unmount. The key is the one the
+// mount captured when its effect ran (never a re-read of the DOM ref, which
+// React has already cleared by cleanup time), and the entry is removed only
+// while it still holds this mount's view, so a later mount reusing the same
+// id is never evicted by an earlier mount's cleanup.
+function releaseViewKey(key, view) {
+  const views = window.__xy_views;
+  if (views && view && views.get(key) === view) views.delete(key);
+}
+
 // Reflex owns the mount's CSS dimensions. Payload dimensions are useful for
 // standalone exports, but inside a component they must follow that mount or a
 // fixed payload can paint beyond the space Reflex reserved in the page flow.
@@ -396,6 +406,8 @@ export function XYChart(props) {
   useEffect(() => {
     const el = elRef.current;
     if (!src || !el) return undefined;
+    // Registry key captured once per mount: React clears DOM refs before
+    // passive effect cleanup, so cleanup must not re-read outerRef.
     const key = outerRef.current?.id || `src:${src}`;
     let view = null;
     let cancelled = false;
@@ -427,8 +439,8 @@ export function XYChart(props) {
       controller.abort();
       reclaimTooltipSlot();
       if (view) view.destroy();
+      releaseViewKey(key, view);
       view = null;
-      window.__xy_views?.delete(key);
       el.removeEventListener("xy:view_change", handleViewChange);
       el.replaceChildren();
     };
@@ -441,6 +453,10 @@ export function XYChart(props) {
     if (!liveToken || src || !el) return undefined;
     const socket = xySocket();
     const mid = `m${nextMountId++}`;
+    // Debug/e2e registry key, captured once for this live mount. React nulls
+    // DOM refs before passive effect cleanup, so re-reading outerRef there
+    // would fall back to `mid` and leak the id-keyed entry (issue #548).
+    const viewKey = outerRef.current?.id || mid;
     let view = null;
     let destroyed = false;
     let clickSeq = 0;
@@ -821,7 +837,7 @@ export function XYChart(props) {
       restoreSelectionMask(selectionMaskRequest);
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
-      (window.__xy_views ||= new Map()).set(outerRef.current?.id || mid, view);
+      (window.__xy_views ||= new Map()).set(viewKey, view);
       replayPendingStatePushes(nextPayloadVersion);
     };
 
@@ -1002,8 +1018,8 @@ export function XYChart(props) {
       }
       reclaimTooltipSlot();
       if (view) view.destroy();
+      releaseViewKey(viewKey, view);
       view = null;
-      window.__xy_views?.delete(outerRef.current?.id || mid);
       el.replaceChildren();
     };
   }, [liveToken, src]);
