@@ -330,8 +330,9 @@ blocks cannot become invalid direct children of a list.
 The docs consume the reusable `reflex-site-shared` base theme and components
 directly. XY owns its branding, navigation, project-specific footer content,
 and the docs-only brand layer that follows the
-[Reflex marketing theme](https://github.com/reflex-dev/marketing/pull/213). It must not
-vendor shared base CSS, search/buttons, or the navbar frame and announcement.
+[docs theme contract](../../docs/app/README.md#working-on-the-shared-reflex-theme).
+It must not vendor shared base CSS, search/buttons, or the navbar frame and
+announcement.
 The local layer follows the current marketing finish: Geist 400 article text
 and headings, Inter compact navigation/internal UI, Geist 525 actions, 8px control
 corners, 12px fields, and neutral light/dark tokens. The app-owned

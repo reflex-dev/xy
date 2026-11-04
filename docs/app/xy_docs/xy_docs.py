@@ -100,7 +100,7 @@ def xy_docs_layout(page, content, navigation) -> rx.Component:
         config=_LAYOUT_CONFIG,
     )
     # The shared Markdown layout owns structure and routing; these consumer
-    # hooks opt it into the same docs-only brand layer as Reflex PR #7549.
+    # hooks opt it into the docs-only Reflex marketing theme in assets/docs-theme.css.
     main = layout.children[1]
     main.class_name = "docs-reading-layout " + main.class_name
     column = main.children[1]

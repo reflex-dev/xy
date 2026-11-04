@@ -162,7 +162,7 @@
 }
 .docs-reading-column h2.docs-heading { font-size: 30px; margin-top: 48px; }
 .docs-reading-column h3.docs-heading { font-size: 23px; margin-top: 32px; }
-.docs-reading-column h4.docs-heading { font-size: 17px; font-weight: 500; }
+.docs-reading-column h4.docs-heading { font-size: 17px; }
 .docs-article .code-block {
   border-color: var(--border);
 }
