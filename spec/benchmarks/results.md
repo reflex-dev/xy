@@ -465,8 +465,9 @@ positive-range fold was measured there and gave no gain, so it was not kept.
 A full six-family standard gate run (21 reps / 3 warm-ups) on this branch
 and host measured line at **11.00×** (10.95 vs 120.4 ms) and a geometric mean
 of 12.84×. Histogram (10.46×) and contour (10.36×) passed, and pcolormesh
-missed at 5.11×. The pcolormesh gap is separate from #550 and already shows
-on the base commit on this host, so it is not attributed to this change.
+missed at 5.11×. The pcolormesh gap is outside #550's scope. This change
+only removes work from that path, with byte-identical output, so it cannot
+be the cause; the base commit was not measured on this host.
 Raw reports, including that run, are in
 `spec/benchmarks/evidence/issue-550/`. Reproduce with:
 
