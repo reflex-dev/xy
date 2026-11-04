@@ -28,6 +28,15 @@ CORPUS = sorted(CORPUS_DIR.glob("[0-9][0-9]_*.py"))
 # filename -> reason
 XFAILS: dict[str, str] = {}
 
+# Snippets whose *input* library needs packages the shim itself never imports:
+# pandas' plotting backend imports matplotlib before it calls into ``ax``. They
+# skip where those packages are absent and stay out of the matplotlib-blocked
+# boundary run; xy.pyplot stays matplotlib-free either way.
+# filename -> required importable modules
+REQUIRES: dict[str, tuple[str, ...]] = {
+    "59_pandas_datetime_plot.py": ("pandas", "matplotlib"),
+}
+
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 HTML_MAGIC = "<!doctype html>"
 NOTEBOOK_HTML_MAGIC = '<iframe class="xy-notebook-frame"'
@@ -69,12 +78,19 @@ def _corpus_params() -> list[Any]:
 
 def test_corpus_is_populated() -> None:
     assert len(CORPUS) >= 35, f"corpus shrank to {len(CORPUS)} snippets"
-    unknown = set(XFAILS) - {p.name for p in CORPUS}
-    assert not unknown, f"XFAILS names missing snippets: {sorted(unknown)}"
+    unknown = (set(XFAILS) | set(REQUIRES)) - {p.name for p in CORPUS}
+    assert not unknown, f"XFAILS/REQUIRES name missing snippets: {sorted(unknown)}"
+
+
+def require_snippet_inputs(path: pathlib.Path) -> None:
+    """Skip a snippet whose declared input libraries are not installed."""
+    for module in REQUIRES.get(path.name, ()):
+        pytest.importorskip(module)
 
 
 @pytest.mark.parametrize("path", _corpus_params())
 def test_corpus_snippet(path: pathlib.Path) -> None:
+    require_snippet_inputs(path)
     plt.close("all")
     namespace: dict[str, Any] = {"__name__": "__main__", "__file__": str(path)}
     try:

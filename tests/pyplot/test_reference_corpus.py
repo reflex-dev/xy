@@ -11,7 +11,7 @@ from io import BytesIO
 
 import numpy as np
 import pytest
-from tests.pyplot.test_corpus import CORPUS
+from tests.pyplot.test_corpus import CORPUS, require_snippet_inputs
 
 import xy.pyplot as xyplt
 
@@ -19,7 +19,8 @@ import xy.pyplot as xyplt
 def _adapt_reference_source(path: pathlib.Path, source: str) -> str:
     """Normalize the few intentional xy shorthand signatures for Matplotlib.
 
-    The source corpus remains dependency-free.  Matplotlib's triangular APIs
+    The source corpus needs no plotting dependency beyond the engine under
+    test (pandas, a dev-group input library, feeds one case).  Matplotlib's triangular APIs
     require a ``Triangulation`` positional object where xy also accepts a
     ``triangles=`` keyword alongside x/y arrays.
     """
@@ -129,6 +130,7 @@ def _artifact_geometry(path: pathlib.Path) -> tuple[float, float]:
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
 def test_corpus_in_isolated_reference_process(path: pathlib.Path, tmp_path: pathlib.Path) -> None:
+    require_snippet_inputs(path)
     artifacts = {engine: tmp_path / f"{engine}.png" for engine in ("xy", "matplotlib")}
     for engine, artifact in artifacts.items():
         _run_engine(path, engine, artifact)

@@ -12,6 +12,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from tests.pyplot.test_corpus import REQUIRES
 
 from xy.pyplot._translate import check_unsupported, not_implemented
 
@@ -106,8 +107,13 @@ def test_unsupported_errors_link_to_support_requests() -> None:
 
 
 def test_complete_supported_corpus_runs_when_matplotlib_imports_fail() -> None:
-    """Every advertised plotting method remains usable in dependency-free installs."""
+    """Every advertised plotting method remains usable in dependency-free installs.
+
+    Snippets whose input library itself needs matplotlib (pandas' plotting
+    backend) are the only exclusions; the shim is still asserted
+    matplotlib-free by ``test_shim_import_stays_light``."""
     corpus = Path(__file__).with_name("corpus")
+    needs_matplotlib = sorted(name for name, modules in REQUIRES.items() if "matplotlib" in modules)
     _run_fresh(
         f"""
         import builtins
@@ -123,6 +129,8 @@ def test_complete_supported_corpus_runs_when_matplotlib_imports_fail() -> None:
 
         import xy.pyplot as plt
         for path in sorted(pathlib.Path({str(corpus)!r}).glob("[0-9][0-9]_*.py")):
+            if path.name in {needs_matplotlib!r}:
+                continue
             runpy.run_path(path, run_name="__main__")
             for figure in tuple(__import__("xy.pyplot._state", fromlist=["all_figures"]).all_figures()):
                 assert figure._repr_html_().startswith('<iframe class="xy-notebook-frame"')
