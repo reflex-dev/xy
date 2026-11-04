@@ -454,3 +454,30 @@ def test_browser_relative_tick_label_font_resolves_where_labels_paint() -> None:
     )
     payload = _probe(chart, _LABELS_FONT_PROBE, "data-xy-labels-font", "labels_font")
     assert payload["resolved"] == pytest.approx(payload["painted"]), payload
+
+
+_THEME_FONT_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    const before = view._slotFontSize("tick_label", 0);
+    // A theme change that moves the inherited font, then the public refresh.
+    view.root.style.fontSize = `${2 * parseFloat(getComputedStyle(view.root).fontSize)}px`;
+    view.refreshTheme();
+    const after = view._slotFontSize("tick_label", 0);
+    document.body.setAttribute("data-xy-theme-font", JSON.stringify({ before, after }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-theme-font-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_relative_slot_font_is_remeasured_on_theme_refresh() -> None:
+    chart = _stores_chart(height=300, styles={"tick_label": {"font_size": "1.5em"}})
+    payload = _probe(chart, _THEME_FONT_PROBE, "data-xy-theme-font", "theme_font")
+    assert payload["after"] == pytest.approx(2 * payload["before"]), payload

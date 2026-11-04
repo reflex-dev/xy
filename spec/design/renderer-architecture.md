@@ -388,7 +388,7 @@ resolves the slot size to the px it paints: `_cssFontPx` reads non-px units
 is 2. The `tick_label` slot probes in the `labels` layer the tick labels paint
 in (itself a stylable slot), once that layer exists; every other slot probes in
 the chart root. Results are cached by host and value, and the cache is cleared
-on every `_layout`, because a relative size follows a context that a resize or
+on every `_layout` and `refreshTheme`, because a relative size follows a context that a resize or
 theme change can move. The static exporters accept px only. Any other unit
 falls back to the axis size there, which is also the size they paint.
 

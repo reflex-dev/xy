@@ -9202,6 +9202,9 @@ export class ChartView {
   refreshTheme() {
     if (this._destroyed) return;
     this._applyTheme();
+    // A theme can move the font a relative slot size resolves against; the
+    // draw below re-targets ticks from it, so measure those sizes again.
+    this._cssFontPxCache = null;
     this._markBestLegendsDirty();
     this.draw();
   }
