@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import xy
-from xy import _paint
+from xy import _paint, kernels
 from xy._figure import Figure
 
 
@@ -187,6 +187,25 @@ def test_triangle_mesh_boundary_merges_vertices_across_bucket_edges() -> None:
 
     assert boundary is not None
     assert boundary.shape == (4, 2)
+
+
+def test_triangle_mesh_boundary_snaps_each_axis_at_its_own_scale() -> None:
+    # fill_betweenx(y, dates, dates[0]): epoch-ms x against unit y, pinched at
+    # the first row. One shared span would merge every y level into one bucket.
+    day = 86_400_000.0
+    y = np.arange(4.0)
+    left = np.full(4, 1.767e12)
+    right = left + y * day
+    vertices_x = np.column_stack((left, right))
+    vertices_y = np.column_stack((y, y))
+    *mesh, _ = kernels.quad_mesh_triangles(vertices_x, vertices_y, np.zeros((3, 1)))
+
+    boundary = _paint.triangle_mesh_boundary(*mesh)
+
+    assert boundary is not None
+    corners = {(float(px), float(py)) for px, py in boundary}
+    assert {(left[0], 0.0), (left[0], 3.0), (right[3], 3.0)} <= corners
+    assert {py for _, py in corners} == {0.0, 1.0, 2.0, 3.0}
 
 
 def test_new_marks_reject_invalid_inputs_without_mutating_figure() -> None:

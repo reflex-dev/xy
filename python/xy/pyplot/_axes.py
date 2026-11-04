@@ -42,6 +42,7 @@ from ._artists import (
     PolyCollection,
     Text,
     _PatchFacade,
+    masked_coordinates,
     unit_converted_values,
 )
 from ._colors import (
@@ -3181,33 +3182,10 @@ class Axes(PlotTypeMixin):
             raise not_implemented("fill_between(transform=...)")
         check_unsupported(kwargs, "fill_between()")
 
-        from xy.components import _is_datetime_like
-
-        # Convert temporal x coordinates to epoch milliseconds while preserving
-        # masked entries and snapshot metadata for datetime-axis detection.
-        is_datetime_x = False
-        if np.ma.isMaskedArray(x):
-            compressed = x.compressed()
-            if (len(compressed) > 0 and _is_datetime_like(compressed)) or _is_datetime_like(x.data):
-                is_datetime_x = True
-
-            if is_datetime_x:
-                # Fill masked points with NaT so unit_converted_values transforms
-                # dates to float milliseconds without failing on MaskedConstant,
-                # then reapply the mask to break polygon intervals.
-                raw_conv = unit_converted_values(x.filled(np.datetime64("NaT", "ms")))
-                conv_x = np.ma.array(raw_conv, mask=x.mask)
-            else:
-                conv_x = x
-        else:
-            is_datetime_x = _is_datetime_like(x)
-            conv_x = unit_converted_values(x) if is_datetime_x else x
-
-        xv, upper, lower = np.broadcast_arrays(
-            _masked_float(conv_x),
-            _masked_float(y1),
-            _masked_float(y2),
-        )
+        # Datetime x becomes ms since epoch; the entries keep its identity so
+        # the rendered axis stays a time axis.
+        x_values, is_datetime_x = masked_coordinates(x)
+        xv, upper, lower = np.broadcast_arrays(x_values, _masked_float(y1), _masked_float(y2))
         if transform == "xaxis transform":
             lo, hi = self._entry_extent("y")
             upper = lo + upper * (hi - lo)
@@ -4277,8 +4255,8 @@ class Axes(PlotTypeMixin):
                 current_start = auto_start
             if not np.isfinite(current_end) or current_end <= 0:
                 current_end = auto_end
-        start = float(current_start if left is None else left)
-        end = float(current_end if right is None else right)
+        start = current_start if left is None else self._limit_coordinate(left, "x")
+        end = current_end if right is None else self._limit_coordinate(right, "x")
         if not np.isfinite((start, end)).all():
             raise ValueError("Axis limits cannot be NaN or Inf")
         if spec["name"] == "log":
@@ -4340,8 +4318,8 @@ class Axes(PlotTypeMixin):
                 current_start = auto_start
             if not np.isfinite(current_end) or current_end <= 0:
                 current_end = auto_end
-        start = float(current_start if bottom is None else bottom)
-        end = float(current_end if top is None else top)
+        start = current_start if bottom is None else self._limit_coordinate(bottom, "y")
+        end = current_end if top is None else self._limit_coordinate(top, "y")
         if not np.isfinite((start, end)).all():
             raise ValueError("Axis limits cannot be NaN or Inf")
         if spec["name"] == "log":
@@ -4502,6 +4480,23 @@ class Axes(PlotTypeMixin):
             for ax in (_SharedAxesGroup(axis).get_siblings(self) if shared else [self])
             for entry in ax._entries
         )
+
+    def _limit_coordinate(self, value: Any, axis: str) -> float:
+        """A view-limit endpoint as the engine's float.
+
+        Numbers pass through. Datetime-likes, and date strings on a datetime
+        axis, become ms since epoch like the data they bound (NaT becomes NaN,
+        which the caller rejects). Shared siblings count toward the datetime
+        check because shared axes share one view.
+        """
+        if isinstance(value, str):
+            parsed = (
+                _parse_date_text(value) if self._axis_holds_datetimes(axis, shared=True) else None
+            )
+            if parsed is None:
+                return float(value)
+            value = parsed
+        return float(np.asarray(unit_converted_values(np.asarray([value])), dtype=np.float64)[0])
 
     def _data_coordinate(self, value: Any, axis: str) -> Optional[float]:
         """A data-space coordinate as the engine's float — numbers directly,
@@ -8765,13 +8760,15 @@ class Axes(PlotTypeMixin):
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         self._inherit_shared_axis_state("x", x_props)
         self._inherit_shared_axis_state("y", y_props)
-        # fill_between retains datetime identity after converting its geometry
-        # to f64 milliseconds. Carry it into the rendered axis (dossier §16),
-        # without overriding explicit scales or persisting an inferred type.
-        if self._scale_specs["x"]["name"] == "linear" and self._axis_holds_datetimes(
-            "x", shared=True
-        ):
-            x_props.setdefault("type_", "time")
+        # fill_between/fill_betweenx retain datetime identity after converting
+        # their geometry to f64 milliseconds. Carry it into the rendered axes
+        # (dossier §16), without overriding explicit scales or persisting an
+        # inferred type.
+        for axis, props in (("x", x_props), ("y", y_props)):
+            if self._scale_specs[axis]["name"] == "linear" and self._axis_holds_datetimes(
+                axis, shared=True
+            ):
+                props.setdefault("type_", "time")
         rotation_source = self._shared_ticker_source("x")
         if (
             rotation_source._tick_rotation_modes.get("x") == "xtick"

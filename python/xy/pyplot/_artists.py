@@ -47,6 +47,22 @@ def unit_converted_values(values: Any) -> Any:
     return values
 
 
+def masked_coordinates(values: Any) -> tuple[np.ndarray, bool]:
+    """Coordinates as f64 with masked and missing entries NaN, and whether
+    they were datetime-like (converted to ms since epoch, as plotted data is)."""
+    from xy.components import _is_datetime_like
+
+    masked = np.ma.isMaskedArray(values)
+    if not _is_datetime_like(values.compressed() if masked else values):
+        return np.ma.asarray(values, dtype=np.float64).filled(np.nan), False
+    if not masked:
+        return np.asarray(unit_converted_values(values), dtype=np.float64), True
+    # Masked slots become NaT before conversion: a MaskedConstant is not
+    # datetime-like, and the slot's stored value need not be either.
+    converted = unit_converted_values(values.filled(np.datetime64("NaT", "ms")))
+    return np.where(np.ma.getmaskarray(values), np.nan, converted), True
+
+
 def _set_entry_clim(artist: "Artist", vmin: Any = None, vmax: Any = None) -> None:
     """Set a mappable entry's color domain, autoscaling any side left as None."""
     if vmax is None and isinstance(vmin, (tuple, list)):

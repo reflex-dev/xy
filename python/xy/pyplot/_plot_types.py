@@ -36,6 +36,7 @@ from ._artists import (
     Text,
     Wedge,
     _contour_legend_colors,
+    masked_coordinates,
 )
 from ._colors import (
     PROP_CYCLE,
@@ -1555,11 +1556,20 @@ class PlotTypeMixin:
         if data is not None:
             # resolve string keys before any float coercion sees them
             y, x1, x2 = (_from_data(value, data) for value in (y, x1, x2))
-        yv, left, right = np.broadcast_arrays(
-            _masked_float(y),
-            _masked_float(x1),
-            _masked_float(x2),
+        # Datetime coordinates become ms since epoch; the entries keep their
+        # identity so the rendered axes stay time axes.
+        (y_values, datetime_y), (left, datetime_left), (right, datetime_right) = (
+            masked_coordinates(value) for value in (y, x1, x2)
         )
+        yv, left, right = np.broadcast_arrays(y_values, left, right)
+        datetime_flags = {
+            key: True
+            for key, flag in (
+                ("_datetime_x", datetime_left or datetime_right),
+                ("_datetime_y", datetime_y),
+            )
+            if flag
+        }
         if yv.ndim != 1 or len(yv) < 2:
             raise ValueError(
                 "fill_betweenx inputs must resolve to 1-D arrays with at least two points"
@@ -1620,6 +1630,7 @@ class PlotTypeMixin:
                             **mark_kwargs,
                             "name": mark_kwargs.get("name") if not entries else None,
                         },
+                        **datetime_flags,
                     },
                 )
             )
@@ -1634,7 +1645,7 @@ class PlotTypeMixin:
                     },
                 )
             )
-        return PolyCollection(self, entries[0])
+        return PolyCollection(self, entries[0], companion_entries=entries[1:])
 
     def fill(self, *args: Any, data: TableLike = None, **kwargs: Any) -> list[PolyCollection]:
         """Draw filled polygons from ``x, y[, color]`` argument groups.

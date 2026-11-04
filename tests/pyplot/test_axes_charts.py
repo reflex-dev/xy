@@ -265,6 +265,56 @@ def test_removed_datetime_fill_does_not_leave_numeric_axis_as_time() -> None:
     assert payload["x_axis"]["kind"] == "linear"
 
 
+def _mesh_coordinates(ax: plt.Axes, axis: str) -> np.ndarray:
+    meshes = [entry for entry in ax._entries if entry.get("factory") == "triangle_mesh"]
+    offset = 0 if axis == "x" else 1
+    return np.concatenate([np.ravel(entry["args"][offset::2]) for entry in meshes])
+
+
+@pytest.mark.parametrize("date_kind", ["python", "numpy", "masked"])
+@pytest.mark.parametrize("date_axis", ["x", "y"])
+def test_fill_betweenx_accepts_datetime_coordinates(date_kind: str, date_axis: str) -> None:
+    fig, ax = plt.subplots()
+    dates: Any = [datetime(2026, 1, day) for day in range(1, 6)]
+    if date_kind == "numpy":
+        dates = np.asarray(dates, dtype="datetime64[D]")
+    elif date_kind == "masked":
+        dates = np.ma.masked_array(dates, mask=[False, False, True, False, False])
+    values = [1.0, 2.0, 3.0, 4.0, 5.0]
+    if date_axis == "x":
+        ax.fill_betweenx(values, dates, datetime(2026, 1, 1))
+    else:
+        ax.fill_betweenx(dates, values)
+
+    expected_ms = np.asarray(
+        [datetime(2026, 1, day) for day in (1, 2, 4, 5)] if date_kind == "masked" else dates,
+        dtype="datetime64[ms]",
+    ).astype(np.float64)
+    coordinates = _mesh_coordinates(ax, date_axis)
+    assert set(np.unique(coordinates)) <= set(expected_ms)
+    assert len([entry for entry in ax._entries if entry.get("factory")]) == (
+        2 if date_kind == "masked" else 1
+    )
+    payload, _ = ax._build_chart(*fig._panel_px()).figure().build_payload()
+    other = "y" if date_axis == "x" else "x"
+    assert payload[f"{date_axis}_axis"]["kind"] == "time"
+    assert payload[f"{other}_axis"]["kind"] == "linear"
+
+
+def test_split_datetime_fill_betweenx_removal_restores_numeric_axis() -> None:
+    _fig, ax = plt.subplots()
+    dates = [datetime(2026, 1, day) for day in range(1, 6)]
+    fill = ax.fill_betweenx(dates, 1.0, where=[True, True, False, True, True])
+    assert len(ax._entries) == 2
+    fill.set_zorder(3)
+    assert all(entry["_zorder"] == 3.0 for entry in ax._entries)
+    fill.remove()
+    assert ax._entries == []
+    ax.fill_betweenx([0.0, 1.0], 1.0)
+    payload, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert payload["y_axis"]["kind"] == "linear"
+
+
 def test_fill_betweenx_static_export_joins_dense_triangle_strip(monkeypatch) -> None:
     from xy import _raster
 

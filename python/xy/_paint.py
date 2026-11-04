@@ -31,15 +31,19 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
     n = min((len(values) for values in arrays), default=0)
     if n == 0:
         return None
-    coordinates = np.concatenate([values[:n] for values in arrays])
-    if not np.isfinite(coordinates).all():
+    xs = np.concatenate([values[:n] for values in arrays[0::2]])
+    ys = np.concatenate([values[:n] for values in arrays[1::2]])
+    if not (np.isfinite(xs).all() and np.isfinite(ys).all()):
         return None
-    span = float(coordinates.max() - coordinates.min())
     # Each triangle coordinate is transported in an independently offset
     # float32 column, so the same source vertex may decode a few ULPs apart in
     # x0/x1/x2. The joined-fill flag is only used for one simple polygon; a
     # generous relative bucket is still far below meaningful edge spacing.
-    tolerance = max(span * 2e-5, 1e-12)
+    # Each axis gets its own bucket: x and y units are unrelated (epoch-ms
+    # dates against unit values), so one shared span would merge every vertex
+    # along the smaller axis.
+    tolerance_x = max(float(np.ptp(xs)) * 2e-5, 1e-12)
+    tolerance_y = max(float(np.ptp(ys)) * 2e-5, 1e-12)
 
     # A single rounded bucket is not a proximity test: two float32-decoded
     # copies of one source vertex can straddle its boundary. Search the
@@ -48,7 +52,7 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
     points_by_key: list[tuple[float, float]] = []
 
     def vertex_key(point: tuple[float, float]) -> int:
-        cell = (math.floor(point[0] / tolerance), math.floor(point[1] / tolerance))
+        cell = (math.floor(point[0] / tolerance_x), math.floor(point[1] / tolerance_y))
         best: int | None = None
         best_distance = math.inf
         for dx in (-1, 0, 1):
@@ -56,8 +60,8 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
                 for candidate in buckets.get((cell[0] + dx, cell[1] + dy), ()):
                     other = points_by_key[candidate]
                     delta_x, delta_y = abs(point[0] - other[0]), abs(point[1] - other[1])
-                    if delta_x <= tolerance and delta_y <= tolerance:
-                        distance = delta_x * delta_x + delta_y * delta_y
+                    if delta_x <= tolerance_x and delta_y <= tolerance_y:
+                        distance = (delta_x / tolerance_x) ** 2 + (delta_y / tolerance_y) ** 2
                         if distance < best_distance:
                             best, best_distance = candidate, distance
         if best is not None:

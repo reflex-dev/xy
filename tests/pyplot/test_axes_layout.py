@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import builtins
+from datetime import date, datetime
 
+import numpy as np
 import pytest
 from tests.svg_test_utils import tick_label_positions
 
@@ -294,3 +296,67 @@ def test_set_anchor_accepts_mpl_anchor_codes_and_rejects_unknown() -> None:
 
     with pytest.raises(ValueError, match="unsupported anchor"):
         ax.set_anchor("baseline")
+
+
+_DATES = [datetime(2026, 1, day) for day in range(1, 6)]
+
+
+def _ms(value: str) -> float:
+    return float(np.datetime64(value, "ms").astype(np.float64))
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        (datetime(2026, 1, 2), datetime(2026, 1, 4)),
+        (date(2026, 1, 2), date(2026, 1, 4)),
+        (np.datetime64("2026-01-02"), np.datetime64("2026-01-04T00:00")),
+        ("2026-01-02", "2026-01-04"),
+    ],
+)
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_date_axis_limits_accept_datetime_likes_and_date_strings(bounds, axis: str) -> None:
+    fig, ax = plt.subplots()
+    if axis == "x":
+        ax.plot(_DATES, range(5))
+        ax.set_xlim(*bounds)
+        limits = ax.get_xlim()
+    else:
+        ax.plot(range(5), _DATES)
+        ax.set_ylim(bounds)
+        limits = ax.get_ylim()
+    assert limits == (_ms("2026-01-02"), _ms("2026-01-04"))
+    payload, _ = ax._build_chart(*fig._panel_px()).figure().build_payload()
+    assert payload[f"{axis}_axis"]["kind"] == "time"
+    assert payload[f"{axis}_axis"]["domain"] == [_ms("2026-01-02"), _ms("2026-01-04")]
+
+
+def test_date_limits_through_pyplot_bound_and_one_sided_forms() -> None:
+    _fig, ax = plt.subplots()
+    ax.fill_between(_DATES, range(5))
+    plt.xlim(None, datetime(2026, 1, 4))
+    assert ax.get_xlim()[1] == _ms("2026-01-04")
+    ax.set_xlim(("2026-01-02", None))
+    assert ax.get_xlim() == (_ms("2026-01-02"), _ms("2026-01-04"))
+    ax.set_xbound(datetime(2026, 1, 3), None)
+    assert ax.get_xbound() == (_ms("2026-01-03"), _ms("2026-01-04"))
+    ax.set_xlim(datetime(2026, 1, 4), datetime(2026, 1, 2))
+    assert ax.get_xlim() == (_ms("2026-01-04"), _ms("2026-01-02"))
+
+
+def test_date_string_limits_follow_a_shared_date_axis() -> None:
+    _fig, (top, bottom) = plt.subplots(2, sharex=True)
+    top.plot(_DATES, range(5))
+    bottom.set_xlim("2026-01-02", "2026-01-04")
+    assert top.get_xlim() == (_ms("2026-01-02"), _ms("2026-01-04"))
+
+
+def test_limits_reject_nat_and_date_strings_on_numeric_axes() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot(_DATES, range(5))
+    with pytest.raises(ValueError, match="cannot be NaN"):
+        ax.set_xlim(np.datetime64("NaT", "ms"), datetime(2026, 1, 3))
+    with pytest.raises(ValueError, match="could not convert"):
+        ax.set_ylim("2026-01-02", "2026-01-04")
+    ax.set_ylim("1", "3")
+    assert ax.get_ylim() == (1.0, 3.0)
