@@ -1512,9 +1512,7 @@ author expects.
   become visible or hidden also remeasure the gutters and positioned chrome;
   only a change to plot width or height requests the usual size-dependent LOD
   refinement. `refreshTheme()` uses the same rule as automatic theme changes.
-  During context loss, both defer theme and layout updates so the retained
-  frame is not cleared by resizing the canvases. The first drawable frame
-  applies the pending theme and layout before rendering (§18).
+During context loss, theme refreshes defer paint-dependent layout updates; the retained frame remains unchanged. The first drawable frame applies the pending theme and layout before rendering (§18).
 - **Programmatic parity.** Everything a token sets is also settable from Python
   (`fig.theme(...)`) so notebook users who never touch CSS get the same control; the
   CSS bridge is the web-author's path to the same renderer state, not a separate system.
