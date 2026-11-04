@@ -295,6 +295,10 @@ html .ReflexSearch-overlay :is(.ReflexSearch-escape, .ReflexSearch-hit, .ReflexS
   letter-spacing: normal;
 }
 
+.docs-page-footer [role="group"][aria-label="Color theme"] {
+  border-radius: var(--docs-control-radius);
+}
+
 .docs-page-footer button {
   border-radius: var(--docs-control-radius);
   font-family: var(--font-heading);
@@ -323,7 +327,28 @@ html .ReflexSearch-overlay :is(.ReflexSearch-escape, .ReflexSearch-hit, .ReflexS
     border-radius: 20px;
   }
 
-  html .ReflexSearch-overlay .ReflexSearch-inputRow,
+  html .ReflexSearch-overlay .ReflexSearch-inputRow {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+
+  html .ReflexSearch-overlay .ReflexSearch-inputIcon > svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  html .ReflexSearch-overlay .ReflexSearch-input::placeholder {
+    font-size: 14px;
+  }
+
+  html .ReflexSearch-overlay .ReflexSearch-actions {
+    display: flex;
+  }
+
+  html .ReflexSearch-overlay .ReflexSearch-actionSlot:empty {
+    display: none;
+  }
+
   html .ReflexSearch-overlay .ReflexSearch-footer {
     padding-inline: 16px;
   }

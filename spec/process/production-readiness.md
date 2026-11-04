@@ -337,6 +337,7 @@ and headings, Inter compact navigation/internal UI, Geist 525 actions, 8px contr
 corners, 12px fields, and neutral light/dark tokens. The app-owned
 `--docs-control-radius` isolates chrome from Radix live-example radius settings;
 footer actions retain 8px corners and Geist 525 in the rendered production DOM.
+The footer color-theme group and its three buttons use the same 8px radius.
 Light uses #FDFCFC canvas,
 #0A0A0A ink, #6B6B6B secondary text, #F5F5F5/#F9F9F9 quiet surfaces, #E5E5E5
 borders, and #1F1F1F primary actions (#333 hover). Preserve dark mode with neutral

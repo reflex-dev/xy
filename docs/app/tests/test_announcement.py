@@ -38,7 +38,13 @@ def test_production_announcement_matches_marketing_and_persists_dismissal() -> N
             )
             expect(link).to_have_attribute("target", "_blank")
             assert {"noopener", "noreferrer"} <= set((link.get_attribute("rel") or "").split())
-            assert page.locator(".docs-nav-frame").bounding_box()["height"] == (104)
+            assert page.locator(".docs-nav-frame").bounding_box()["height"] == 104
+            theme_group = page.get_by_role("group", name="Color theme")
+            expect(theme_group).to_have_css("border-top-left-radius", "8px")
+            for mode in ("system", "light", "dark"):
+                expect(
+                    theme_group.get_by_role("button", name=f"Toggle {mode} color mode")
+                ).to_have_css("border-top-left-radius", "8px")
             message = banner.locator(".announcement-shimmer").bounding_box()
             assert 0 <= message["x"] < message["x"] + message["width"] <= width
             cta = banner.get_by_text("Read more", exact=True)
