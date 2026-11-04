@@ -41,7 +41,7 @@ def test_environment_provisions_toolchain_and_notebook_stack() -> None:
     # wheels in postBuild (smaller solve, and mamba extraction on mybinder
     # builder nodes has proven flaky).
     specs = dict(spec.split("=", 1) for spec in dependencies if "=" in spec)
-    assert specs.get("rust") == "1.88.*"
+    assert specs.get("rust") == "1.99.*"
     assert specs.get("nodejs") == "22.*"
     assert not names - {"rust", "nodejs", "python"}
 
