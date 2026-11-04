@@ -1653,11 +1653,14 @@ class Axes(PlotTypeMixin):
 
     def _invalidate(self) -> None:
         host = self._y2_of or self
-        host._chart = None
         # Shared render domains are a snapshot from the preceding Figure
         # materialization pass. Any artist/limit mutation must make the next
         # pass discover the group's new final view before clipping axlines.
-        host.__dict__.pop("_shared_render_domains", None)
+        # Date units are inferred across shared x axes too: a sibling cached
+        # before a date artist was added or removed must refresh its ticks.
+        for ax in _SharedAxesGroup("x").get_siblings(host):
+            ax._chart = None
+            ax.__dict__.pop("_shared_render_domains", None)
         if host.figure is not None:
             host.figure._invalidate()
 
@@ -3177,8 +3180,31 @@ class Axes(PlotTypeMixin):
         if transform not in (None, "xaxis transform"):
             raise not_implemented("fill_between(transform=...)")
         check_unsupported(kwargs, "fill_between()")
+
+        from xy.components import _is_datetime_like
+
+        # Convert temporal x coordinates to epoch milliseconds while preserving
+        # masked entries and snapshot metadata for datetime-axis detection.
+        is_datetime_x = False
+        if np.ma.isMaskedArray(x):
+            compressed = x.compressed()
+            if (len(compressed) > 0 and _is_datetime_like(compressed)) or _is_datetime_like(x.data):
+                is_datetime_x = True
+
+            if is_datetime_x:
+                # Fill masked points with NaT so unit_converted_values transforms
+                # dates to float milliseconds without failing on MaskedConstant,
+                # then reapply the mask to break polygon intervals.
+                raw_conv = unit_converted_values(x.filled(np.datetime64("NaT", "ms")))
+                conv_x = np.ma.array(raw_conv, mask=x.mask)
+            else:
+                conv_x = x
+        else:
+            is_datetime_x = _is_datetime_like(x)
+            conv_x = unit_converted_values(x) if is_datetime_x else x
+
         xv, upper, lower = np.broadcast_arrays(
-            _masked_float(x),
+            _masked_float(conv_x),
             _masked_float(y1),
             _masked_float(y2),
         )
@@ -3233,24 +3259,23 @@ class Axes(PlotTypeMixin):
             if step is not None:
                 sx, su = _step_values(sx, su, step)
                 _sx, sl = _step_values(xv[start:end], sl, step)
-            entries.append(
-                self._add(
-                    "area",
-                    {
-                        "x": sx,
-                        "y": su,
-                        "kwargs": {
-                            "base": sl,
-                            "color": resolved_color,
-                            "opacity": float(alpha) if alpha is not None else 1.0,
-                            "line_width": float(rcParams["patch.linewidth"]) * self._point_scale(),
-                            "line_opacity": float(alpha) if alpha is not None else 1.0,
-                            "stroke_perimeter": True,
-                            "name": str(label) if label is not None and not entries else None,
-                        },
-                    },
-                )
-            )
+            area_dict = {
+                "x": sx,
+                "y": su,
+                "kwargs": {
+                    "base": sl,
+                    "color": resolved_color,
+                    "opacity": float(alpha) if alpha is not None else 1.0,
+                    "line_width": float(rcParams["patch.linewidth"]) * self._point_scale(),
+                    "line_opacity": float(alpha) if alpha is not None else 1.0,
+                    "stroke_perimeter": True,
+                    "name": str(label) if label is not None and not entries else None,
+                },
+            }
+            if is_datetime_x:
+                area_dict["_datetime_x"] = True
+
+            entries.append(self._add("area", area_dict))
         if interpolate:
             # A single selected point between deselected neighbors spans no
             # interval, but matplotlib still draws its interpolated wedge.
@@ -3279,27 +3304,22 @@ class Axes(PlotTypeMixin):
                                 su.append(cross_y)
                                 sl.append(cross_y)
                 if len(sx) >= 2:
-                    entries.append(
-                        self._add(
-                            "area",
-                            {
-                                "x": np.asarray(sx),
-                                "y": np.asarray(su),
-                                "kwargs": {
-                                    "base": np.asarray(sl),
-                                    "color": resolved_color,
-                                    "opacity": float(alpha) if alpha is not None else 1.0,
-                                    "line_width": float(rcParams["patch.linewidth"])
-                                    * self._point_scale(),
-                                    "line_opacity": float(alpha) if alpha is not None else 1.0,
-                                    "stroke_perimeter": True,
-                                    "name": str(label)
-                                    if label is not None and not entries
-                                    else None,
-                                },
-                            },
-                        )
-                    )
+                    interp_dict = {
+                        "x": np.asarray(sx),
+                        "y": np.asarray(su),
+                        "kwargs": {
+                            "base": np.asarray(sl),
+                            "color": resolved_color,
+                            "opacity": float(alpha) if alpha is not None else 1.0,
+                            "line_width": float(rcParams["patch.linewidth"]) * self._point_scale(),
+                            "line_opacity": float(alpha) if alpha is not None else 1.0,
+                            "stroke_perimeter": True,
+                            "name": str(label) if label is not None and not entries else None,
+                        },
+                    }
+                    if is_datetime_x:
+                        interp_dict["_datetime_x"] = True
+                    entries.append(self._add("area", interp_dict))
         if not entries:
             # Matplotlib still returns a collection handle, but there is no
             # polygon to retain when no pair of adjacent points is selected.
@@ -3318,7 +3338,7 @@ class Axes(PlotTypeMixin):
                 },
             }
             return PolyCollection(self, empty)
-        return PolyCollection(self, entries[0])
+        return PolyCollection(self, entries[0], companion_entries=entries[1:])
 
     def imshow(self, z: ArrayLike, cmap: Any = None, **kwargs: Any) -> AxesImage:
         """Display a 2-D scalar array or RGB(A) image.
@@ -4463,11 +4483,25 @@ class Axes(PlotTypeMixin):
         self._figure_rect = _parse_bounds(position, "set_position()")
         self._invalidate()
 
-    def _axis_holds_datetimes(self, axis: str) -> bool:
+    def _axis_holds_datetimes(self, axis: str, *, shared: bool = False) -> bool:
         from xy.components import _is_datetime_like
 
         key = "x" if axis == "x" else "y"
-        return any(key in entry and _is_datetime_like(entry[key]) for entry in self._entries)
+        datetime_key = f"_datetime_{key}"
+
+        def _is_datetime_value(val: Any) -> bool:
+            if np.ma.isMaskedArray(val):
+                comp = val.compressed()
+                if len(comp) > 0:
+                    return _is_datetime_like(comp)
+                return _is_datetime_like(val.data)
+            return _is_datetime_like(val)
+
+        return any(
+            entry.get(datetime_key, False) or (key in entry and _is_datetime_value(entry[key]))
+            for ax in (_SharedAxesGroup(axis).get_siblings(self) if shared else [self])
+            for entry in ax._entries
+        )
 
     def _data_coordinate(self, value: Any, axis: str) -> Optional[float]:
         """A data-space coordinate as the engine's float — numbers directly,
@@ -8731,6 +8765,13 @@ class Axes(PlotTypeMixin):
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         self._inherit_shared_axis_state("x", x_props)
         self._inherit_shared_axis_state("y", y_props)
+        # fill_between retains datetime identity after converting its geometry
+        # to f64 milliseconds. Carry it into the rendered axis (dossier §16),
+        # without overriding explicit scales or persisting an inferred type.
+        if self._scale_specs["x"]["name"] == "linear" and self._axis_holds_datetimes(
+            "x", shared=True
+        ):
+            x_props.setdefault("type_", "time")
         rotation_source = self._shared_ticker_source("x")
         if (
             rotation_source._tick_rotation_modes.get("x") == "xtick"
