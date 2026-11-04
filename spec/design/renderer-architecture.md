@@ -350,7 +350,47 @@ raster renderers.
 **Category.** Positions are integer category indices. `categoryTicks` clamps
 the visible index range to `[0, categories.length − 1]`, then strides it by
 `max(1, ceil(visible / target))`, so labels thin out as more categories come
-into view rather than overlapping.
+into view rather than overlapping (`_category_ticks` mirrors it).
+
+On a **vertical** Cartesian category axis without an authored `tick_count`, the
+`target` is the number of one-line labels that fit, `max(1, min(200, floor(h /
+(size × 1.6))))`; a plot too short for three rows shows one label rather than
+three overlapping ones. The 200 cap lives in this target, not in the stride:
+a tall axis then strides at most 200 labels across every row (the client's
+`categoryTicks` otherwise cut its list off after the 200th while the static
+exporters labelled all of them). Polar category theta, whose target is one
+spoke per category, is untouched by this cap. The static `_category_ticks` has
+no output bound, so the exporters draw every spoke. The client's
+`categoryTicks` keeps the generator bound below and stops after 200 entries,
+so a polar chart with more than 200 theta categories draws only its first 200
+spokes in the browser. That predates this cap and is a known divergence.
+`size` is the larger of the axis's own tick-label font size (≥ 8 px,
+default 11) and the `styles={"tick_label": ...}` slot font size, because the
+renderers resolve those two in opposite orders and the pitch has to fit
+whichever is painted (`_tick_label_slot_px`, `_slotFontSize`) —
+`CATEGORY_LABEL_PITCH` / `_CATEGORY_LABEL_PITCH`, via `_yTickTarget` and the
+vertical category branch of `axis_ticks`. It used the numeric density (one tick
+per 45 px of plot height), which assumed a few labelled values suffice; every
+category is a label someone needs, and a six-row horizontal bar chart at a
+dashboard height lost every other row. Horizontal category axes keep the
+80 px-per-tick target and their collision handling; polar category theta keeps
+one spoke per category; and a polar radial category axis (identified by its
+`hole` field, or `coords: "polar"` in the client) keeps the numeric density.
+
+The target assumes one-line labels, so the collision pass that follows
+(`_layoutTickLabels` / `_axis_tick_label_layout`) is the safety net for
+multi-line or rotated ones. On a vertical category axis it measures at the same
+painted size as the target (`_verticalCategoryLabelFont` /
+`_is_vertical_category_axis`), not at the axis's 11 px default. Measuring 24 px
+two-line labels at 11 px let ten of them overlap where five fit. The client
+resolves the slot size to the px it paints: `_cssFontPx` reads non-px units
+(`2rem`, `1.5em`) through a hidden probe element, because `parseFloat("2rem")`
+is 2. The `tick_label` slot probes in the `labels` layer the tick labels paint
+in (itself a stylable slot), once that layer exists; every other slot probes in
+the chart root. Results are cached by host and value, and the cache is cleared
+on every `_layout` and `refreshTheme`, because a relative size follows a context that a resize or
+theme change can move. The static exporters accept px only. Any other unit
+falls back to the axis size there, which is also the size they paint. The first `_layout` runs before the chart root exists, so a relative slot size falls back to its default there. `_needsMountedLayout` (a relative `title` or `tick_label` font, or an outside-top legend) makes `_buildDom`, or the first connected frame (`_healStaleTheme`), lay out again before painting. Without that, a `300%` title painted 36 px tall into the 14 px band the provisional layout reserved and lost its top above the canvas.
 
 **Time.** Time axes carry epoch milliseconds. `timeTicks` picks the first
 member of `TIME_STEPS` — a fixed ladder of 1/2/5/10/20/50/100/200/500 ms, then
@@ -363,8 +403,12 @@ stride from `1, 2, 3, 6, 12, 24, 60, 120` months and emits UTC month starts via
 by a fixed 30-day approximation. `calendarTicks` reports `step` back as
 `stepM * 30 * MS.d`, an approximation used only to choose a label format.
 
-**Bounds.** Every generator caps output at 200 ticks (`calendarTicks` at 1000)
-so a pathological domain cannot produce an unbounded loop or DOM label count.
+**Bounds.** Every client generator caps output at 200 ticks (`calendarTicks`
+at 1000) so a pathological domain cannot produce an unbounded loop or DOM label
+count. `categoryTicks` applies the bound by truncating its list, not by
+widening the stride. Callers that can exceed 200 categories cap their
+`target` instead (the vertical category target above). The static
+`_category_ticks` is unbounded.
 
 ### 6.2 Automatic label formats
 

@@ -39,7 +39,9 @@ def test_left_gutter_measures_y_tick_labels_once_for_an_outside_title(
 ) -> None:
     calls = 0
 
-    def measured_room(axis: dict[str, object], plot_h: float) -> tuple[float, float]:
+    def measured_room(
+        axis: dict[str, object], plot_h: float, slot_font_px: float | None = None
+    ) -> tuple[float, float]:
         nonlocal calls
         calls += 1
         assert axis["label"] == "Y"
