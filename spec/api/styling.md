@@ -678,22 +678,28 @@ Vega-Lite (right) also keep their default legends outside it.
 - **Height budget.** Above both of those, the box never takes more than the
   chart height leaves after the margins, the title, the top and bottom axis
   rooms, the 40 px plot floor and the 8 px gap (`_outside_legend_budget`, or
-  the inline `bandBudget` in `_layout`). This budget is a hard limit; the one-row
-  floor is not. On a card too short for one row, an explicit `"outside top"`
-  legend is clipped (static) or scrolls (browser) rather than pushing the plot
-  off the canvas: a 320×100 chart used to reserve a 30 px band and end its
-  plot 10 px below the canvas. A browser box cannot render below its own
-  padding and borders. When the budget is smaller than that (a `padding: 2em`
-  box needs 44 px), the client hides the box and reserves nothing rather than
-  paint it over the plot; a later layout with room restores the box's own
-  `visibility`, so an author's `visibility: hidden` stays hidden. Static
-  export already fits the box, frame included, inside the budget. The 30 % cap ignored the chrome that also
-  claims the height. The budget is first taken against the provisional axis
-  rooms. If the measured pass then grows them (a y title narrows the plot, so
-  the x labels rotate or stagger), the band shrinks by the shortfall before the
-  plot rect is fixed (`layout` / `_layout`). A chart too short for its own
-  title and axes even without a legend still overflows, as it does without
-  the band.
+  the inline `bandBudget` in `_layout`). This budget is a hard limit; the
+  one-row floor is not. The 30 % cap alone ignored the chrome that also claims
+  the height: a 320×100 chart reserved a 30 px band and ended its plot 10 px
+  below the canvas. On a card too short for one row, an explicit
+  `"outside top"` legend stays inside the budget instead of pushing the plot
+  off:
+  - Static export clips the box, frame included, to the budget, so it drops
+    rows (or all of them).
+  - The browser caps the box at the budget and scrolls it, as long as the
+    budget still covers the box's own padding and borders. A border-box cannot
+    render below that (a `padding: 2em` box needs 44 px). When the budget is
+    smaller, the client hides the box (`visibility: hidden`) rather than paint
+    it over the plot. A later layout with room restores the box's own
+    `visibility`, so an author's `visibility: hidden` stays hidden.
+
+  A band cut to nothing, whether clipped to zero or hidden, reserves no 8 px
+  gap either, so the plot sits where an in-plot legend would leave it. The
+  budget is first taken against the provisional axis rooms. If the measured
+  pass then grows them (a y title narrows the plot, so the x labels rotate or
+  stagger), the band shrinks by the shortfall before the plot rect is fixed
+  (`layout` / `_layout`). A chart too short for its own title and axes even
+  without a legend still overflows, as it does without the band.
 - **Height.** Static export reserves the formula height of the laid-out box (all
   rows up to the cap). The browser reserves the **measured** height of the
   live box, because the legend slot is author-stylable and a formula would

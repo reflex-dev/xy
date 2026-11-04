@@ -991,6 +991,7 @@ _PADDED_PROBE = """
       && getComputedStyle(legend).display !== "none";
     document.body.setAttribute("data-xy-padded-band", JSON.stringify({
       shown,
+      plotY: view.plot.y,
       band: view._legendBand ? view._legendBand.h : 0,
       boxHeight: legend ? legend.offsetHeight : 0,
       legendBottomToCanvasTop: legend
@@ -1022,18 +1023,74 @@ def test_browser_padded_band_never_overlaps_a_short_plot() -> None:
     assert (not payload["shown"]) or payload["legendBottomToCanvasTop"] >= -0.5, payload
 
 
+_RESTORE_PROBE = """
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    view._raf = null;
+    const legend = view.root.querySelector('[data-xy-legend-band="top"]');
+    // Drive the budget's own hide, then a layout with room again.
+    const hidden = view._outsideLegendBand(view._titleWrapWidth, 0);
+    const restored = view._outsideLegendBand(view._titleWrapWidth, Infinity);
+    document.body.setAttribute("data-xy-band-restore", JSON.stringify({
+      hiddenH: hidden.h,
+      restoredH: restored.h,
+      visibility: getComputedStyle(legend).visibility,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-band-restore-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
 def test_browser_band_keeps_an_authored_hidden_legend_hidden() -> None:
-    # The budget's own hide/show must not undo a `visibility` the author set.
+    # The budget's own hide then restore must not undo a `visibility` the
+    # author set.
     from conftest import probe_document
 
     chart = _lines(REGIONS, style={"visibility": "hidden"})
     with tempfile.TemporaryDirectory() as td:
         payload = run_browser_probe(
             _chromium(),
-            probe_document(chart, _PADDED_PROBE),
+            probe_document(chart, _RESTORE_PROBE),
             Path(td) / "authored_hidden.html",
-            "data-xy-padded-band",
+            "data-xy-band-restore",
             label="authored hidden outside-top legend probe",
         )
-    assert payload["band"] > 0, payload
-    assert payload["shown"] is False, payload
+    assert payload["hiddenH"] == 0 and payload["restoredH"] > 0, payload
+    assert payload["visibility"] == "hidden", payload
+
+
+def _plot_y(chart) -> float:
+    return float(_layout(chart)[1]["y"])
+
+
+def test_static_zero_band_reserves_no_gap() -> None:
+    # A band cut to nothing reserves no 8 px gap either: the plot sits where an
+    # in-plot legend would leave it.
+    banded = _plot_y(_lines(REGIONS, width=320, height=100))
+    inside = _plot_y(_lines(REGIONS, width=320, height=100, loc="upper right"))
+    assert banded == pytest.approx(inside), (banded, inside)
+
+
+def test_browser_hidden_band_reserves_no_gap() -> None:
+    from conftest import probe_document
+
+    def plot_y(chart) -> dict:
+        with tempfile.TemporaryDirectory() as td:
+            return run_browser_probe(
+                _chromium(),
+                probe_document(chart, _PADDED_PROBE),
+                Path(td) / "gap.html",
+                "data-xy-padded-band",
+                label="hidden band gap probe",
+            )
+
+    banded = plot_y(_lines(REGIONS, width=320, height=100, style={"padding": "2em"}))
+    inside = plot_y(_lines(REGIONS, width=320, height=100, loc="upper right"))
+    assert banded["shown"] is False, banded
+    assert banded["plotY"] == pytest.approx(inside["plotY"]), (banded, inside)

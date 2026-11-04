@@ -6620,7 +6620,8 @@ def _outside_top_legend_band(
         "cap": cap,
         "budget": budget,
         "box_h": box["box_h"],
-        "room": box["box_h"] + _OUTSIDE_LEGEND_GAP,
+        # A band cut to nothing reserves no gap either.
+        "room": box["box_h"] + _OUTSIDE_LEGEND_GAP if box["box_h"] > 0 else 0.0,
     }
 
 

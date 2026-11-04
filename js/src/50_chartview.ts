@@ -922,7 +922,8 @@ export class ChartView {
         - PLOT_MIN_PX - OUTSIDE_LEGEND_GAP,
     );
     const band = this._outsideLegendBand(this._titleWrapWidth, bandBudget);
-    const bandRoom = band ? band.h + OUTSIDE_LEGEND_GAP : 0;
+    // A band cut to nothing (its box hidden) reserves no gap either.
+    const bandRoom = band && band.h > 0 ? band.h + OUTSIDE_LEGEND_GAP : 0;
     this._legendBand = band
       ? { x: authoredLeft, y: marginTop + titleRoom, w: this._titleWrapWidth, h: band.h }
       : null;
@@ -973,7 +974,7 @@ export class ChartView {
       if (excess > 1e-6) {
         const shrunk = this._outsideLegendBand(this._titleWrapWidth, Math.max(0, band.h - excess));
         if (shrunk) {
-          const room = shrunk.h + OUTSIDE_LEGEND_GAP;
+          const room = shrunk.h > 0 ? shrunk.h + OUTSIDE_LEGEND_GAP : 0;
           top -= bandRoom - room;
           this._topAxisRoom = topAxisRoom + room;
           this._legendBand.h = shrunk.h;
