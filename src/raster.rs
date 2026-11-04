@@ -203,6 +203,15 @@ impl<'a> Canvas<'a> {
     /// black for the 4-channel RGBA path.
     fn wrap(w: usize, h: usize, opaque_white: bool, px: &'a mut [u8]) -> Self {
         px.fill(if opaque_white { 255 } else { 0 });
+        Self::wrap_initialized(w, h, opaque_white, px)
+    }
+
+    /// `wrap` for a buffer the caller already initialized to exactly what
+    /// `wrap` would write (opaque white / transparent black). The fused PNG
+    /// path allocates its framebuffer pre-filled, so clearing it again would
+    /// be a second full-frame memory pass for nothing.
+    fn wrap_initialized(w: usize, h: usize, opaque_white: bool, px: &'a mut [u8]) -> Self {
+        debug_assert!(px.iter().all(|&v| v == if opaque_white { 255 } else { 0 }));
         Canvas {
             w,
             h,
@@ -503,17 +512,44 @@ fn fill_rect(cv: &mut Canvas<'_>, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
     if bx1 <= bx0 || by1 <= by0 {
         return true;
     }
-    if rgba[3] >= 1.0
-        && x0 <= bx0 as f32
-        && y0 <= by0 as f32
-        && x1 >= bx1 as f32
-        && y1 >= by1 as f32
-    {
-        let rgba8 = [to_u8(rgba[0]), to_u8(rgba[1]), to_u8(rgba[2]), 255];
-        let channels = cv.channels();
-        let color = &rgba8[..channels];
-        for y in by0..by1 {
-            let row = &mut cv.px[(y * cv.w + bx0) * channels..(y * cv.w + bx1) * channels];
+    // Pixels whose coverage is exactly 1 form an integer-aligned interior
+    // [ix0, ix1) x [iy0, iy1). Only the (at most one-pixel-wide) fractional
+    // border needs per-pixel coverage. Interior pixels take a constant u8
+    // paint: a plain run fill when opaque, one precomputed `blend_px` source
+    // otherwise. Results are bit-identical to blending every pixel with its
+    // `cx * cy` coverage (cx = cy = 1 is exact for integer pixel edges), but
+    // a plot-area fill at fractional edges — the default for any figure whose
+    // subplot params do not land on whole pixels — no longer costs a full
+    // f32 coverage blend per pixel (issue #550).
+    let ix0 = (x0.ceil().max(bx0 as f32) as usize).min(bx1);
+    let ix1 = (x1.floor().min(bx1 as f32).max(ix0 as f32) as usize).min(bx1);
+    let iy0 = (y0.ceil().max(by0 as f32) as usize).min(by1);
+    let iy1 = (y1.floor().min(by1 as f32).max(iy0 as f32) as usize).min(by1);
+    let interior = [
+        to_u8(rgba[0]),
+        to_u8(rgba[1]),
+        to_u8(rgba[2]),
+        to_u8(rgba[3]),
+    ];
+    let channels = cv.channels();
+    let edge = |cv: &mut Canvas<'_>, x: usize, y: usize, cy: f32| {
+        let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
+        cv.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
+    };
+    for y in by0..by1 {
+        let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
+        if y < iy0 || y >= iy1 || ix1 <= ix0 {
+            for x in bx0..bx1 {
+                edge(cv, x, y, cy);
+            }
+            continue;
+        }
+        for x in bx0..ix0 {
+            edge(cv, x, y, cy);
+        }
+        if interior[3] == 255 {
+            let color = &interior[..channels];
+            let row = &mut cv.px[(y * cv.w + ix0) * channels..(y * cv.w + ix1) * channels];
             if color.iter().all(|channel| *channel == color[0]) {
                 row.fill(color[0]);
             } else {
@@ -521,14 +557,15 @@ fn fill_rect(cv: &mut Canvas<'_>, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
                     pixel.copy_from_slice(color);
                 }
             }
+        } else if interior[3] != 0 {
+            let opaque = cv.opaque;
+            let row = &mut cv.px[(y * cv.w + ix0) * channels..(y * cv.w + ix1) * channels];
+            for o in (0..row.len()).step_by(channels) {
+                blend_px(row, o, opaque, interior);
+            }
         }
-        return true;
-    }
-    for y in by0..by1 {
-        let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
-        for x in bx0..bx1 {
-            let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
-            cv.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
+        for x in ix1..bx1 {
+            edge(cv, x, y, cy);
         }
     }
     true
@@ -2540,7 +2577,12 @@ fn rasterize_with_spans<'a>(
     if w == 0 || h == 0 {
         return None;
     }
-    let mut cv = Canvas::wrap(w, h, opaque_white, px);
+    paint_display_list(cmds, spans, Canvas::wrap(w, h, opaque_white, px))
+}
+
+/// Paint a display list onto an initialized canvas.
+fn paint_display_list<'a>(cmds: &[u8], spans: &[&[u8]], mut cv: Canvas<'a>) -> Option<Canvas<'a>> {
+    let (w, h) = (cv.w, cv.h);
     let mut r = Reader { b: cmds, i: 0 };
     while r.i < cmds.len() {
         let op = r.u8()?;
@@ -3162,8 +3204,13 @@ pub fn rasterize_png_spans_into(
     // The PNG path is 3-channel and the destination is the encoded stream, so
     // this one still owns its framebuffer — but it is a plane fewer than the
     // RGBA path, and nothing is copied out of it.
-    let mut px = vec![0u8; w.checked_mul(h)?.checked_mul(3)?];
-    let cv = rasterize_with_spans(cmds, spans, w, h, true, &mut px)?;
+    // Allocated already opaque white: one fill pass instead of a zeroing
+    // allocation followed by `Canvas::wrap`'s white fill.
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let mut px = vec![255u8; w.checked_mul(h)?.checked_mul(3)?];
+    let cv = paint_display_list(cmds, spans, Canvas::wrap_initialized(w, h, true, &mut px))?;
     let mut cursor = Cursor::new(out);
     {
         let mut encoder = png::Encoder::new(&mut cursor, wu, hu);
@@ -3280,6 +3327,66 @@ mod tests {
     /// Backing store for a test canvas, which borrows rather than owns.
     fn canvas_px(w: usize, h: usize, opaque: bool) -> Vec<u8> {
         vec![0u8; w * h * if opaque { 3 } else { 4 }]
+    }
+
+    /// `fill_rect` paints a fractional-edge rect's integer interior as a run
+    /// (issue #550). It must stay bit-identical to the reference: blending
+    /// every bbox pixel with its own `cx * cy` coverage. Covers opaque and
+    /// transparent canvases, opaque and translucent paint, a pre-painted
+    /// destination, fractional clips, sub-pixel rects, and rects
+    /// overhanging the canvas.
+    #[test]
+    fn fractional_edge_rect_interior_run_matches_per_pixel_coverage() {
+        let (w, h) = (37usize, 23usize);
+        let rects: [(f32, f32, f32, f32); 7] = [
+            (2.4, 3.6, 30.2, 19.7),
+            (0.0, 0.0, 37.0, 23.0),
+            (5.0, 4.0, 12.0, 9.0),
+            (-3.3, -1.25, 40.5, 25.75),
+            (7.2, 7.2, 7.8, 7.9),
+            (10.5, 2.0, 11.5, 21.0),
+            (3.0, 5.5, 33.0, 6.5),
+        ];
+        let colors: [[f32; 4]; 3] = [
+            [1.0, 1.0, 1.0, 1.0],
+            [0.2, 0.4, 0.6, 1.0],
+            [0.9, 0.1, 0.3, 0.55],
+        ];
+        let clips: [[f32; 4]; 2] = [[0.0, 0.0, w as f32, h as f32], [4.5, 2.25, 31.5, 20.75]];
+        for opaque in [true, false] {
+            for &(x0, y0, x1, y1) in &rects {
+                for &rgba in &colors {
+                    for &clip in &clips {
+                        let pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                        let mut fast = canvas_px(w, h, opaque);
+                        let mut reference = canvas_px(w, h, opaque);
+                        let mut a = Canvas::wrap(w, h, opaque, &mut fast);
+                        let mut b = Canvas::wrap(w, h, opaque, &mut reference);
+                        // A translucent underlay so the blend has a real
+                        // destination on both canvas layouts.
+                        let under = [(1.0, 1.0), (35.0, 1.0), (35.0, 21.0), (1.0, 21.0)];
+                        for cv in [&mut a, &mut b] {
+                            assert!(fill_rect(cv, &under, [0.1, 0.8, 0.2, 0.4]));
+                            cv.clip = clip;
+                        }
+                        assert!(fill_rect(&mut a, &pts, rgba));
+                        let (bx0, by0, bx1, by1) = b.bbox(x0, y0, x1, y1);
+                        for y in by0..by1 {
+                            let cy = ((y + 1) as f32).min(y1) - (y as f32).max(y0);
+                            for x in bx0..bx1 {
+                                let cx = ((x + 1) as f32).min(x1) - (x as f32).max(x0);
+                                b.blend(x, y, rgba, (cx * cy).clamp(0.0, 1.0));
+                            }
+                        }
+                        assert!(
+                            fast == reference,
+                            "rect {:?} rgba {rgba:?} clip {clip:?} opaque {opaque}",
+                            (x0, y0, x1, y1)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Paint a display list and hand back the framebuffer. The canvas borrows

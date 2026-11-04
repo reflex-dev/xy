@@ -79,7 +79,13 @@ src/                                          # 15,423 lines shipped, 8 modules
                         #   canonical spans) and paints into a straight-alpha
                         #   RGBA8 framebuffer the caller owns:
                         #     · scanline polygon fill, flat + linear gradient,
-                        #       with a rectangle fast path
+                        #       with a rectangle fast path: the integer
+                        #       interior of an axis-aligned rect is a run
+                        #       fill (opaque) or one constant blend; only
+                        #       its fractional border takes per-pixel
+                        #       coverage, bit-identical to a full blend
+                        #       (#550: a plot background on fractional
+                        #       edges was 2/3 of line PNG raster work)
                         #     · SDF/distance-based stroke and point-symbol paint
                         #       (round caps/joins and AA fall out of the metric)
                         #     · affine scatter projection, typed per-point color/

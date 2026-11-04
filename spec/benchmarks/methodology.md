@@ -245,7 +245,7 @@ it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 The glob collects six modules — `test_codspeed_animation.py`,
 `test_codspeed_kernels.py`, `test_codspeed_polar.py`,
 `test_codspeed_pyplot.py`, `test_codspeed_selection.py`, and
-`test_codspeed_transport.py` — for **109 rows** total, counting parametrized
+`test_codspeed_transport.py` — for **110 rows** total, counting parametrized
 expansion. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
 
@@ -259,7 +259,7 @@ no longer exists. Removing one is allowed; removing one silently is not. Stale
 rows already in the dashboard have to be archived there by hand; this gate stops
 new ones appearing.
 
-**`benchmarks/test_codspeed_pyplot.py` — 14 rows, seven paired arms.** Each pair
+**`benchmarks/test_codspeed_pyplot.py` — 15 rows: seven paired arms plus one export-shape row.** Each pair
 expresses one chart twice over the same input arrays: once through the
 declarative API (`xy.chart` + marks) and once through the identical
 matplotlib-style calls in `xy.pyplot`. Both arms end at the same terminal work —
@@ -271,7 +271,14 @@ bookkeeping is part of the shim's per-figure cost. The pairs are a 10k line, a
 1M line, a 100k scatter, a 100k-value/200-bin histogram, a 1k-category bar, a
 5k-point three-series styled panel (title, axis labels, legend — the shim's
 worst honest case, where translation is largest relative to data), and a
-100k-point PNG export.
+100k-point PNG export. The unpaired
+`test_png_export_line_pyplot_fractional_plot_rect` row exports the same 100k
+line at the `bench_pyplot_vs_matplotlib.py` shape (9x4.2in, dpi=100, saved at
+dpi=200 to 1800x840). Matplotlib's default subplot params put that plot
+rectangle's edges on fractional pixels, which once routed the opaque plot
+background through per-pixel coverage blending for ~1.2M pixels and cost the
+line family its 10x margin (issue #550). The row asserts the exact PNG
+dimensions so a size drift cannot hide behind a faster time.
 
 Fairness pins, all asserted in the module rather than assumed:
 

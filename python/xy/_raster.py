@@ -998,6 +998,11 @@ def render_raster(
         plot_background = _parse_color("#ffffff")
     else:
         plot_background = None
+    # The fused PNG canvas already starts opaque white and nothing has been
+    # painted yet, so an opaque white plot fill is a byte-identical no-op —
+    # skip its ~1.2M-pixel pass on a default 1800x840 export (issue #550).
+    if fast_png and figure_background is None and plot_background == (255, 255, 255, 255):
+        plot_background = None
     if plot_background is not None:
         cmd.fill(
             _rect_pts(plot["x"], plot["y"], plot["x"] + plot["w"], plot["y"] + plot["h"]),

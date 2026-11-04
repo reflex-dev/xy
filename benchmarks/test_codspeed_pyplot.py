@@ -398,3 +398,31 @@ def test_png_export_line_pyplot(benchmark, export_data):
     png = benchmark(export)
     assert png.startswith(b"\x89PNG")
     plt.close("all")
+
+
+def test_png_export_line_pyplot_fractional_plot_rect(benchmark, export_data):
+    """The release-audit line shape (issue #550): 9 x 4.2 in at dpi=100,
+    exported at dpi=200 to 1800x840. Matplotlib's default subplot params put
+    the plot-area edges on fractional pixels here, which once sent the opaque
+    plot background down the per-pixel coverage blend for ~1.2M pixels. The
+    interior-run fill keeps this row on the same footing as the
+    integer-aligned export above.
+    """
+    x, y = export_data
+    plt.close("all")
+    fig, ax = plt.subplots(figsize=(9.0, 4.2), dpi=100)
+    ax.plot(x, y, color="#2563eb", linewidth=1.2)
+    ax.set_title("line")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+
+    def export() -> bytes:
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="png", dpi=200)
+        return buffer.getvalue()
+
+    png = benchmark(export)
+    assert png.startswith(b"\x89PNG")
+    assert int.from_bytes(png[16:20], "big") == 1800
+    assert int.from_bytes(png[20:24], "big") == 840
+    plt.close("all")

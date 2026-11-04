@@ -145,7 +145,10 @@ scope, not the kernels module alone. The suite asserts `xy.kernels.BACKEND ==
   raw-versus-shim rows for line, scatter, histogram, categorical bar, and
   styled-panel builds, plus matched PNG export
   (`test_png_export_line_raw` / `test_png_export_line_pyplot`), so shim overhead
-  over the native path stays visible.
+  over the native path stays visible, and
+  `test_png_export_line_pyplot_fractional_plot_rect`, the 1800×840 line export
+  at the matched-Matplotlib shape whose fractional plot-rect edges once cost
+  the line family its 10× margin (#550).
 - The transport frame suite (`benchmarks/test_codspeed_transport.py`):
   `encode_frame` / `decode_frame` rows for density and direct payloads,
   a parts-encode row, and base64 encode/decode comparators standing in for the
