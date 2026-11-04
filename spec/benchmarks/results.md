@@ -408,6 +408,76 @@ translucent, opaque/transparent, and multiple-width strokes. The independent
 so the committed matched table above is intentionally not replaced by the
 controlled microbenchmark.
 
+### Line export at fractional plot edges (#550)
+
+The 2026-11-05 release audit measured the line family at **7.18×** on its
+reference workstation. The workload was the 20,000-sample smoke row:
+11.46 ms for xy versus 82.24 ms for Matplotlib, both producing 1800×840 PNGs.
+That missed the 10× target. The audited harness also omitted `dpi=EXPORT_DPI`
+from the xy adapter. It now passes the same export DPI as the Matplotlib
+adapter, and a unit test pins that.
+
+Profiling separated build (~0.4 ms), Python scene compilation (~3 ms) and the
+native call. Callgrind attributed about two thirds of the native raster
+instructions to `fill_rect`, which made 2.7M `blend_px` calls across three
+renders. Matplotlib's default subplot parameters put the plot rectangle at
+y = 100.8…747.6 on this canvas. With fractional edges, `fill_rect` left its
+opaque run-fill fast path and blended all ~1.2M interior pixels with an f32
+coverage weight. The line stroke itself is ~1.5 ms of row-banded work, and the
+PNG encode is ~1.6 ms.
+
+The fix has three parts, and every output byte stays the same:
+
+- `fill_rect` now paints the integer-aligned interior as a run fill (opaque)
+  or one precomputed blend (translucent). Only the fractional one-pixel
+  border takes per-pixel coverage.
+- The fused PNG path skips an opaque white plot fill over its canvas, which
+  is already opaque white. It also allocates that framebuffer pre-filled
+  instead of zeroing it and then filling it.
+- Nothing about decimation changes. The row stays on the disclosed M4
+  `decimated` tier, so §28 has nothing new to record.
+
+PNG SHA-1s are identical for all six harness families before and after.
+A Rust test checks the run fill against the per-pixel reference, and the
+CodSpeed row `test_png_export_line_pyplot_fractional_plot_rect` tracks the
+audit shape.
+
+Interleaved A/B on one host: Linux x86_64 Firecracker VM, 4 vCPUs, CPython
+3.13.18, NumPy 2.5.1, Matplotlib 3.11.1, Rust 1.97.0. This host is roughly
+3.5× slower than the macOS reference above, and noisy, so compare ratios,
+not absolute milliseconds. *Before* is base commit `5e58b12`, with its
+package and native library run through the current harness. *After* is this
+branch. The harness ran `--family line` with the issue's repetition counts,
+and each arm ran twice:
+
+| profile | reps / warm-ups | before xy total | after xy total | before speedup | after speedup | xy PNG bytes |
+|---|---|---:|---:|---:|---:|---:|
+| smoke (20,000 samples) | 3 / 1 | 13.45–19.45 ms | 8.97–9.08 ms | 5.49–7.80× | 11.37–13.53× | 150,193 (unchanged) |
+| standard (200,000 samples) | 21 / 3 | 14.77–15.92 ms | 10.81–11.78 ms | 7.24–7.61× | **10.30–11.20×** | 150,167 (unchanged) |
+| huge (1,000,000 samples) | 11 / 2 | 21.96–22.05 ms | 16.87–17.20 ms | 8.30–8.31× | 10.30–10.95× | 150,165 (unchanged) |
+
+Every run clears the standard 10× gate after the change, and none cleared it
+before. The margin is thinner here than on a dedicated runner: Matplotlib
+medians on this VM vary by ±10% between runs. On the 1M-sample huge row,
+`zone_maps_pair` ingest is a further ~4 ms. That cost is bound by its ordered
+f64 sum, which stays as is to keep zone maps bit-identical. A branch-free
+positive-range fold was measured there and gave no gain, so it was not kept.
+Raw reports, including the full six-family standard run, are in
+`spec/benchmarks/evidence/issue-550/`. Reproduce with:
+
+```bash
+git worktree add /tmp/xy-base 5e58b12
+CARGO_TARGET_DIR=/tmp/xy-base-target cargo build --release --manifest-path /tmp/xy-base/Cargo.toml
+cargo build --release
+for profile in smoke standard huge; do
+  PYTHONPATH=/tmp/xy-base/python XY_NATIVE_LIB=/tmp/xy-base-target/release/libxy_core.so \
+    MPLBACKEND=Agg .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
+    --profile "$profile" --family line --json "before-$profile.json"
+  MPLBACKEND=Agg .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
+    --profile "$profile" --family line --json "after-$profile.json"
+done   # reps/warm-ups per profile as in the table
+```
+
 The `huge` profile runs the same families at the sizes where static Matplotlib
 workflows actually stall (same machine, 11 repetitions, 2 warm-ups). Agg's
 cost scales with N; xy's disclosed tiers stay screen-bounded:

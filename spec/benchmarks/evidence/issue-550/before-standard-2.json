@@ -1,0 +1,545 @@
+{
+  "schema_version": 2,
+  "kind": "pyplot-vs-matplotlib",
+  "environment": {
+    "generated_at_utc": "2026-11-04T21:11:39.941251Z",
+    "python": {
+      "version": "3.13.18",
+      "implementation": "CPython",
+      "compiler": "Clang 23.1.3 "
+    },
+    "platform": {
+      "system": "Linux",
+      "release": "6.18.44-fc-v233",
+      "version": "#1 SMP PREEMPT_DYNAMIC @0",
+      "machine": "x86_64",
+      "processor": "x86_64"
+    },
+    "cpu_count": 4,
+    "package_versions": {
+      "xy": "0.0.1.dev50+5e58b12",
+      "numpy": "2.5.1",
+      "plotly": null,
+      "matplotlib": "3.11.1",
+      "seaborn": null,
+      "bokeh": null,
+      "altair": null,
+      "datashader": null,
+      "holoviews": null,
+      "hvplot": null,
+      "pandas": null,
+      "psutil": "7.2.2",
+      "kaleido": null
+    },
+    "executables": {
+      "node": "v22.23.4",
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+      "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)"
+    },
+    "xy_backend": "native",
+    "browser_renderer": "software-gl",
+    "git": {
+      "commit": "b9a4122ac8a54aa1bd376b9cd6790fd598e82c5d",
+      "branch": "farhan/issue-550-line-png-export-perf",
+      "dirty": null
+    }
+  },
+  "benchmark_categories": [
+    {
+      "id": "small_data_startup",
+      "name": "Small-data startup",
+      "why": "Everyday charts should feel instant; a performance library cannot only win at 10M rows.",
+      "metrics": "TTFR, JS/payload size, Python overhead",
+      "harness": "benchmarks/bench_vs.py --ttfr at 1k-100k; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_small",
+      "status": "tracked",
+      "goal": "Beat Plotly/Bokeh/Altair on first interactive paint for common charts."
+    },
+    {
+      "id": "install_footprint_import_budget",
+      "name": "Install footprint and import budget",
+      "why": "Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists.",
+      "metrics": "cold import time, installed distribution bytes, file count",
+      "harness": "benchmarks/bench_install.py",
+      "status": "tracked",
+      "goal": "Keep xy lightweight at import and smaller to install than broad plotting stacks."
+    },
+    {
+      "id": "medium_direct_scatter",
+      "name": "Medium direct scatter",
+      "why": "Proves exact marker rendering, hover, color, and size channels before aggregation kicks in.",
+      "metrics": "FPS, TTFR, memory, bytes/point, hover latency",
+      "harness": "benchmarks/bench_vs.py at 100k-200k; benchmarks/bench_interaction.py; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_medium",
+      "status": "tracked",
+      "goal": "Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff."
+    },
+    {
+      "id": "huge_scatter_overview",
+      "name": "Huge scatter overview",
+      "why": "Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point.",
+      "metrics": "ingest/bin time, density payload size, peak memory, TTFR",
+      "harness": "benchmarks/bench_scatter_native.py, benchmarks/bench_vs.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, example app assets",
+      "status": "tracked",
+      "goal": "Keep resident/render payload flat in N while showing truthful density summaries."
+    },
+    {
+      "id": "adaptive_scatter_drilldown",
+      "name": "Adaptive scatter drilldown",
+      "why": "The large-data claim needs a credible path from overview to exact visible points.",
+      "metrics": "visible-query latency, tier-switch latency, exact-point recovery, badge accuracy",
+      "harness": "benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle and ::test_adaptive_drilldown_cycle_mean_color (channel-bearing: per-request cost must exclude full-column color work)",
+      "status": "tracked",
+      "goal": "Exact points when visible count is under budget; sampled/density with explicit counts otherwise."
+    },
+    {
+      "id": "huge_line_time_series",
+      "name": "Huge line/time series",
+      "why": "Common observability and finance workload; Plotly-resampler sets the bar here.",
+      "metrics": "decimation time, zoom re-decimation latency, TTFR, extrema preservation",
+      "harness": "benchmarks/bench.py, benchmarks/bench_native.py, benchmarks/bench_interaction.py, benchmarks/test_codspeed_kernels.py::test_decimate_view",
+      "status": "tracked",
+      "goal": "Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh."
+    },
+    {
+      "id": "many_chart_dashboards",
+      "name": "Many-chart dashboards",
+      "why": "Plotly-class apps often fail from total page weight and many live canvases, not one chart.",
+      "metrics": "payload prep, navigation readiness, per-chart setup/first draw, shader compiles/program links, startup long tasks, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling",
+      "harness": "benchmarks/bench_dashboard.py",
+      "status": "tracked",
+      "goal": "Measure the 10-60 chart scaling curve and expose LRU context eviction without discarding partial-row metrics."
+    },
+    {
+      "id": "interaction_smoothness",
+      "name": "Interaction smoothness",
+      "why": "Users judge performance by pan/zoom/hover, not just export time.",
+      "metrics": "pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta",
+      "harness": "benchmarks/bench_interaction.py; benchmarks/bench_transport.py",
+      "status": "tracked",
+      "goal": "Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles."
+    },
+    {
+      "id": "payload_export_size",
+      "name": "Payload/export size",
+      "why": "Notebooks, static HTML, docs, and dashboards pay for every byte shipped.",
+      "metrics": "standalone HTML bytes, binary payload bytes, bundle bytes",
+      "harness": "benchmarks/bench_vs.py, benchmarks/bench_scatter_native.py, benchmarks/bench_transport.py, benchmarks/test_codspeed_transport.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, benchmarks/test_codspeed_kernels.py::test_memory_report_density_medium, example app asset sizes",
+      "status": "tracked",
+      "goal": "Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge."
+    },
+    {
+      "id": "core_2d_chart_breadth",
+      "name": "Core 2D chart breadth",
+      "why": "The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads.",
+      "metrics": "payload-prep time, payload bytes, standalone HTML bytes, TTFR",
+      "harness": "benchmarks/bench_2d_charts.py vs Plotly/Seaborn; benchmarks/bench_pyplot_vs_matplotlib.py; benchmarks/bench_interaction.py; CodSpeed core_2d rows",
+      "status": "tracked",
+      "goal": "Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable."
+    },
+    {
+      "id": "input_ingestion",
+      "name": "Input ingestion",
+      "why": "Real applications provide float32, strided, datetime, list, pandas, and Arrow inputs rather than only ideal contiguous float64 arrays.",
+      "metrics": "ingest latency, copies, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py ingestion rows",
+      "status": "tracked",
+      "goal": "Keep zero-copy inputs cheap and make unavoidable conversions visible."
+    },
+    {
+      "id": "streaming_updates",
+      "name": "Streaming updates",
+      "why": "Monitoring and notebook workflows append data repeatedly; stable domains should not trigger full-index rebuilds.",
+      "metrics": "append latency, refresh bytes, incremental pyramid update latency, domain-growth rebuild latency",
+      "harness": "benchmarks/bench_workflows.py streaming rows; benchmarks/bench_transport.py append diagnostics",
+      "status": "tracked",
+      "goal": "Keep stable-domain appends proportional to the batch and expose unavoidable domain-growth rebuilds."
+    },
+    {
+      "id": "log_autorange",
+      "name": "Log autorange",
+      "why": "Large positive/negative and non-finite series are common in monitoring and scientific charts, and log axes must avoid full-data rescans.",
+      "metrics": "range latency, positive-domain correctness, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py log autorange row; tests/test_figure.py",
+      "status": "tracked",
+      "goal": "Compute correct positive log domains from zone statistics with cost proportional to chunks, not points."
+    },
+    {
+      "id": "polar_coordinate_system",
+      "name": "Polar coordinate system",
+      "why": "Radar, wind rose, pie/donut and gauge views are a whole chart family, and a polar wedge is the most expensive mark in the engine \u2014 one annular sector per bar instead of one quad.",
+      "metrics": "payload-prep time, wedge flattening cost, SVG/PNG export latency, inverse-raster latency",
+      "harness": "benchmarks/test_codspeed_polar.py",
+      "status": "tracked",
+      "goal": "Keep polar payload prep bounded by composition size rather than observation count, and keep wedge subdivision proportional to each wedge's own angular span."
+    },
+    {
+      "id": "static_export",
+      "name": "Static export",
+      "why": "HTML, SVG, and PNG export are common notebook, documentation, and reporting paths with different bottlenecks.",
+      "metrics": "export latency, output bytes, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py export rows; benchmarks/bench_pyplot_vs_matplotlib.py matched PNG rows",
+      "status": "tracked",
+      "goal": "Track each export target independently without mixing payload preparation and browser startup."
+    }
+  ],
+  "tracked_categories": [
+    {
+      "id": "small_data_startup",
+      "name": "Small-data startup",
+      "why": "Everyday charts should feel instant; a performance library cannot only win at 10M rows.",
+      "metrics": "TTFR, JS/payload size, Python overhead",
+      "harness": "benchmarks/bench_vs.py --ttfr at 1k-100k; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_small",
+      "status": "tracked",
+      "goal": "Beat Plotly/Bokeh/Altair on first interactive paint for common charts."
+    },
+    {
+      "id": "core_2d_chart_breadth",
+      "name": "Core 2D chart breadth",
+      "why": "The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads.",
+      "metrics": "payload-prep time, payload bytes, standalone HTML bytes, TTFR",
+      "harness": "benchmarks/bench_2d_charts.py vs Plotly/Seaborn; benchmarks/bench_pyplot_vs_matplotlib.py; benchmarks/bench_interaction.py; CodSpeed core_2d rows",
+      "status": "tracked",
+      "goal": "Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable."
+    },
+    {
+      "id": "static_export",
+      "name": "Static export",
+      "why": "HTML, SVG, and PNG export are common notebook, documentation, and reporting paths with different bottlenecks.",
+      "metrics": "export latency, output bytes, peak Python memory",
+      "harness": "benchmarks/bench_workflows.py export rows; benchmarks/bench_pyplot_vs_matplotlib.py matched PNG rows",
+      "status": "tracked",
+      "goal": "Track each export target independently without mixing payload preparation and browser startup."
+    }
+  ],
+  "profile": "standard",
+  "families": [
+    "line"
+  ],
+  "reps": 21,
+  "warmups": 3,
+  "pixel_target": {
+    "width": 1800,
+    "height": 840,
+    "format": "png"
+  },
+  "measurement_scope": "warmed-api-build-through-static-png",
+  "rows": [
+    {
+      "family": "line",
+      "case": "200,000 samples",
+      "work_units": 200000,
+      "unit": "samples",
+      "library": "xy.pyplot",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "native-raster",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 46338,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 1.335806,
+          "render_ms": 14.278073,
+          "total_ms": 15.613878999999999,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.297385,
+          "render_ms": 17.306724,
+          "total_ms": 18.604108999999998,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.21162,
+          "render_ms": 14.878799,
+          "total_ms": 16.090419,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.418297,
+          "render_ms": 14.506138,
+          "total_ms": 15.924434999999999,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.095067,
+          "render_ms": 16.942565,
+          "total_ms": 18.037632,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.277634,
+          "render_ms": 14.43184,
+          "total_ms": 15.709474,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.19089,
+          "render_ms": 14.500557,
+          "total_ms": 15.691447,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.29413,
+          "render_ms": 14.026259,
+          "total_ms": 15.320388999999999,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.077398,
+          "render_ms": 13.647527,
+          "total_ms": 14.724925,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.242598,
+          "render_ms": 23.795552,
+          "total_ms": 25.03815,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.087388,
+          "render_ms": 18.766089,
+          "total_ms": 19.853477,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.286662,
+          "render_ms": 13.958596,
+          "total_ms": 15.245258,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.36339,
+          "render_ms": 14.599186,
+          "total_ms": 15.962576,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.414462,
+          "render_ms": 14.175602,
+          "total_ms": 15.590064,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.293235,
+          "render_ms": 37.265601,
+          "total_ms": 38.558836,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.319165,
+          "render_ms": 32.781204,
+          "total_ms": 34.100369,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.272083,
+          "render_ms": 13.930628,
+          "total_ms": 15.202711,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.28932,
+          "render_ms": 13.880418,
+          "total_ms": 15.169738,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.149078,
+          "render_ms": 13.336204,
+          "total_ms": 14.485282,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.298243,
+          "render_ms": 28.392874,
+          "total_ms": 29.691117,
+          "output_bytes": 150167
+        },
+        {
+          "build_ms": 1.24289,
+          "render_ms": 17.253284,
+          "total_ms": 18.496174,
+          "output_bytes": 150167
+        }
+      ],
+      "build_median_ms": 1.286662,
+      "render_median_ms": 14.506138,
+      "total_median_ms": 15.924434999999999,
+      "total_p95_ms": 34.100369,
+      "output_bytes_median": 150167,
+      "render_tier": "decimated"
+    },
+    {
+      "family": "line",
+      "case": "200,000 samples",
+      "work_units": 200000,
+      "unit": "samples",
+      "library": "matplotlib",
+      "status": "ok",
+      "render_target": "png",
+      "mode": "agg",
+      "oracle_status": "pass",
+      "oracle_kind": "same-pixel-dimensions-and-nonblank",
+      "png_width": 1800,
+      "png_height": 840,
+      "lit_pixels": 57850,
+      "reps": 21,
+      "samples": [
+        {
+          "build_ms": 8.796434,
+          "render_ms": 104.179817,
+          "total_ms": 112.976251,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 8.759127,
+          "render_ms": 106.560418,
+          "total_ms": 115.319545,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.961919,
+          "render_ms": 182.337631,
+          "total_ms": 192.29954999999998,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.447757,
+          "render_ms": 105.022262,
+          "total_ms": 114.470019,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.916462,
+          "render_ms": 117.296771,
+          "total_ms": 127.213233,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.359799,
+          "render_ms": 109.565143,
+          "total_ms": 118.924942,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 11.933981,
+          "render_ms": 131.479578,
+          "total_ms": 143.413559,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 13.320569,
+          "render_ms": 114.185606,
+          "total_ms": 127.50617500000001,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 8.940517,
+          "render_ms": 105.109356,
+          "total_ms": 114.049873,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 12.875489,
+          "render_ms": 119.58238,
+          "total_ms": 132.457869,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 13.136375,
+          "render_ms": 115.49171,
+          "total_ms": 128.628085,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.012186,
+          "render_ms": 104.269546,
+          "total_ms": 113.281732,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.159744,
+          "render_ms": 105.780505,
+          "total_ms": 114.94024900000001,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.453753,
+          "render_ms": 121.514681,
+          "total_ms": 130.968434,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.644893,
+          "render_ms": 105.374296,
+          "total_ms": 115.019189,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.68598,
+          "render_ms": 105.930001,
+          "total_ms": 115.615981,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 8.757069,
+          "render_ms": 105.958772,
+          "total_ms": 114.715841,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.095347,
+          "render_ms": 105.313114,
+          "total_ms": 114.408461,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 8.901447,
+          "render_ms": 105.684353,
+          "total_ms": 114.5858,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.016188,
+          "render_ms": 103.454484,
+          "total_ms": 112.470672,
+          "output_bytes": 93800
+        },
+        {
+          "build_ms": 9.153003,
+          "render_ms": 110.986457,
+          "total_ms": 120.13946,
+          "output_bytes": 93800
+        }
+      ],
+      "build_median_ms": 9.359799,
+      "render_median_ms": 105.958772,
+      "total_median_ms": 115.319545,
+      "total_p95_ms": 143.413559,
+      "output_bytes_median": 93800
+    }
+  ],
+  "comparisons": [
+    {
+      "family": "line",
+      "case": "200,000 samples",
+      "work_units": 200000,
+      "unit": "samples",
+      "xy_speedup_total": 7.241672624491859,
+      "target_xy_speedup_total": 10.0,
+      "meets_target": false,
+      "xy_speedup_build": 7.274481565477181,
+      "xy_speedup_render": 7.304409485143461,
+      "png_size_ratio_matplotlib_over_xy": 0.6246379031345103,
+      "winner_total": "xy.pyplot",
+      "xy_render_tier": "decimated"
+    }
+  ],
+  "target_xy_speedup_total": 10.0,
+  "all_targets_met": false,
+  "geometric_mean_xy_speedup_total": 7.241672624491859
+}
