@@ -2471,9 +2471,9 @@ def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
     assert 'variant:"ghost"},"XY"' not in rendered
     assert "Forum" not in rendered
     assert "Discord Community" not in rendered
-    assert 'variant:"primary"' in rendered
+    assert 'className:"docs-navbar-github whitespace-nowrap"' in rendered
     assert "View XY on GitHub -" not in rendered
-    assert rendered.count("View XY on GitHub") == 4
+    assert rendered.count("View XY on GitHub") == 2
     assert 'target:"_blank"' in rendered
     assert 'rel:"noopener noreferrer"' in rendered
     from xy_docs.navbar import _mobile_navigation
@@ -2492,7 +2492,7 @@ def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
         json.dumps("New: Build vs. Buy for Internal Software — Read more (opens in a new tab)")
         in rendered
     )
-    assert 'className:"docs-announcement-glass"' in rendered
+    assert "docs-announcement-glass" not in rendered
     assert '"data-announcement-dismiss":""' in rendered
     assert 'href:"https://reflex.dev/blog/build-vs-buy-internal-software/"' in rendered
     assert "https://reflex.dev/blog/xy-in-reflex-build/" not in rendered

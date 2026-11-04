@@ -61,7 +61,7 @@ app = rx.App(
         rx.el.style(CODE_COPY_STYLE),
         rx.el.meta(name="application-name", content="XY"),
         rx.el.meta(name="theme-color", content="#fdfcfc", media="(prefers-color-scheme: light)"),
-        rx.el.meta(name="theme-color", content="#151413", media="(prefers-color-scheme: dark)"),
+        rx.el.meta(name="theme-color", content="#151515", media="(prefers-color-scheme: dark)"),
     ],
 )
 
@@ -100,7 +100,7 @@ def xy_docs_layout(page, content, navigation) -> rx.Component:
         config=_LAYOUT_CONFIG,
     )
     # The shared Markdown layout owns structure and routing; these consumer
-    # hooks opt it into the same docs-only brand layer as Reflex PR #7549.
+    # hooks opt it into the docs-only Reflex marketing theme in assets/docs-theme.css.
     main = layout.children[1]
     main.class_name = "docs-reading-layout " + main.class_name
     column = main.children[1]

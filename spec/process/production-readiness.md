@@ -329,33 +329,47 @@ uses level-two section headings. Installation examples use subsections so code
 blocks cannot become invalid direct children of a list.
 The docs consume the reusable `reflex-site-shared` base theme and components
 directly. XY owns its branding, navigation, project-specific footer content,
-and the docs-only brand layer adapted from
-[Reflex PR #7549](https://github.com/reflex-dev/reflex/pull/7549). It must not
-vendor shared base CSS, search/buttons, or the navbar frame and announcement.
-The local layer uses Inter body text, Geist headings, warm neutral light/dark
-tokens, pill navigation and demo tabs, compact two-column Back/Next links, and
-the opal banner artwork without a white top-edge inset shadow. Fonts ship through
-pinned Fontsource packages; the artwork URL preserves the `/docs/xy` mount prefix.
-Banner structure and the close event remain shared. Editorial selectors target `docs-*`
-hooks, avoiding live chart typography and data-series colors. Mobile navigation,
+and the docs-only brand layer that follows the
+[docs theme contract](../../docs/app/README.md#working-on-the-shared-reflex-theme).
+It must not vendor shared base CSS, search/buttons, or the navbar frame and
+announcement.
+The local layer follows the current marketing finish: Geist 400 article text
+and headings, Inter compact navigation/internal UI, Geist 525 actions, 8px control
+corners, 12px fields, and neutral light/dark tokens. The app-owned
+`--docs-control-radius` isolates chrome from Radix live-example radius settings;
+footer actions retain 8px corners and Geist 525 in the rendered production DOM.
+The footer color-theme group and its three buttons use the same 8px radius.
+Feedback fields use a 2px `--ring` halo for keyboard focus and a system-color
+outline in forced-colors mode. Invalid fields retain the focus indicator and
+use a separate semantic border color.
+Light uses #FDFCFC canvas,
+#0A0A0A ink, #6B6B6B secondary text, #F5F5F5/#F9F9F9 quiet surfaces, #E5E5E5
+borders, and #1F1F1F primary actions (#333 hover). Preserve dark mode with neutral
+counterparts and the compact 64px docs header, reading column, sidebar, TOC, and
+two-column Back/Next links. The earlier warm tokens, capsule action styling,
+opal artwork, and overlapping announcement geometry are superseded. While the
+announcement is visible, the header uses 12px top corners against black backing
+without changing the 104px total height; opening the mobile menu below 1280px
+or dismissing the announcement restores square corners. Fonts ship
+through pinned Fontsource packages. Editorial selectors target `docs-*` hooks,
+avoiding live chart typography and data-series colors. Mobile navigation,
 the named closeable docs drawer, clipboard feedback, keyboard focus, and
 reduced-motion behavior remain required validation surfaces.
 XY's announcement matches `reflex-marketing`'s current main branch:
 "Build vs. Buy for Internal Software" links to
-`https://reflex.dev/blog/build-vs-buy-internal-software/`, with five mirrored
-opal panels with reduced-motion support, a black New
-badge, and a white text-only Read more pill hidden at 640px and below. Its visible
-contribution is 44px on desktop and 40px at 960px and below, above the fixed 64px
-docs header. A head script restores the same `reflex_announcement_dismissed_release`
-storage key and `build-vs-buy-internal-software-v1` release before paint; dismissal persists
-across reloads and same-origin marketing/docs navigation, with a working
-visit-local fallback when storage is unavailable. Header and sidebar offsets
-reserve only the visible announcement. The wrapper retains the shared native
-link and close event while adapting its destination, copy, decorative markup,
-and accessible name. The message wraps at narrow widths as it does in marketing.
-Below 1280px, opening the navigation menu removes both top header corners;
-closing it restores the announcement's rounded header. Announcement links open
-in a new tab with `noopener noreferrer`, matching their accessible name.
+`https://reflex.dev/blog/build-vs-buy-internal-software/`. It has a flat black
+background with white text in both color modes and a text-only Read more action
+hidden at 640px and below. Its visible contribution is 40px at every width,
+above the fixed 64px docs header. A head script restores the same
+`reflex_announcement_dismissed_release` storage key and
+`build-vs-buy-internal-software-v1` release before paint. When storage is
+available, dismissal persists across reloads and same-origin marketing/docs
+navigation. Without storage, dismissal applies to the current document and the
+announcement can reappear on reload or navigation. Header and sidebar offsets
+reserve only the visible announcement. The wrapper retains the shared native link and close
+event while adapting destination, copy, and accessible name. The message wraps
+at narrow widths. Announcement links open in a new tab with `noopener noreferrer`,
+matching their accessible name.
 Authored in-page links must
 resolve to rendered IDs, including the parentheses retained by the shared
 heading slug convention (lowercase text with spaces replaced by hyphens).
@@ -373,7 +387,7 @@ card in both color modes. The frontend lock must resolve the declared PostCSS
 version without an older override shadowing the framework's build dependency.
 The desktop XY docs navigation switches to a docs-specific disclosure below
 1280px, preserving Overview and Reflex Integration destinations. Desktop links
-expose the selected section through `aria-current="page"` and a neutral pill.
+expose the selected section through `aria-current="page"` and a neutral 8px control.
 Internal navbar destinations use client-side routing so page changes preserve
 announcement dismissal without a full document reload. Code blocks share
 Reflex docs' light/dark syntax themes and neutral surface tokens while retaining
