@@ -62,8 +62,28 @@ const staticDir = join(root, "python", "xy", "static");
         `${name}: vertex shaders map data via u_*map uniforms (or add to VIEWMAP_EXEMPT with a reason)`
       );
     }
-    for (const u of shader.matchAll(/uniform\s+\w+\s+(\w+)/g)) {
-      if (!u[1].startsWith("u_")) errs.push(`${name}: uniform '${u[1]}' must be u_-prefixed`);
+    for (const u of shader.matchAll(/uniform\s+(\w+)\s+(\w+)/g)) {
+      if (!u[2].startsWith("u_")) errs.push(`${name}: uniform '${u[2]}' must be u_-prefixed`);
+      // The folded view map is (mul, add, shift, dataMul) — a narrower
+      // declaration silently drops the re-centring term or the data-space
+      // slope a bar's width needs (§16).
+      if (/map$/.test(u[2]) && u[1] !== "vec4") {
+        errs.push(`${name}: map uniform '${u[2]}' must be vec4, not ${u[1]} (§16)`);
+      }
+    }
+    // A map folded for one encoded column is a different transform for its
+    // siblings, so every xyMap call takes the map and the meta of the SAME
+    // column: u_x0map with u_x0meta, never u_xmap with u_x0meta (§16).
+    for (const call of shader.matchAll(/xyMap\(\s*[\w.]+,\s*([\w.]+),\s*([\w.]+),/g)) {
+      const [, mapArg, metaArg] = call;
+      const paired =
+        mapArg.endsWith("map") && metaArg.endsWith("meta") &&
+        mapArg.slice(0, -3) === metaArg.slice(0, -4);
+      if (!paired) {
+        errs.push(
+          `${name}: xyMap(${mapArg}, ${metaArg}) pairs one column's map with another's meta (§16)`
+        );
+      }
     }
     if (name.endsWith("_VS")) {
       for (const a of shader.matchAll(/^\s*in\s+\w+\s+(\w+)/gm)) {
