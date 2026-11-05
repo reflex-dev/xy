@@ -10,7 +10,11 @@ rows with canonical `shipped_sel`, selections exclude hidden rows, and
 Client side: clicking a legend row hides the series — direct-tier
 categorical traces re-filter their vertex buffers locally from retained
 CPU columns (`_visMap` translates picks back to shipped rows), whole
-traces skip draw+pick, and the kernel is notified either way.
+traces skip draw+pick, and the kernel is notified either way. Double-
+clicking a row isolates it (Plotly's `legenddoubleclick`): every other
+linked row goes hidden, or all come back when it was already alone —
+decided against the pre-gesture state, since the burst's first click has
+already committed a toggle (`xy.legend(isolate=False)` opts out).
 
 Browser probes skip (never fail) without Chromium, like the repo's others.
 """
@@ -174,6 +178,26 @@ def test_legend_toggle_option() -> None:
     assert "toggle" not in default.figure().legend_options
     with pytest.raises(ValueError):
         xy.legend(toggle="yes")
+
+
+def test_legend_isolate_option() -> None:
+    """`isolate` rides the wire the way `toggle`/`highlight` do: default on,
+    only the opt-out is shipped, so existing specs stay byte-identical."""
+    data = {"x": np.arange(8.0), "y": np.arange(8.0)}
+    disabled = xy.scatter_chart(xy.scatter("x", "y", data=data), xy.legend(isolate=False))
+    assert disabled.figure().legend_options["isolate"] is False
+    default = xy.scatter_chart(xy.scatter("x", "y", data=data), xy.legend())
+    assert "isolate" not in default.figure().legend_options
+    # The knobs are independent: opting out of one leaves the others alone.
+    only_toggle_off = xy.scatter_chart(
+        xy.scatter("x", "y", data=data), xy.legend(toggle=False)
+    ).figure()
+    assert only_toggle_off.legend_options["toggle"] is False
+    assert "isolate" not in only_toggle_off.legend_options
+    with pytest.raises(ValueError):
+        xy.legend(isolate="yes")
+    # Public dataclass: the new field appends after the released order.
+    assert xy.Legend(False, "upper right", 2, "Title", "c", {}, None, False, False).isolate is True
 
 
 _TOGGLE_PROBE = """
@@ -597,6 +621,196 @@ def test_browser_legend_click_toggles_series() -> None:
         ("legend_toggle", 1, 0, False),
         ("legend_toggle", 0, None, True),
         ("legend_toggle", 0, None, False),
+    ], payload["sent"]
+
+
+# Drives a real double-click the way a browser delivers it: click (detail 1),
+# click (detail 2), dblclick — so the toggle handler's second-click guard and
+# the isolate decision against the pre-gesture state are both exercised.
+_ISOLATE_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const sent = [];
+    view.comm = { send: (m) => sent.push(m) };
+    const toggles = [];
+    const isolates = [];
+    document.addEventListener("xy:legendtoggle", (e) => toggles.push(e.detail));
+    document.addEventListener("xy:legendisolate", (e) => isolates.push(e.detail));
+    let rows = [];
+    for (let i = 0; i < 200; i++) {
+      rows = [...document.querySelectorAll('[data-xy-slot="legend_item"]')];
+      if (rows.length >= 3) break;
+      await sleep(25);
+    }
+    if (rows.length < 3) throw new Error(`expected 3 legend rows, got ${rows.length}`);
+    const byName = (name) => rows.find((row) => row.textContent === name);
+    const click = (row, detail) => row.dispatchEvent(new MouseEvent("click", { detail }));
+    const dbl = (row) => {
+      click(row, 1);
+      click(row, 2);
+      row.dispatchEvent(new MouseEvent("dblclick", { detail: 2 }));
+    };
+    const cat = view.gpuTraces[1];
+    const state = () => ({
+      alphaHidden: !!view.gpuTraces[0]._legendHidden,
+      offRows: ["alpha", "A", "B"].filter((n) => byName(n).dataset.xyLegendOff !== undefined),
+      catN: cat.n,
+      sentCount: sent.length,
+      toggleEvents: toggles.length,
+      isolateEvents: isolates.length,
+    });
+    const steps = { start: state() };
+
+    dbl(byName("A"));
+    steps.isolateA = state();
+    dbl(byName("A"));
+    steps.restore = state();
+    // Isolate from a partly-hidden chart: hide alpha first, then isolate B.
+    click(byName("alpha"), 1);
+    steps.alphaOff = state();
+    dbl(byName("B"));
+    steps.isolateB = state();
+    dbl(byName("B"));
+    steps.restore2 = state();
+
+    document.body.setAttribute(
+      "data-xy-legend-isolate",
+      JSON.stringify({ steps, sent, toggles, isolates })
+    );
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-legend-isolate-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
+
+def _isolate_chart(**legend_kwargs):
+    codes = np.array(["A", "A", "A", "A", "A", "B", "B", "B"])
+    data = {"x": np.arange(8.0), "y": np.arange(8.0)}
+    return xy.scatter_chart(
+        xy.scatter("x", "y", data=data, name="alpha"),
+        xy.scatter("x", "y", data=data, color=codes),
+        xy.legend(**legend_kwargs),
+        width=520,
+        height=340,
+    )
+
+
+def _run_isolate_probe(chart, label: str) -> dict:
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the legend isolate probe")
+    document = probe_document(chart, _ISOLATE_PROBE)
+    with tempfile.TemporaryDirectory() as td:
+        page = Path(td) / "legend_isolate.html"
+        return run_browser_probe(chromium, document, page, "data-xy-legend-isolate", label=label)
+
+
+def _kinds(sent: list[dict]) -> list[tuple]:
+    return [(m.get("trace"), m.get("category"), m.get("hidden")) for m in sent]
+
+
+def test_browser_legend_double_click_isolates_series() -> None:
+    payload = _run_isolate_probe(_isolate_chart(), "legend isolate")
+    steps = payload["steps"]
+    assert steps["start"]["offRows"] == [] and steps["start"]["catN"] == 8, steps
+
+    # Double-click A: only category A stays — alpha and B hide, A's buffers
+    # hold its five rows. The burst's first click had hidden A; the isolate
+    # brought it back, so A itself is one of the changed rows.
+    s = steps["isolateA"]
+    assert s["alphaHidden"] is True and s["offRows"] == ["alpha", "B"], s
+    assert s["catN"] == 5, s
+    assert s["isolateEvents"] == 1, s
+    # Double-click A again while it is the only one showing: everything back.
+    s = steps["restore"]
+    assert s["alphaHidden"] is False and s["offRows"] == [] and s["catN"] == 8, s
+    assert s["isolateEvents"] == 2, s
+
+    # A partly-hidden chart isolates the same way, and restores alpha too.
+    assert steps["alphaOff"]["offRows"] == ["alpha"], steps["alphaOff"]
+    s = steps["isolateB"]
+    assert s["alphaHidden"] is True and s["offRows"] == ["alpha", "A"] and s["catN"] == 3, s
+    s = steps["restore2"]
+    assert s["alphaHidden"] is False and s["offRows"] == [] and s["catN"] == 8, s
+    assert s["isolateEvents"] == 4, s
+
+    # Kernel sync, message by message. Trace 0 = alpha; trace 1 categories
+    # 0 = A, 1 = B. The second click of each burst ships nothing.
+    assert _kinds(payload["sent"]) == [
+        (1, 0, True),  # dbl(A): first click toggles A off
+        (0, None, True),  # isolate, legend order: alpha off, A back on, B off
+        (1, 0, False),
+        (1, 1, True),
+        (1, 0, True),  # dbl(A) again: first click toggles A off
+        (0, None, False),  # restore all, legend order
+        (1, 0, False),
+        (1, 1, False),
+        (0, None, True),  # click(alpha)
+        (1, 1, True),  # dbl(B): first click toggles B off
+        (1, 0, True),  # isolate B: A off, B back on (alpha already off)
+        (1, 1, False),
+        (1, 1, True),  # dbl(B) again: first click toggles B off
+        (0, None, False),  # restore all
+        (1, 0, False),
+        (1, 1, False),
+    ], payload["sent"]
+    # One xy:legendtoggle per changed row (matches the wire), one
+    # xy:legendisolate per gesture naming the row and the direction.
+    assert len(payload["toggles"]) == len(payload["sent"]), payload["toggles"]
+    assert [(e["name"], e["isolated"], e.get("category")) for e in payload["isolates"]] == [
+        ("A", True, 0),
+        ("A", False, 0),
+        ("B", True, 1),
+        ("B", False, 1),
+    ], payload["isolates"]
+    assert payload["isolates"][0]["traces"] == [1], payload["isolates"][0]
+
+
+def test_browser_legend_isolate_opt_out_keeps_plain_toggles() -> None:
+    """`isolate=False`: two rapid clicks are two toggles (net no change) and
+    the dblclick itself does nothing — the pre-#505 behavior, byte for byte
+    on the wire."""
+    payload = _run_isolate_probe(_isolate_chart(isolate=False), "legend isolate off")
+    steps = payload["steps"]
+    s = steps["isolateA"]
+    assert s["alphaHidden"] is False and s["offRows"] == [] and s["catN"] == 8, s
+    assert s["isolateEvents"] == 0, s
+    assert _kinds(payload["sent"])[:2] == [(1, 0, True), (1, 0, False)], payload["sent"]
+    assert steps["restore2"]["isolateEvents"] == 0, steps["restore2"]
+    assert steps["restore2"]["offRows"] == ["alpha"], steps["restore2"]  # the lone single click
+
+
+def test_browser_legend_isolate_without_toggle() -> None:
+    """`toggle=False` leaves single clicks inert but double-click still
+    isolates, deciding against the (unchanged) current state."""
+    payload = _run_isolate_probe(_isolate_chart(toggle=False), "legend isolate no toggle")
+    steps = payload["steps"]
+    s = steps["isolateA"]
+    assert s["alphaHidden"] is True and s["offRows"] == ["alpha", "B"] and s["catN"] == 5, s
+    s = steps["restore"]
+    assert s["offRows"] == [] and s["catN"] == 8 and s["isolateEvents"] == 2, s
+    # The single click on alpha was inert, so isolate B hides alpha itself.
+    assert steps["alphaOff"]["offRows"] == [], steps["alphaOff"]
+    assert _kinds(payload["sent"]) == [
+        (0, None, True),
+        (1, 1, True),
+        (0, None, False),
+        (1, 1, False),
+        (0, None, True),
+        (1, 0, True),
+        (0, None, False),
+        (1, 0, False),
     ], payload["sent"]
 
 
