@@ -14,6 +14,75 @@ workflow materializes the pending fragments into a new section with
 
 <!-- towncrier release notes start -->
 
+## v0.0.9a1 (2026-11-05)
+
+### Features
+
+- Added opt-in Matplotlib 3.11 compatibility for `xy.pyplot`, including a fallback-free XY backend, live canvases, and a hash-locked gallery acceptance contract, while keeping the high-performance native frontend as the default. ([#413](https://github.com/reflex-dev/xy/issues/413))
+- Added `xy.legend(loc="outside top")`, a legend band above the plot that never covers data: the plot shrinks to make room, and entries use as many columns as fit the width before wrapping into rows. `loc="best"` now moves the legend into that band on its own when every position inside the plot would cover marks — stacked areas, many series, and bars that reach the axis maximum — and stays inside whenever a corner is empty. Matplotlib's `"outside upper center"` spelling is accepted too, the browser and the SVG/PNG/PDF exports wrap the same entries into the same rows, and `xy.pyplot`'s `legend(loc="best")` keeps Matplotlib's in-plot behavior. ([#544](https://github.com/reflex-dev/xy/issues/544))
+
+### Bug Fixes
+
+- `xy.x_axis(show=False)` and `xy.y_axis(show=False)` now collapse the axis's
+  layout slot instead of painting an invisible axis in a gutter it still
+  occupies. With `padding=0` a chart whose axes are switched off reaches the
+  container edge — the sparkline case the axes docs describe — rather than
+  sitting 25 px in, and a hidden right-side axis no longer reserves its flat
+  54 px. Without an authored `padding` the label-aware default margins still
+  apply, as they always have; what changes is that a hidden axis no longer adds
+  its own gutter on top. The visibility shorthands compile to transparent paints
+  rather than to a flag, and the browser was measuring that invisible text back
+  into the gutter; the SVG and PNG exporters already skipped it on the left, so
+  the same chart exported flush and rendered inset. Both renderers now ask the
+  same question about the paint, on every side. `tick_label_strategy="off"` now
+  claims no tick-label room, the way `"none"` already did, while keeping the room
+  for the title it still draws — `"none"` suppresses that title too. Outward tick
+  marks answer to no text paint at all, so an axis that draws only those keeps
+  its band. A gutter is kept for an axis title only where a title is actually
+  drawn — not under
+  `tick_label_strategy="none"`, which suppresses the title as well, and not for an
+  `inside_*` title, which is drawn over the plot. Polar charts read the same
+  rules: switching the angular labels off reclaims the disc's inset whichever
+  switch does it, and the radial and angular titles keep their gutters only while
+  they are drawn. Ordinary untitled axes retain their previous text gutters;
+  outside titles can raise the measured band.
+  Initial browser layout resolves CSS axis paints against the styled chart root,
+  avoiding a startup crash for named colors, `transparent`, and `rgba()` paints.
+  Charts created while detached also refresh their gutters and chrome bounds on
+  connection, before rendering the first connected frame. Theme refreshes also
+  remeasure connected charts when CSS axis paints become visible or hidden.
+  Refreshes during WebGL context loss preserve the last frame and apply the
+  updated theme and gutters before the first restored frame.
+  Static exports also collapse hidden top axes, reserve right-facing tick marks
+  and their colorbar clearance, and keep minor-tick reservations on their authored
+  side when major marks use the opposite edge. ([#522](https://github.com/reflex-dev/xy/issues/522))
+- Files written by `to_html(path)`, `to_svg(path)`, `write_image`, `write_images`
+  and facet exports now get the same permissions as any other new file (normally
+  `rw-r--r--`), and an existing POSIX file keeps its ordinary permission bits
+  and group when possible.
+  Linux replacements also retain the existing access ACL; failed permission
+  adjustments leave the export private. Exports were previously created owner-only (`rw-------`), so a web server or another user could not read them.
+
+  Filesystems without ACL support also retain ordinary permission bits on replacement. ([#525](https://github.com/reflex-dev/xy/issues/525))
+- Fixed `xy.pyplot.fill_between` raising a `TypeError` when passed `datetime`, `datetime64`, or masked date sequences. Standalone datetime fills now render calendar tick labels without requiring a line overlay.
+  Shared x axes also retain calendar ticks when only one panel contains dates and refresh after date fills are added or removed. Removing a split fill now removes every polygon, including masked and interpolated regions.
+  Date-axis inference no longer retains the original date container or changes when the caller later mutates it. ([#532](https://github.com/reflex-dev/xy/issues/532))
+- Vertical category axes now label every category that fits, spacing labels 1.6 times the tick-label font size apart instead of one label per 45 px, so a horizontal bar chart at a dashboard height no longer skips every other row. Very tall category axes now spread at most 200 labels across every category instead of stopping after the first 200. A short centred chart title on a small card no longer wraps into extra lines and loses its first line above the chart. ([#545](https://github.com/reflex-dev/xy/issues/545))
+- `reflex_xy`: unmounting a chart (conditional rendering, client navigation) now releases its view from the `window.__xy_views` registry; previously React's ref teardown left destroyed views behind. ([#548](https://github.com/reflex-dev/xy/issues/548))
+- `xy.pyplot` native mode now keeps calendar coordinates for pandas datetime-indexed `Series.plot()` / `DataFrame.plot()` under pandas 3.1, whose plotting paths pass raw period or business-day ordinals: daily, monthly, hourly and business-day indexes land on the native time axis in milliseconds since the epoch, while unrelated numeric overlays keep their units. pandas' minor period tickers are now ignored like its major ones, so PNG export no longer fails with `NotImplementedError`. ([#549](https://github.com/reflex-dev/xy/issues/549))
+
+### Performance
+
+- Reduced-motion density replies now upload log-u8 count grids directly instead of decoding and re-encoding them before GPU upload. ([#369](https://github.com/reflex-dev/xy/issues/369))
+- Fan out M4 decimation and uniform histograms from 128k rows while keeping clustered-line and high-bin-count workloads efficient. ([#424](https://github.com/reflex-dev/xy/issues/424))
+- Long line and area charts decimate faster. When pixel columns average 8 or more rows, M4 now scans one column's rows at a time instead of updating a per-row state machine, with SIMD (the `argminmax` crate) for columns of 32 rows or more. Deep zooms keep the per-row loop. On one core, the decimation kernel is 3–9× faster at 1M points, the first payload of a 1M-point line chart is prepared 1.2–1.6× faster, and zooming into 10% of it re-decimates about 2× faster. The decimated rows do not change. ([#535](https://github.com/reflex-dev/xy/issues/535))
+
+### Miscellaneous
+
+- Scope pull-request CI to affected checks, require explicit compatibility changes for pyplot jobs, and reuse a verified Linux wheel across compatible gallery, reference, benchmark, Python-floor, and Linux x64 packaging jobs. Skip advisory benchmarks on CI-only PRs and avoid repeated system-package downloads when setting up the methodology browser. Run Rust, Python, browser integration, and blocking regression checks in independent parallel jobs. Disable persisted CI checkout credentials and pin the CI/CodSpeed tool versions and CodSpeed action commit. Use a digest-pinned prebuilt Playwright image for cross-browser conformance and skip CodSpeed on CI-only PRs. ([#539](https://github.com/reflex-dev/xy/issues/539))
+- Download and cache a pinned, hash-verified Ubuntu FFmpeg package bundle once per CI run and share it across all eight standard gallery shards, replacing repeated package-server installs with offline restoration. ([#541](https://github.com/reflex-dev/xy/issues/541))
+
+
 ## v0.0.8 (2026-10-13)
 
 ### Bug Fixes
