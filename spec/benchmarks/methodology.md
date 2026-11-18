@@ -96,8 +96,9 @@ reported).
   directories under `benchmarks/launch_baselines/` (`pyproject.toml`, `uv.lock`,
   `environment.json` — `xy-0.1.0/macos-arm64-m5-pro` for the original launch
   record, `xy-main-2026-07-26/macos-arm64-m5-pro` for the rerun the published
-  docs quote, both carrying identical competitor pins), copy-paste repro
-  commands, and the prescribed `reference hardware` vs `CI (software GL)` table
+  docs quote, both carrying identical competitor pins; Tornado is pinned to
+  6.6.1 for security fixes although both recorded runs used 6.5.7), copy-paste
+  repro commands, and the prescribed `reference hardware` vs `CI (software GL)` table
   labels.
 - Every table header carries: timestamp, python version/implementation,
   platform system/machine, and harness commit + dirty state

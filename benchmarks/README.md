@@ -44,6 +44,10 @@ BASELINE=benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro
 uv sync --project "$BASELINE" --frozen --python 3.14.5
 ```
 
+One pin differs from the recorded runs: both baselines pin Tornado 6.6.1 for
+security fixes, while their reports were measured with Tornado 6.5.7. Tornado
+only serves Matplotlib's WebAgg backend on localhost during the run.
+
 Run these commands from the repository revision containing the baseline. The
 same directory contains `environment.json` with the exact source commit, Python,
 Rust, Cargo, Node, Chrome, OS, and hardware versions used for the recorded run.
