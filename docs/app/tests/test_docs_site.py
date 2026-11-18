@@ -1604,17 +1604,28 @@ def test_installation_uses_uv_first_package_manager_tabs() -> None:
 
 
 def test_installation_distinguishes_supported_targets_from_pypi_artifacts() -> None:
-    """Do not present missing release wheels as missing platform support."""
+    """Distinguish XY's supported targets from the files in the 0.0.1 upload."""
     content = (DOCS_ROOT / "overview" / "installation.md").read_text(encoding="utf-8")
+    macos_row = next(line for line in content.splitlines() if line.startswith("| macOS |"))
+    glibc_row = next(line for line in content.splitlines() if "manylinux_2_17" in line)
+    musl_row = next(line for line in content.splitlines() if "musllinux_1_2" in line)
     windows_row = next(line for line in content.splitlines() if line.startswith("| Windows |"))
     wasm_row = next(line for line in content.splitlines() if line.startswith("| WebAssembly |"))
 
-    assert all(value in windows_row for value in ("`x86_64`", "`x86`", "`arm64`"))
-    assert "| Supported | Not included |" in windows_row
+    assert "`x86_64`, `arm64`" in macos_row
+    assert "macOS 10.12+ on Intel" in macos_row
+    assert "Included" in macos_row
+    assert "`x86_64`, `aarch64`, `armv7l`" in glibc_row
+    assert "Included" in glibc_row
+    assert "`x86_64`, `aarch64`, `armv7l`" in musl_row
+    assert "Included" in musl_row
+    assert "`x86_64`, `x86`, `arm64`" in windows_row
+    assert "Supported" in windows_row
+    assert "Not included" in windows_row
     assert "Pyodide 314" in wasm_row
-    assert "`wasm32` | Supported | Not in 0.0.1 (on PyPI since 0.0.3) |" in wasm_row
-    assert "Windows is supported by XY's native core and release pipeline." in content
-    assert "0.0.1 PyPI upload does not include Windows wheels" in content
+    assert "`wasm32`" in wasm_row
+    assert "Not in 0.0.1" in wasm_row
+    assert "Windows is supported by XY's native core and release pipeline" in content
     assert "runtime-verified WebAssembly wheel" in content
     assert "`pyemscripten_2026_0_wasm32` platform" in content
     assert "%pip install xy" in content

@@ -17,10 +17,13 @@ try:
 except ImportError as err:  # pragma: no cover - platform-dependent
     raise ImportError(
         "xy requires its native Rust core, which could not be loaded "
-        f"({err}). Prebuilt wheels cover Linux glibc and musl (x86-64, aarch64, "
-        "armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64, arm64); "
-        "on those platforms `pip install xy` needs no toolchain. On any "
-        "other platform, install a Rust toolchain (https://rustup.rs) and "
+        f"({err}). Native wheels cover Linux glibc and musl/Alpine "
+        "(x86-64, aarch64, and armv7), macOS Intel (10.12+) and Apple Silicon "
+        "(11+), and Windows x86, x64, and ARM64. Pyodide 314 has a "
+        "runtime-verified Emscripten wheel. Those installs need no toolchain. "
+        "On other platforms, "
+        "install a Rust toolchain "
+        "(https://rustup.rs) and "
         "reinstall from source (or run `cargo build --release`)."
     ) from err
 

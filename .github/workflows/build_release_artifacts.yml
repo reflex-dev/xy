@@ -1,4 +1,4 @@
-# Builds every artifact an `xy` release publishes: eleven cross-compiled platform
+# Builds every artifact an `xy` release publishes: eleven runtime-verified native
 # wheels, a runtime-verified PyEmscripten wheel and an sdist. No single runner can
 # produce that set, which is why this is a repository-supplied build workflow
 # rather than the `uv build` the release pipeline runs by default.
@@ -45,7 +45,7 @@ on:
         required: true
         type: string
   # Dry run: build and verify the full matrix without a release. Use it to
-  # exercise the cross-compile legs (musllinux, win-arm64, wasm, ...) after
+  # exercise the native targets (Linux, macOS, Windows, wasm, ...) after
   # touching the matrix, the toolchains or the wheel tags — a target added but
   # never exercised is unverified, not working. Nothing here can publish: the
   # upload path lives in publish.yml, which this workflow never calls.
@@ -99,30 +99,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux glibc (manylinux_2_17 floor) — cross-compiled with zig.
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zigtarget: x86_64-unknown-linux-gnu.2.17, plat: manylinux_2_17_x86_64, zig: true, native: true }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, zigtarget: aarch64-unknown-linux-gnu.2.17, plat: manylinux_2_17_aarch64, zig: true, native: false }
-          - { os: ubuntu-latest, target: armv7-unknown-linux-gnueabihf, zigtarget: armv7-unknown-linux-gnueabihf.2.17, plat: manylinux_2_17_armv7l, zig: true, native: false }
-          # Linux musl / Alpine. crt-static is musl's default, and rustc
-          # silently *drops* cdylib output under it (a warning, not an error)
-          # since a fully-static binary can't also be a shared library —
-          # -C target-feature=-crt-static switches to dynamic linking against
-          # musl libc so a real cdylib gets produced.
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
-          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
-          # macOS. Both build on the arm64 runner (macos-14): Apple Silicon
-          # runners are plentiful, while the last Intel runner (macos-13) is
-          # deprecated and frequently unschedulable. The Apple toolchain
-          # cross-links x86_64 Mach-O natively, so the Intel wheel is a cross
-          # build (native: false -> content-verified, not import-smoked, since
-          # an x86_64 lib can't be imported on the arm64 runner).
-          - { os: macos-14, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: false, deployment: "10.12" }
-          - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true, deployment: "11.0" }
-          # Windows x64 (native), x86 and arm64 (cross-compiled).
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, plat: win_amd64, zig: false, native: true }
-          - { os: windows-latest, target: i686-pc-windows-msvc, plat: win32, zig: false, native: false }
-          - { os: windows-latest, target: aarch64-pc-windows-msvc, plat: win_arm64, zig: false, native: false }
+          # Linux glibc. ARM64 builds on its native runner; armv7 is tested under QEMU.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zigtarget: x86_64-unknown-linux-gnu.2.17, plat: manylinux_2_17_x86_64, zig: true, native: true, smoke: host }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, zigtarget: aarch64-unknown-linux-gnu.2.17, plat: manylinux_2_17_aarch64, zig: true, native: true, smoke: host }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-gnueabihf, zigtarget: armv7-unknown-linux-gnueabihf.2.17, plat: manylinux_2_17_armv7l, zig: true, native: true, smoke: manylinux-armv7 }
+          # musllinux wheels are runtime-smoked in Alpine, with QEMU for armv7.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: true, smoke: alpine, rustflags: "-C target-feature=-crt-static" }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: true, smoke: alpine, rustflags: "-C target-feature=-crt-static" }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: true, smoke: alpine-armv7, rustflags: "-C target-feature=-crt-static" }
+          # Native macOS runners cover both published architectures.
+          - { os: macos-15-intel, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: true, smoke: host, deployment: "10.12" }
+          - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true, smoke: host, deployment: "11.0" }
+          # Windows x64/ARM64 run natively; win32 uses an x86 Python.
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, plat: win_amd64, zig: false, native: true, smoke: host }
+          - { os: windows-latest, target: i686-pc-windows-msvc, plat: win32, zig: false, native: true, smoke: host, python-architecture: x86 }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc, plat: win_arm64, zig: false, native: true, smoke: host }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -149,6 +140,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.python-architecture != ''
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python-architecture }}
       - name: Install JS build toolchain
         run: npm ci
       - name: Cross-compile the native core (zig)
@@ -176,12 +172,12 @@ jobs:
           XY_SKIP_CARGO: "1"
           XY_CARGO_TARGET: ${{ matrix.target }}
           XY_WHEEL_PLATFORM: ${{ matrix.plat }}
-        run: uv build --wheel
+        run: uv build --python python --wheel
       - name: Verify wheel contents
         shell: bash
         run: |
           whl=$(ls dist/*.whl)
-          python scripts/verify_wheel.py "$whl" --expect-native
+          python scripts/verify_wheel.py "$whl" --expect-native --expect-platform "${{ matrix.plat }}" --require-symbol xy_abi_version --require-linkage
       - name: Install-size budget (<= 15 MB)
         shell: bash
         run: |
@@ -189,16 +185,50 @@ jobs:
           size=$(wc -c < "$whl" | tr -d ' ')
           echo "wheel size: $size bytes ($whl)"
           test "$size" -le 15728640
+      - name: Enable QEMU for ARMv7 runtime checks
+        if: matrix.smoke == 'manylinux-armv7' || matrix.smoke == 'alpine-armv7'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm
       - name: Verify the wheel installs and loads the native core
-        # Only host-arch wheels can be imported on the runner; cross-compiled
-        # arches (aarch64/armv7/win-arm64/win32) are content-verified instead.
-        if: matrix.native
+        if: matrix.smoke == 'host'
         shell: bash
         run: |
-          uv venv smoke
+          uv venv smoke --python python
           uv pip install -p smoke dist/*.whl numpy anywidget "reflex>=0.9.6"
-          ./smoke/bin/python -c "import importlib.metadata as m, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); print('native', k.__file__)" \
-            || ./smoke/Scripts/python.exe -c "import importlib.metadata as m, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); print('native')"
+          if [ -f ./smoke/bin/python ]; then py=./smoke/bin/python; else py=./smoke/Scripts/python.exe; fi
+          "$py" scripts/wheel_smoke.py
+      - name: Verify ARMv7 manylinux wheel in a runtime container
+        if: matrix.smoke == 'manylinux-armv7'
+        shell: bash
+        run: |
+          docker run --rm --platform linux/arm/v7 -v "$GITHUB_WORKSPACE:/workspace" -w /workspace quay.io/pypa/manylinux2014_armv7l:latest sh -eu -c '
+            /opt/python/cp311-cp311/bin/python -m venv /tmp/xy-smoke
+            /tmp/xy-smoke/bin/pip install numpy anywidget "reflex>=0.9.6" dist/*.whl
+            /tmp/xy-smoke/bin/python scripts/wheel_smoke.py
+          '
+      - name: Verify musllinux wheel in Alpine runtime
+        if: matrix.smoke == 'alpine'
+        shell: bash
+        run: |
+          alpine_platform=linux/amd64
+          if [ "${{ matrix.plat }}" = musllinux_1_2_aarch64 ]; then alpine_platform=linux/arm64; fi
+          docker run --rm --platform "$alpine_platform" -v "$GITHUB_WORKSPACE:/workspace" -w /workspace alpine:3.22 sh -eu -c '
+            apk add --no-cache python3 py3-numpy py3-pip
+            python3 -m venv --system-site-packages /tmp/xy-smoke
+            /tmp/xy-smoke/bin/pip install anywidget "reflex>=0.9.6" dist/*.whl
+            /tmp/xy-smoke/bin/python scripts/wheel_smoke.py
+          '
+      - name: Verify armv7 musllinux wheel in Alpine runtime
+        if: matrix.smoke == 'alpine-armv7'
+        shell: bash
+        run: |
+          docker run --rm --platform linux/arm/v7 -v "$GITHUB_WORKSPACE:/workspace" -w /workspace alpine:3.22 sh -eu -c '
+            apk add --no-cache python3 py3-numpy py3-pip
+            python3 -m venv --system-site-packages /tmp/xy-smoke
+            /tmp/xy-smoke/bin/pip install anywidget "reflex>=0.9.6" dist/*.whl
+            /tmp/xy-smoke/bin/python scripts/wheel_smoke.py
+          '
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs.artifact-prefix }}${{ matrix.plat }}
@@ -365,6 +395,6 @@ jobs:
 
   # Merge the matrix output into the single artifact the gated job uploads, and
   # re-verify it as a batch: `verify-dist` fails unless *every* artifact — all
-  # eleven wheels, the wasm wheel and the sdist — declares the version being
+  # eleven native wheels, the wasm wheel and the sdist — declares the version being
   # released, which is what catches a build that silently fell back to the
   # derived development version.
