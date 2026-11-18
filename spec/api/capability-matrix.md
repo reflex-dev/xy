@@ -14,7 +14,7 @@ which is sometimes deliberate, and the notes say which.
 ## In one line
 
 - **11** mark style properties across **22** mark kinds, drawn by all three renderers.
-- **48** stable chrome slots, CSS- and Tailwind-addressable in the browser; **10** of them reach the native writers — nine through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag.
+- **49** stable chrome slots, CSS- and Tailwind-addressable in the browser; **10** of them reach the native writers — nine through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag.
 - **1** shipped extension point.
 - **1** known default divergence between renderers, listed below rather than left to be discovered.
 
@@ -87,6 +87,7 @@ contracted in [export.md](export.md) §9 and pinned by
 | `tooltip_row` | full | none | none |
 | `tooltip_label` | full | none | none |
 | `tooltip_value` | full | none | none |
+| `tooltip_cursor` | full | none | none |
 | `modebar` | full | none | none |
 | `modebar_drag_handle` | full | none | none |
 | `modebar_control_group` | full | none | none |
