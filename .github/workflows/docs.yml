@@ -13,6 +13,8 @@ on:
       - "hatch_build.py"
       - "pyproject.toml"
       - "scripts/verify_docs_quickstart.py"
+      - "scripts/verify_docs_local.py"
+      - "scripts/check_public_api.py"
       - ".pre-commit-config.yaml"
       - ".github/workflows/docs.yml"
   pull_request:
@@ -26,6 +28,8 @@ on:
       - "hatch_build.py"
       - "pyproject.toml"
       - "scripts/verify_docs_quickstart.py"
+      - "scripts/verify_docs_local.py"
+      - "scripts/check_public_api.py"
       - ".pre-commit-config.yaml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -60,17 +64,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
-      - name: Install docs dependencies
-        run: uv sync --project docs/app --frozen --group dev
-      - name: Run docs tests
-        run: uv run --project docs/app --no-sync pytest docs/app/tests -v
-      - name: Run public docs quickstart against the checkout
-        run: uv run --project docs/app --no-sync python scripts/verify_docs_quickstart.py
-      - name: Run docs quality hooks
-        run: |
-          uv run --project docs/app --no-sync pre-commit run ruff-format --all-files
-          uv run --project docs/app --no-sync pre-commit run ruff-check --all-files
-          uv run --project docs/app --no-sync pre-commit run docs-app-codespell --all-files
+      - name: Run the local docs quality gate
+        shell: bash
+        run: uv run --no-project python scripts/verify_docs_local.py
 
   production:
     name: Production docs (Python ${{ matrix.python-version }})
