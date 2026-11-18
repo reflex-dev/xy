@@ -1161,6 +1161,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             raise ValueError(f"{label} must be real numeric, not boolean")
         if np.issubdtype(arr.dtype, np.complexfloating):
             raise ValueError(f"{label} must be real numeric")
+        if arr.dtype == object:
+            arr = columns.object_missing_to_nan(arr)
         try:
             return arr.astype(np.float64, copy=False)
         except (TypeError, ValueError) as e:
@@ -1230,7 +1232,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 # O(n) copy of the column.
                 values = values[:0].to_numpy(zero_copy_only=False)
         arr = np.asarray(values)
-        return arr.dtype.kind in ("U", "S", "O", "b")
+        if arr.dtype.kind == "O":
+            # An object column whose non-missing values are all real numbers
+            # (a list holding a None, a CSV column read as object, Decimals)
+            # is numeric data with holes, not a set of categories — the same
+            # rule the color channel applies (`channels._object_array_is_real_
+            # numeric`). Strings, bytes, bools and mixed values stay categorical.
+            return not channels._object_array_is_real_numeric(arr.reshape(-1))
+        return arr.dtype.kind in ("U", "S", "b")
 
     @staticmethod
     def _category_axis_labels(values: Any, axis: str) -> list[str]:
@@ -1457,6 +1466,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return self._range("y")
 
     def _range(self, axis_id: str, *, use_domain: bool = True) -> tuple[float, float]:
+        # Before the log branch below can complain about positive values.
+        self._check_forced_scale(axis_id)
         opts = self.axis_options.get(axis_id, {})
         fixed = opts.get("domain")
         if use_domain and fixed is not None:
@@ -1647,8 +1658,23 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return np.sign(v) * np.log1p(np.abs(v) / constant)
         return v
 
+    def _check_forced_scale(self, axis_id: str) -> None:
+        """A category axis is linear by construction (positions are the label
+        indices): forcing time turned the labels into 1970 epoch ticks and
+        forcing log put category 0 off the axis. G3: a scale conflict is a
+        build-time error, not a coercion. Membership, not truthiness — an empty
+        categorical mark registers the axis with no labels yet."""
+        forced = self.axis_options.get(axis_id, {}).get("type")
+        categories = self._axis_categories.get(axis_id)
+        if categories is not None and forced in ("time", "log", "symlog"):
+            raise ValueError(
+                f"{axis_id} axis is categorical ({len(categories)} categories from the "
+                f"marks) and cannot be a {forced} axis; drop type_= or pass numeric positions"
+            )
+
     def _axis_kind(self, axis_id: str) -> str:
         axis = self._axis_dim(axis_id)
+        self._check_forced_scale(axis_id)
         forced = self.axis_options.get(axis_id, {}).get("type")
         if forced == "time":
             return "time"
